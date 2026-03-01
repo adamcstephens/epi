@@ -1,7 +1,7 @@
 let () =
   let code =
     Cmdliner.Cmd.eval
-      (Cmdlang_to_cmdliner.Translate.command Epi.cmd ~name:"my-calculator"
+      (Cmdlang_to_cmdliner.Translate.command Epi.cmd ~name:"epi"
          ~version:"%%VERSION%%")
   in
   (* We disable coverage here because [bisect_ppx] instruments the out-edge of

@@ -6,15 +6,23 @@
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{ flake-parts, nixpkgs, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } (
-      { ... }:
+      { config, ... }:
       {
         systems = [
           "x86_64-linux"
           "aarch64-linux"
           "aarch64-darwin"
         ];
+
+        flake.nixosConfigurations.manual-test = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nix/nixos/manual-test.nix
+          ];
+        };
+        flake.manual-test = config.flake.nixosConfigurations.manual-test;
 
         perSystem =
           { pkgs, ... }:
