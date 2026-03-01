@@ -1,7 +1,8 @@
 (rule
  (with-stdout-to
   link_flags.linux
-  (bash "if [ \"${BUILD_STATIC:-0}\" = '1' ]; then echo '(-cclib -static)'; else echo '()'; fi")))
+  (bash
+   "if [ \"${BUILD_STATIC:-0}\" = '1' ]; then echo '(-cclib -static)'; else echo '()'; fi")))
 
 (rule
  (with-stdout-to
@@ -9,8 +10,8 @@
   (echo "()")))
 
 (executables
- (names project_name)
- (public_names project-name)
- (libraries project_name)
+ (names epi)
+ (public_names epi)
+ (libraries cmdlang-to-cmdliner cmdliner epi)
  (link_flags
   (:include link_flags.%{system})))

@@ -1,0 +1,4 @@
+(library
+ (name epi)
+ (flags :standard -open Cmdlang)
+ (libraries cmdlang))

@@ -23,14 +23,17 @@
           in
           {
             devShells.default = pkgs.mkShell {
-              packages = with ocamlPackages; [
+              packages = [
+                pkgs.cloud-hypervisor
+              ]
+              ++ (with ocamlPackages; [
                 dune_3
                 ocaml
                 ocamlformat
                 ocaml-lsp
                 odig
                 utop
-              ];
+              ]);
             };
 
             packages = {
