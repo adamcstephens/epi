@@ -1,4 +1,4 @@
-(version 5.4.1)
+(version 5.4.0)
 
 (build
  (withenv
@@ -11,7 +11,7 @@
    %{pkg-self:version}
    %{pkg-self:name})))
 
-(depends ocaml-config ocaml-base-compiler)
+(depends ocaml-config ocaml-system)
 
 (exported_env
  (+= OCAMLTOP_INCLUDE_PATH "\%{toplevel}%")

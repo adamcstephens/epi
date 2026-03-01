@@ -3,7 +3,7 @@
 (build
  (substitute gen_ocaml_config.ml.in gen_ocaml_config.ml))
 
-(depends ocaml-base-compiler)
+(depends ocaml-system)
 
 (extra_sources
  (gen_ocaml_config.ml.in

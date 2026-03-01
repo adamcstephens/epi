@@ -2,7 +2,7 @@
 
 (dependency_hash b90a748652dea039ee8e5da7af8e1385)
 
-(ocaml ocaml-base-compiler)
+(ocaml ocaml-system)
 
 (repositories
  (complete true)
