@@ -213,6 +213,98 @@ let write_legacy_pid_state_entry path ~instance_name ~target ~pid =
 
 let make_executable path = Unix.chmod path 0o755
 
+let wait_until_path_exists ~path ~attempts =
+  let rec loop remaining =
+    if Sys.file_exists path then true
+    else if remaining <= 0 then false
+    else
+      let _ = Unix.select [] [] [] 0.01 in
+      loop (remaining - 1)
+  in
+  loop attempts
+
+let with_unix_socket_server ~socket_path ~payload f =
+  let run_server () =
+    if Sys.file_exists socket_path then Unix.unlink socket_path;
+    let server = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+    Fun.protect
+      ~finally:(fun () ->
+        (try Unix.close server with Unix.Unix_error _ -> ());
+        if Sys.file_exists socket_path then Unix.unlink socket_path)
+      (fun () ->
+        Unix.bind server (Unix.ADDR_UNIX socket_path);
+        Unix.listen server 1;
+        let client, _ = Unix.accept server in
+        Fun.protect
+          ~finally:(fun () ->
+            try Unix.close client with Unix.Unix_error _ -> ())
+          (fun () ->
+            let bytes = Bytes.of_string payload in
+            ignore (Unix.write client bytes 0 (Bytes.length bytes))))
+  in
+  match Unix.fork () with
+  | 0 ->
+      run_server ();
+      exit 0
+  | pid ->
+      if not (wait_until_path_exists ~path:socket_path ~attempts:200) then
+        fail "socket server did not start for %s" socket_path;
+      Fun.protect
+        ~finally:(fun () ->
+          terminate_pid pid;
+          try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
+          with Unix.Unix_error (Unix.ECHILD, _, _) -> ())
+        f
+
+let with_delayed_unix_socket_server ?(before_bind = fun () -> ()) ~socket_path
+    ~payload f =
+  let run_server () =
+    before_bind ();
+    let rec wait_until_bindable remaining =
+      if remaining <= 0 then
+        fail "socket server did not bind for %s" socket_path
+      else
+        let parent = Filename.dirname socket_path in
+        if not (Sys.file_exists parent) then
+          let _ = Unix.select [] [] [] 0.01 in
+          wait_until_bindable (remaining - 1)
+        else
+          let server = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+          try
+            Unix.bind server (Unix.ADDR_UNIX socket_path);
+            server
+          with Unix.Unix_error _ ->
+            Unix.close server;
+            let _ = Unix.select [] [] [] 0.01 in
+            wait_until_bindable (remaining - 1)
+    in
+    let server = wait_until_bindable 400 in
+    Fun.protect
+      ~finally:(fun () ->
+        (try Unix.close server with Unix.Unix_error _ -> ());
+        if Sys.file_exists socket_path then Unix.unlink socket_path)
+      (fun () ->
+        Unix.listen server 1;
+        let client, _ = Unix.accept server in
+        Fun.protect
+          ~finally:(fun () ->
+            try Unix.close client with Unix.Unix_error _ -> ())
+          (fun () ->
+            let bytes = Bytes.of_string payload in
+            ignore (Unix.write client bytes 0 (Bytes.length bytes))))
+  in
+  match Unix.fork () with
+  | 0 ->
+      run_server ();
+      exit 0
+  | pid ->
+      Fun.protect
+        ~finally:(fun () ->
+          terminate_pid pid;
+          try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
+          with Unix.Unix_error (Unix.ECHILD, _, _) -> ())
+        f
+
 let with_mock_runtime f =
   with_temp_dir "epi-vm-test" (fun dir ->
       let kernel = Filename.concat dir "vmlinuz" in
@@ -446,6 +538,28 @@ let () =
             "Instance 'dev-a' is not running";
           assert_contains ~context:"console not running guidance" err
             "epi up dev-a --target"));
+  run_test ~name:"console attaches to running instance serial socket" (fun () ->
+      with_state_file (fun state_file ->
+          with_temp_dir "epi-console-running" (fun dir ->
+              with_sleep_process (fun pid ->
+                  let serial_socket = Filename.concat dir "dev-a.sock" in
+                  with_unix_socket_server ~socket_path:serial_socket
+                    ~payload:"console-connected\n" (fun () ->
+                      write_state_entry state_file
+                        {
+                          instance_name = "dev-a";
+                          target = ".#dev-a";
+                          pid = Some pid;
+                          serial_socket = Some serial_socket;
+                          disk = Some "/tmp/dev-a.disk";
+                        };
+                      let result =
+                        run_cli ~bin ~state_file [ "console"; "dev-a" ]
+                      in
+                      assert_success ~context:"console running" result;
+                      let _, out, _ = result in
+                      assert_contains ~context:"console running stdout" out
+                        "console-connected")))));
   run_test ~name:"console treats legacy pid state rows as running metadata"
     (fun () ->
       with_state_file (fun state_file ->
@@ -477,6 +591,98 @@ let () =
                 "Serial endpoint unavailable for 'dev-a'";
               assert_contains ~context:"console unavailable guidance" err
                 "Check VM runtime state for 'dev-a'")));
+  run_test ~name:"up --console provisions and attaches to serial socket"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+          with_state_file (fun state_file ->
+              let wait_for_launch () =
+                let rec loop remaining =
+                  if remaining <= 0 then
+                    fail "mock launch log did not appear in time"
+                  else if Sys.file_exists launch_log then
+                    let channel = open_in launch_log in
+                    let contents =
+                      Fun.protect
+                        ~finally:(fun () -> close_in channel)
+                        (fun () -> read_all channel)
+                    in
+                    if String.trim contents <> "" then ()
+                    else
+                      let _ = Unix.select [] [] [] 0.01 in
+                      loop (remaining - 1)
+                  else
+                    let _ = Unix.select [] [] [] 0.01 in
+                    loop (remaining - 1)
+                in
+                loop 400
+              in
+              let serial_socket =
+                Filename.concat
+                  (Filename.concat (Filename.dirname state_file) "runtime")
+                  "dev-a.serial.sock"
+              in
+              with_delayed_unix_socket_server ~socket_path:serial_socket
+                ~payload:"up-console\n" ~before_bind:wait_for_launch (fun () ->
+                  let result =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "dev-a"; "--target"; ".#dev-a"; "--console" ]
+                  in
+                  assert_success ~context:"up console fresh" result;
+                  let _, out, _ = result in
+                  assert_contains ~context:"up console fresh stdout" out
+                    "up-console";
+                  let launch_contents =
+                    if Sys.file_exists launch_log then
+                      let channel = open_in launch_log in
+                      Fun.protect
+                        ~finally:(fun () -> close_in channel)
+                        (fun () -> read_all channel)
+                    else ""
+                  in
+                  assert_contains ~context:"up console launch invoked"
+                    launch_contents "--serial"))));
+  run_test ~name:"up --console attaches to already running instance" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-up-console-running" (fun dir ->
+                  with_sleep_process (fun pid ->
+                      let serial_socket = Filename.concat dir "dev-a.sock" in
+                      with_unix_socket_server ~socket_path:serial_socket
+                        ~payload:"up-console-running\n" (fun () ->
+                          write_state_entry state_file
+                            {
+                              instance_name = "dev-a";
+                              target = ".#dev-a";
+                              pid = Some pid;
+                              serial_socket = Some serial_socket;
+                              disk = Some "/tmp/dev-a.disk";
+                            };
+                          let result =
+                            run_cli_with_env ~bin ~state_file ~extra_env
+                              [
+                                "up";
+                                "dev-a";
+                                "--target";
+                                ".#dev-a";
+                                "--console";
+                              ]
+                          in
+                          assert_success ~context:"up console running" result;
+                          let _, out, _ = result in
+                          assert_contains ~context:"up console running stdout"
+                            out "up-console-running";
+                          let launch_contents =
+                            if Sys.file_exists launch_log then
+                              let channel = open_in launch_log in
+                              Fun.protect
+                                ~finally:(fun () -> close_in channel)
+                                (fun () -> read_all channel)
+                            else ""
+                          in
+                          if String.trim launch_contents <> "" then
+                            fail
+                              "expected up --console to skip VM provisioning \
+                               for running instance"))))));
   run_test
     ~name:"startup reconciliation clears stale runtime and keeps active runtime"
     (fun () ->

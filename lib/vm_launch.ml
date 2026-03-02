@@ -357,6 +357,17 @@ let rec write_all fd buffer offset length =
     let written = Unix.write fd buffer offset length in
     write_all fd buffer (offset + written) (length - written)
 
+let rec connect_serial_socket socket endpoint attempts_remaining =
+  try
+    Unix.connect socket (Unix.ADDR_UNIX endpoint);
+    Ok ()
+  with
+  | Unix.Unix_error ((Unix.ENOENT | Unix.ECONNREFUSED), _, _)
+    when attempts_remaining > 0 ->
+      let _ = Unix.select [] [] [] 0.05 in
+      connect_serial_socket socket endpoint (attempts_remaining - 1)
+  | Unix.Unix_error (error, _, _) -> Error (Unix.error_message error)
+
 let attach_console ~instance_name runtime =
   let endpoint = runtime.Instance_store.serial_socket in
   let socket = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
@@ -371,37 +382,43 @@ let attach_console ~instance_name runtime =
         write_all dst buffer 0 read_bytes;
         `Ok
   in
-  try
-    Unix.connect socket (Unix.ADDR_UNIX endpoint);
-    let rec loop read_stdin =
-      let read_fds = if read_stdin then [ socket; stdin_fd ] else [ socket ] in
-      let ready, _, _ = Unix.select read_fds [] [] (-1.0) in
-      let read_stdin =
-        if read_stdin && List.exists (( = ) stdin_fd) ready then
-          match read_and_forward stdin_fd socket with
-          | `Eof ->
-              Unix.shutdown socket Unix.SHUTDOWN_SEND;
-              false
-          | `Ok -> true
-        else read_stdin
-      in
-      let socket_open =
-        if List.exists (( = ) socket) ready then
-          match read_and_forward socket stdout_fd with
-          | `Eof -> false
-          | `Ok -> true
-        else true
-      in
-      if socket_open then loop read_stdin
-    in
-    loop true;
-    close_socket ();
-    Ok ()
-  with Unix.Unix_error (error, _, _) ->
-    close_socket ();
-    Error
-      (Serial_endpoint_unavailable
-         { instance_name; endpoint; details = Unix.error_message error })
+  match connect_serial_socket socket endpoint 40 with
+  | Error details ->
+      close_socket ();
+      Error (Serial_endpoint_unavailable { instance_name; endpoint; details })
+  | Ok () -> (
+      try
+        let rec loop read_stdin =
+          let read_fds =
+            if read_stdin then [ socket; stdin_fd ] else [ socket ]
+          in
+          let ready, _, _ = Unix.select read_fds [] [] (-1.0) in
+          let read_stdin =
+            if read_stdin && List.exists (( = ) stdin_fd) ready then
+              match read_and_forward stdin_fd socket with
+              | `Eof ->
+                  Unix.shutdown socket Unix.SHUTDOWN_SEND;
+                  false
+              | `Ok -> true
+            else read_stdin
+          in
+          let socket_open =
+            if List.exists (( = ) socket) ready then
+              match read_and_forward socket stdout_fd with
+              | `Eof -> false
+              | `Ok -> true
+            else true
+          in
+          if socket_open then loop read_stdin
+        in
+        loop true;
+        close_socket ();
+        Ok ()
+      with Unix.Unix_error (error, _, _) ->
+        close_socket ();
+        Error
+          (Serial_endpoint_unavailable
+             { instance_name; endpoint; details = Unix.error_message error }))
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->

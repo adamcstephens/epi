@@ -28,6 +28,17 @@ let resolve_instance_target ~command_name instance_name_opt =
             instances, or create it with `epi up %s --target <flake#config>`."
            instance_name instance_name)
 
+let attach_console_for_running_instance ~instance_name runtime =
+  if not (Process.pid_is_alive runtime.Instance_store.pid) then (
+    Instance_store.clear_runtime instance_name;
+    fail
+      (Vm_launch.pp_console_error
+         (Vm_launch.Instance_not_running { instance_name })))
+  else
+    match Vm_launch.attach_console ~instance_name runtime with
+    | Ok () -> ()
+    | Error error -> fail (Vm_launch.pp_console_error error)
+
 let pid_is_zombie pid =
   let path = Printf.sprintf "/proc/%d/stat" pid in
   if not (Sys.file_exists path) then false
@@ -59,16 +70,47 @@ let up_command =
          ~docv:"FLAKE#CONFIG"
          ~doc:
            "Flake target in <flake-ref>#<config-name> form, for example .#dev."
+     and+ attach_console =
+       Arg.flag [ "console" ]
+         ~doc:
+           "Attach to the instance serial console immediately after ensuring \
+            runtime is active."
      in
      Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name in
-     match Vm_launch.provision ~instance_name ~target with
-     | Ok runtime ->
-         Instance_store.set_provisioned ~instance_name ~target ~runtime;
-         Printf.printf
-           "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
-           instance_name target runtime.Instance_store.pid runtime.serial_socket
-     | Error error -> fail (Vm_launch.pp_provision_error error))
+     match Instance_store.find_runtime instance_name with
+     | Some runtime when Process.pid_is_alive runtime.pid ->
+         if attach_console then
+           attach_console_for_running_instance ~instance_name runtime
+         else
+           Printf.printf
+             "up: instance=%s target=%s already-running pid=%d serial=%s\n"
+             instance_name target runtime.pid runtime.serial_socket
+     | Some _stale_runtime -> (
+         Instance_store.clear_runtime instance_name;
+         match Vm_launch.provision ~instance_name ~target with
+         | Ok runtime ->
+             Instance_store.set_provisioned ~instance_name ~target ~runtime;
+             if attach_console then
+               attach_console_for_running_instance ~instance_name runtime
+             else
+               Printf.printf
+                 "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
+                 instance_name target runtime.Instance_store.pid
+                 runtime.serial_socket
+         | Error error -> fail (Vm_launch.pp_provision_error error))
+     | None -> (
+         match Vm_launch.provision ~instance_name ~target with
+         | Ok runtime ->
+             Instance_store.set_provisioned ~instance_name ~target ~runtime;
+             if attach_console then
+               attach_console_for_running_instance ~instance_name runtime
+             else
+               Printf.printf
+                 "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
+                 instance_name target runtime.Instance_store.pid
+                 runtime.serial_socket
+         | Error error -> fail (Vm_launch.pp_provision_error error)))
 
 let lifecycle_command ~name ~summary =
   Command.make ~summary
@@ -102,16 +144,8 @@ let console_command =
          fail
            (Vm_launch.pp_console_error
               (Vm_launch.Instance_not_running { instance_name }))
-     | Some runtime -> (
-         if not (Process.pid_is_alive runtime.pid) then (
-           Instance_store.clear_runtime instance_name;
-           fail
-             (Vm_launch.pp_console_error
-                (Vm_launch.Instance_not_running { instance_name })))
-         else
-           match Vm_launch.attach_console ~instance_name runtime with
-           | Ok () -> ()
-           | Error error -> fail (Vm_launch.pp_console_error error)))
+     | Some runtime ->
+         attach_console_for_running_instance ~instance_name runtime)
 
 let terminate_instance_runtime ~instance_name runtime =
   let pid = runtime.Instance_store.pid in
