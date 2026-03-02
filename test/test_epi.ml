@@ -305,17 +305,54 @@ let with_delayed_unix_socket_server ?(before_bind = fun () -> ()) ~socket_path
           with Unix.Unix_error (Unix.ECHILD, _, _) -> ())
         f
 
+let with_hanging_unix_socket_server ~socket_path ~hold_seconds f =
+  let run_server () =
+    if Sys.file_exists socket_path then Unix.unlink socket_path;
+    let server = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+    Fun.protect
+      ~finally:(fun () ->
+        (try Unix.close server with Unix.Unix_error _ -> ());
+        if Sys.file_exists socket_path then Unix.unlink socket_path)
+      (fun () ->
+        Unix.bind server (Unix.ADDR_UNIX socket_path);
+        Unix.listen server 1;
+        let client, _ = Unix.accept server in
+        Fun.protect
+          ~finally:(fun () ->
+            try Unix.close client with Unix.Unix_error _ -> ())
+          (fun () ->
+            let _ = Unix.select [] [] [] hold_seconds in
+            ()))
+  in
+  match Unix.fork () with
+  | 0 ->
+      run_server ();
+      exit 0
+  | pid ->
+      if not (wait_until_path_exists ~path:socket_path ~attempts:200) then
+        fail "hanging socket server did not start for %s" socket_path;
+      Fun.protect
+        ~finally:(fun () ->
+          terminate_pid pid;
+          try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
+          with Unix.Unix_error (Unix.ECHILD, _, _) -> ())
+        f
+
 let with_mock_runtime f =
   with_temp_dir "epi-vm-test" (fun dir ->
       let kernel = Filename.concat dir "vmlinuz" in
       let disk = Filename.concat dir "disk.img" in
       let initrd = Filename.concat dir "initrd.img" in
+      let mutable_disk_dir = Filename.concat dir "mutable" in
+      let mutable_disk = Filename.concat mutable_disk_dir "mutable-disk.img" in
       let resolver = Filename.concat dir "resolver.sh" in
       let cloud_hypervisor = Filename.concat dir "cloud-hypervisor.sh" in
       let launch_log = Filename.concat dir "launch.log" in
       write_file kernel "kernel";
       write_file disk "disk";
       write_file initrd "initrd";
+      Unix.mkdir mutable_disk_dir 0o755;
+      write_file mutable_disk "mutable-disk";
       write_file resolver
         ("#!/usr/bin/env sh\n\
           if [ \"$EPI_TARGET\" = \".#fail-resolve\" ]; then\n\
@@ -325,6 +362,23 @@ let with_mock_runtime f =
           if [ \"$EPI_TARGET\" = \".#missing-disk\" ]; then\n\
          \  echo \"kernel=" ^ kernel
        ^ "\"\n\
+         \  echo \"cpus=2\"\n\
+         \  echo \"memory_mib=1024\"\n\
+         \  exit 0\n\
+          fi\n\
+          if [ \"$EPI_TARGET\" = \".#mutable-disk\" ]; then\n\
+         \  echo \"kernel=" ^ kernel ^ "\"\n  echo \"disk=" ^ mutable_disk
+       ^ "\"\n  echo \"initrd=" ^ initrd
+       ^ "\"\n\
+         \  echo \"cpus=2\"\n\
+         \  echo \"memory_mib=1024\"\n\
+         \  exit 0\n\
+          fi\n\
+          if [ \"$EPI_TARGET\" = \".#custom-cmdline\" ]; then\n\
+         \  echo \"kernel=" ^ kernel ^ "\"\n  echo \"disk=" ^ disk
+       ^ "\"\n  echo \"initrd=" ^ initrd
+       ^ "\"\n\
+         \  echo \"cmdline=console=ttyS0 root=/dev/vda1 ro\"\n\
          \  echo \"cpus=2\"\n\
          \  echo \"memory_mib=1024\"\n\
          \  exit 0\n\
@@ -492,6 +546,52 @@ let () =
               in
               if String.length launch_contents > 0 then
                 fail "cloud-hypervisor was invoked despite missing launch input")));
+  run_test ~name:"up rejects mixed mutable disk and target-built boot artifacts"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+          with_state_file (fun state_file ->
+              let failed =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "dev-a"; "--target"; ".#mutable-disk" ]
+              in
+              assert_failure ~context:"mutable disk coherence failure" failed;
+              let _, _, err = failed in
+              assert_contains ~context:"coherence validation stage" err
+                "descriptor validation failed";
+              assert_contains ~context:"coherence validation message" err
+                "launch inputs are not coherent";
+              assert_contains ~context:"coherence guidance" err
+                "fix target outputs";
+              let launch_contents =
+                if Sys.file_exists launch_log then
+                  let channel = open_in launch_log in
+                  Fun.protect
+                    ~finally:(fun () -> close_in channel)
+                    (fun () -> read_all channel)
+                else ""
+              in
+              if String.length launch_contents > 0 then
+                fail
+                  "cloud-hypervisor was invoked despite coherence validation \n\
+                   failure")));
+  run_test ~name:"up uses target-provided cmdline when available" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+          with_state_file (fun state_file ->
+              let launched =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "dev-cmdline"; "--target"; ".#custom-cmdline" ]
+              in
+              assert_success ~context:"custom cmdline up" launched;
+              let launch_contents =
+                if Sys.file_exists launch_log then
+                  let channel = open_in launch_log in
+                  Fun.protect
+                    ~finally:(fun () -> close_in channel)
+                    (fun () -> read_all channel)
+                else ""
+              in
+              assert_contains ~context:"custom cmdline launch args"
+                launch_contents "root=/dev/vda1")));
   run_test ~name:"up reports disk lock conflicts with tracked owner metadata"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk ->
@@ -560,6 +660,42 @@ let () =
                       let _, out, _ = result in
                       assert_contains ~context:"console running stdout" out
                         "console-connected")))));
+  run_test ~name:"console writes serial output to capture file" (fun () ->
+      with_state_file (fun state_file ->
+          with_temp_dir "epi-console-capture" (fun dir ->
+              with_sleep_process (fun pid ->
+                  let serial_socket = Filename.concat dir "dev-a.sock" in
+                  let capture_path = Filename.concat dir "capture.log" in
+                  with_unix_socket_server ~socket_path:serial_socket
+                    ~payload:"capture-connected\n" (fun () ->
+                      write_state_entry state_file
+                        {
+                          instance_name = "dev-a";
+                          target = ".#dev-a";
+                          pid = Some pid;
+                          serial_socket = Some serial_socket;
+                          disk = Some "/tmp/dev-a.disk";
+                        };
+                      let result =
+                        run_cli_with_env ~bin ~state_file
+                          ~extra_env:
+                            [
+                              ("EPI_CONSOLE_NON_INTERACTIVE", "1");
+                              ("EPI_CONSOLE_CAPTURE_FILE", capture_path);
+                            ]
+                          [ "console"; "dev-a" ]
+                      in
+                      assert_success ~context:"console capture" result;
+                      if not (Sys.file_exists capture_path) then
+                        fail "console capture file was not created";
+                      let captured =
+                        let channel = open_in capture_path in
+                        Fun.protect
+                          ~finally:(fun () -> close_in channel)
+                          (fun () -> read_all channel)
+                      in
+                      assert_contains ~context:"console capture contents"
+                        captured "capture-connected")))));
   run_test ~name:"console treats legacy pid state rows as running metadata"
     (fun () ->
       with_state_file (fun state_file ->
@@ -591,6 +727,36 @@ let () =
                 "Serial endpoint unavailable for 'dev-a'";
               assert_contains ~context:"console unavailable guidance" err
                 "Check VM runtime state for 'dev-a'")));
+  run_test ~name:"console non-interactive timeout reports guidance" (fun () ->
+      with_state_file (fun state_file ->
+          with_temp_dir "epi-console-timeout" (fun dir ->
+              with_sleep_process (fun pid ->
+                  let serial_socket = Filename.concat dir "dev-a.sock" in
+                  with_hanging_unix_socket_server ~socket_path:serial_socket
+                    ~hold_seconds:0.5 (fun () ->
+                      write_state_entry state_file
+                        {
+                          instance_name = "dev-a";
+                          target = ".#dev-a";
+                          pid = Some pid;
+                          serial_socket = Some serial_socket;
+                          disk = Some "/tmp/dev-a.disk";
+                        };
+                      let result =
+                        run_cli_with_env ~bin ~state_file
+                          ~extra_env:
+                            [
+                              ("EPI_CONSOLE_NON_INTERACTIVE", "1");
+                              ("EPI_CONSOLE_TIMEOUT_SECONDS", "0.05");
+                            ]
+                          [ "console"; "dev-a" ]
+                      in
+                      assert_failure ~context:"console timeout" result;
+                      let _, _, err = result in
+                      assert_contains ~context:"console timeout message" err
+                        "Console session timed out for 'dev-a'";
+                      assert_contains ~context:"console timeout guidance" err
+                        "EPI_CONSOLE_TIMEOUT_SECONDS")))));
   run_test ~name:"up --console provisions and attaches to serial socket"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->

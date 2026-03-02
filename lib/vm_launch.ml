@@ -2,9 +2,12 @@ type descriptor = {
   kernel : string;
   disk : string;
   initrd : string option;
+  cmdline : string;
   cpus : int;
   memory_mib : int;
 }
+
+let default_cmdline = "console=ttyS0 root=/dev/vda2 ro"
 
 type provision_error =
   | Target_resolution_failed of {
@@ -22,6 +25,7 @@ type provision_error =
     }
   | Vm_disk_lock_held_unknown of { target : string; disk : string }
   | Vm_exited_immediately of { target : string; details : string }
+  | Vm_disk_overlay_prepare_failed of { target : string; details : string }
 
 type console_error =
   | Instance_not_running of { instance_name : string }
@@ -29,6 +33,15 @@ type console_error =
       instance_name : string;
       endpoint : string;
       details : string;
+    }
+  | Console_capture_failed of {
+      instance_name : string;
+      capture_path : string;
+      details : string;
+    }
+  | Console_session_timed_out of {
+      instance_name : string;
+      timeout_seconds : float;
     }
 
 let contains text snippet =
@@ -153,6 +166,10 @@ let descriptor_of_output raw_output =
   in
   let disk = first_some (kv "disk") (json "disk") |> Option.value ~default:"" in
   let initrd = first_some (kv "initrd") (json "initrd") in
+  let cmdline =
+    first_some (kv "cmdline") (json "cmdline")
+    |> Option.value ~default:default_cmdline
+  in
   let cpus =
     match
       first_some (Option.bind (kv "cpus") int_of_string_opt) (json_int "cpus")
@@ -169,7 +186,7 @@ let descriptor_of_output raw_output =
     | Some value -> value
     | None -> 1024
   in
-  { kernel; disk; initrd; cpus; memory_mib }
+  { kernel; disk; initrd; cmdline; cpus; memory_mib }
 
 let resolve_descriptor target =
   let process_result =
@@ -215,37 +232,115 @@ let ensure_store_realized path =
       in
       ()
 
-let validate_file ~label path =
+let split_target target =
+  match String.index_opt target '#' with
+  | None -> None
+  | Some hash_index ->
+      let flake_ref = String.sub target 0 hash_index in
+      let config_name =
+        String.sub target (hash_index + 1)
+          (String.length target - hash_index - 1)
+      in
+      if flake_ref = "" || config_name = "" then None
+      else Some (flake_ref, config_name)
+
+let build_target_artifact_if_missing ~target ~label =
+  match split_target target with
+  | None -> ()
+  | Some (flake_ref, config_name) ->
+      let build_target =
+        match label with
+        | "kernel" ->
+            flake_ref ^ "#" ^ config_name ^ ".config.system.build.kernel"
+        | "disk" ->
+            flake_ref ^ "#" ^ config_name ^ ".config.system.build.images.qemu"
+        | "initrd" ->
+            flake_ref ^ "#" ^ config_name
+            ^ ".config.system.build.initialRamdisk"
+        | _ -> ""
+      in
+      if build_target <> "" then
+        let _ = Process.run ~prog:"nix" ~args:[ "build"; build_target ] () in
+        ()
+
+let validate_file ~target ~label path =
   if path = "" then Error ("missing launch input: " ^ label)
   else (
+    if not (Sys.file_exists path) then ensure_store_realized path;
+    if not (Sys.file_exists path) then
+      build_target_artifact_if_missing ~target ~label;
     if not (Sys.file_exists path) then ensure_store_realized path;
     if not (Sys.file_exists path) then
       Error ("missing launch input: " ^ label ^ " (" ^ path ^ ")")
     else Ok ())
 
-let validate_descriptor descriptor =
-  match validate_file ~label:"kernel" descriptor.kernel with
+let is_nix_store_path path = String.starts_with ~prefix:"/nix/store/" path
+
+let descriptor_paths descriptor =
+  let base_paths = [ descriptor.kernel; descriptor.disk ] in
+  match descriptor.initrd with
+  | Some initrd_path -> initrd_path :: base_paths
+  | None -> base_paths
+
+let all_paths_share_parent descriptor =
+  match descriptor_paths descriptor with
+  | [] -> true
+  | first_path :: rest ->
+      let first_parent = Filename.dirname first_path in
+      List.for_all
+        (fun path -> String.equal (Filename.dirname path) first_parent)
+        rest
+
+let validate_descriptor_coherence descriptor =
+  let kernel_is_store = is_nix_store_path descriptor.kernel in
+  let disk_is_store = is_nix_store_path descriptor.disk in
+  let initrd_is_store =
+    match descriptor.initrd with
+    | Some initrd_path -> is_nix_store_path initrd_path
+    | None -> true
+  in
+  let any_store_path =
+    kernel_is_store || disk_is_store
+    || match descriptor.initrd with Some _ -> initrd_is_store | None -> false
+  in
+  if
+    any_store_path
+    && ((not kernel_is_store) || (not disk_is_store) || not initrd_is_store)
+  then
+    Error
+      "launch inputs are not coherent: kernel/initrd/disk must all come from \
+       target outputs in /nix/store; fix target outputs and rebuild instead of \
+       reusing an external mutable disk image"
+  else if (not any_store_path) && not (all_paths_share_parent descriptor) then
+    Error
+      "launch inputs are not coherent: kernel/initrd/disk must come from the \
+       same target-built output set; fix target outputs and rebuild instead of \
+       reusing an external mutable disk image"
+  else Ok ()
+
+let validate_descriptor ~target descriptor =
+  match validate_file ~target ~label:"kernel" descriptor.kernel with
   | Error _ as error -> error
   | Ok () -> (
-      match validate_file ~label:"disk" descriptor.disk with
+      match validate_file ~target ~label:"disk" descriptor.disk with
       | Error _ as error -> error
       | Ok () -> (
           match descriptor.initrd with
           | Some initrd_path -> (
-              match validate_file ~label:"initrd" initrd_path with
+              match validate_file ~target ~label:"initrd" initrd_path with
               | Error _ as error -> error
               | Ok () ->
                   if descriptor.cpus <= 0 then
                     Error "missing launch input: cpus must be > 0"
                   else if descriptor.memory_mib <= 0 then
                     Error "missing launch input: memory_mib must be > 0"
-                  else Ok ())
+                  else validate_descriptor_coherence descriptor)
           | None ->
               if descriptor.cpus <= 0 then
                 Error "missing launch input: cpus must be > 0"
               else if descriptor.memory_mib <= 0 then
                 Error "missing launch input: memory_mib must be > 0"
-              else Ok ()))
+              else validate_descriptor_coherence descriptor))
 
 let lock_conflict stderr =
   let lowered = lowercase stderr in
@@ -270,6 +365,43 @@ let classify_launch_failure ~target ~descriptor ~status ~stderr =
         details = (if stderr = "" then "<no stderr>" else stderr);
       }
 
+let copy_file ~source ~destination =
+  let input_channel = open_in_bin source in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr input_channel)
+    (fun () ->
+      let output_channel = open_out_bin destination in
+      Fun.protect
+        ~finally:(fun () -> close_out_noerr output_channel)
+        (fun () ->
+          let buffer = Bytes.create 1_048_576 in
+          let rec loop () =
+            let read_bytes =
+              input input_channel buffer 0 (Bytes.length buffer)
+            in
+            if read_bytes > 0 then (
+              output output_channel buffer 0 read_bytes;
+              loop ())
+          in
+          loop ()))
+
+let ensure_writable_disk ~instance_name ~target descriptor =
+  if is_nix_store_path descriptor.disk then
+    let overlay_path =
+      Filename.concat
+        (Instance_store.runtime_dir ())
+        (instance_name ^ ".disk.img")
+    in
+    if Sys.file_exists overlay_path then Ok overlay_path
+    else (
+      Process.ensure_parent_dir overlay_path;
+      try
+        copy_file ~source:descriptor.disk ~destination:overlay_path;
+        Ok overlay_path
+      with Sys_error details ->
+        Error (Vm_disk_overlay_prepare_failed { target; details }))
+  else Ok descriptor.disk
+
 let launch_detached ~instance_name ~target descriptor =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
@@ -283,70 +415,76 @@ let launch_detached ~instance_name ~target descriptor =
   let memory_arg = "size=" ^ string_of_int descriptor.memory_mib ^ "M" in
   let cpu_arg = "boot=" ^ string_of_int descriptor.cpus in
   let serial_arg = "socket=" ^ serial_socket in
-  let base_args =
-    [
-      "--kernel";
-      descriptor.kernel;
-      "--disk";
-      "path=" ^ descriptor.disk;
-      "--cpus";
-      cpu_arg;
-      "--memory";
-      memory_arg;
-      "--serial";
-      serial_arg;
-      "--console";
-      "off";
-      "--cmdline";
-      "console=ttyS0 root=/dev/vda2 ro";
-    ]
-  in
-  let args =
-    match descriptor.initrd with
-    | Some initrd -> base_args @ [ "--initramfs"; initrd ]
-    | None -> base_args
-  in
-  let detached =
-    Process.run_detached ~prog:cloud_hypervisor_bin ~args
-      ~stdout_path:launch_stdout ~stderr_path:launch_stderr ()
-  in
-  let _ = Unix.select [] [] [] 0.1 in
-  let waited_pid, status = Unix.waitpid [ Unix.WNOHANG ] detached.pid in
-  if waited_pid = 0 then
-    Ok
-      {
-        Instance_store.pid = detached.pid;
-        serial_socket;
-        disk = descriptor.disk;
-      }
-  else
-    let stderr = read_file_if_exists launch_stderr |> String.trim in
-    match status with
-    | Unix.WEXITED code ->
-        Error (classify_launch_failure ~target ~descriptor ~status:code ~stderr)
-    | Unix.WSIGNALED signal ->
-        Error
-          (Vm_exited_immediately
-             {
-               target;
-               details =
-                 Printf.sprintf "cloud-hypervisor terminated by signal %d"
-                   signal;
-             })
-    | Unix.WSTOPPED signal ->
-        Error
-          (Vm_exited_immediately
-             {
-               target;
-               details =
-                 Printf.sprintf "cloud-hypervisor stopped (signal %d)" signal;
-             })
+  match ensure_writable_disk ~instance_name ~target descriptor with
+  | Error _ as error -> error
+  | Ok launch_disk -> (
+      let disk_arg = "path=" ^ launch_disk in
+      let base_args =
+        [
+          "--kernel";
+          descriptor.kernel;
+          "--disk";
+          disk_arg;
+          "--cpus";
+          cpu_arg;
+          "--memory";
+          memory_arg;
+          "--serial";
+          serial_arg;
+          "--console";
+          "off";
+          "--cmdline";
+          descriptor.cmdline;
+        ]
+      in
+      let args =
+        match descriptor.initrd with
+        | Some initrd -> base_args @ [ "--initramfs"; initrd ]
+        | None -> base_args
+      in
+      let detached =
+        Process.run_detached ~prog:cloud_hypervisor_bin ~args
+          ~stdout_path:launch_stdout ~stderr_path:launch_stderr ()
+      in
+      let _ = Unix.select [] [] [] 0.1 in
+      let waited_pid, status = Unix.waitpid [ Unix.WNOHANG ] detached.pid in
+      if waited_pid = 0 then
+        Ok
+          {
+            Instance_store.pid = detached.pid;
+            serial_socket;
+            disk = launch_disk;
+          }
+      else
+        let stderr = read_file_if_exists launch_stderr |> String.trim in
+        match status with
+        | Unix.WEXITED code ->
+            Error
+              (classify_launch_failure ~target ~descriptor ~status:code ~stderr)
+        | Unix.WSIGNALED signal ->
+            Error
+              (Vm_exited_immediately
+                 {
+                   target;
+                   details =
+                     Printf.sprintf "cloud-hypervisor terminated by signal %d"
+                       signal;
+                 })
+        | Unix.WSTOPPED signal ->
+            Error
+              (Vm_exited_immediately
+                 {
+                   target;
+                   details =
+                     Printf.sprintf "cloud-hypervisor stopped (signal %d)"
+                       signal;
+                 }))
 
 let provision ~instance_name ~target =
   match resolve_descriptor target with
   | Error _ as error -> error
   | Ok descriptor -> (
-      match validate_descriptor descriptor with
+      match validate_descriptor ~target descriptor with
       | Error details ->
           Error (Descriptor_validation_failed { target; details })
       | Ok () -> launch_detached ~instance_name ~target descriptor)
@@ -368,57 +506,141 @@ let rec connect_serial_socket socket endpoint attempts_remaining =
       connect_serial_socket socket endpoint (attempts_remaining - 1)
   | Unix.Unix_error (error, _, _) -> Error (Unix.error_message error)
 
-let attach_console ~instance_name runtime =
+let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
+    ~instance_name runtime =
   let endpoint = runtime.Instance_store.serial_socket in
   let socket = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
-  let stdin_fd = Unix.descr_of_in_channel stdin in
   let stdout_fd = Unix.descr_of_out_channel stdout in
+  let stdin_fd = Unix.descr_of_in_channel stdin in
   let close_socket () = try Unix.close socket with Unix.Unix_error _ -> () in
-  let read_and_forward src dst =
+  let write_capture capture_channel buffer read_bytes =
+    output capture_channel buffer 0 read_bytes;
+    flush capture_channel
+  in
+  let read_and_forward src dst capture_channel_opt =
     let buffer = Bytes.create 4096 in
     match Unix.read src buffer 0 (Bytes.length buffer) with
     | 0 -> `Eof
     | read_bytes ->
         write_all dst buffer 0 read_bytes;
+        (match capture_channel_opt with
+        | Some capture_channel ->
+            write_capture capture_channel buffer read_bytes
+        | None -> ());
         `Ok
+  in
+  let open_capture_channel capture =
+    try Ok (open_out_gen [ Open_creat; Open_trunc; Open_wronly ] 0o644 capture)
+    with Sys_error details ->
+      Error
+        (Console_capture_failed
+           { instance_name; capture_path = capture; details })
+  in
+  let close_capture_channel channel_opt =
+    match channel_opt with
+    | Some channel -> close_out_noerr channel
+    | None -> ()
   in
   match connect_serial_socket socket endpoint 40 with
   | Error details ->
       close_socket ();
       Error (Serial_endpoint_unavailable { instance_name; endpoint; details })
   | Ok () -> (
-      try
-        let rec loop read_stdin =
-          let read_fds =
-            if read_stdin then [ socket; stdin_fd ] else [ socket ]
+      let capture_channel_result =
+        match capture_path with
+        | Some capture -> open_capture_channel capture
+        | None -> Ok stdout
+      in
+      match capture_channel_result with
+      | Error _ as error ->
+          close_socket ();
+          error
+      | Ok capture_channel -> (
+          let capture_channel_opt =
+            match capture_path with
+            | Some _ -> Some capture_channel
+            | None -> None
           in
-          let ready, _, _ = Unix.select read_fds [] [] (-1.0) in
-          let read_stdin =
-            if read_stdin && List.exists (( = ) stdin_fd) ready then
-              match read_and_forward stdin_fd socket with
-              | `Eof ->
-                  Unix.shutdown socket Unix.SHUTDOWN_SEND;
-                  false
-              | `Ok -> true
-            else read_stdin
+          let read_timeout_seconds =
+            match timeout_seconds with
+            | Some value when value > 0.0 -> Some value
+            | _ -> None
           in
-          let socket_open =
-            if List.exists (( = ) socket) ready then
-              match read_and_forward socket stdout_fd with
-              | `Eof -> false
-              | `Ok -> true
-            else true
+          let deadline =
+            match read_timeout_seconds with
+            | Some seconds -> Some (Unix.gettimeofday () +. seconds)
+            | None -> None
           in
-          if socket_open then loop read_stdin
-        in
-        loop true;
-        close_socket ();
-        Ok ()
-      with Unix.Unix_error (error, _, _) ->
-        close_socket ();
-        Error
-          (Serial_endpoint_unavailable
-             { instance_name; endpoint; details = Unix.error_message error }))
+          try
+            let rec loop read_stdin =
+              let read_fds =
+                if read_stdin then [ socket; stdin_fd ] else [ socket ]
+              in
+              let wait_timeout =
+                match deadline with
+                | None -> -1.0
+                | Some deadline_time ->
+                    let remaining = deadline_time -. Unix.gettimeofday () in
+                    if remaining <= 0.0 then 0.0 else remaining
+              in
+              let ready, _, _ = Unix.select read_fds [] [] wait_timeout in
+              if
+                ready = []
+                && match deadline with Some _ -> true | None -> false
+              then
+                raise
+                  (Failure
+                     (Printf.sprintf "console timeout reached after %.3fs"
+                        (match read_timeout_seconds with
+                        | Some seconds -> seconds
+                        | None -> 0.0)));
+              let read_stdin =
+                if read_stdin && List.exists (( = ) stdin_fd) ready then
+                  match read_and_forward stdin_fd socket None with
+                  | `Eof ->
+                      Unix.shutdown socket Unix.SHUTDOWN_SEND;
+                      false
+                  | `Ok -> true
+                else read_stdin
+              in
+              let socket_open =
+                if List.exists (( = ) socket) ready then
+                  match
+                    read_and_forward socket stdout_fd capture_channel_opt
+                  with
+                  | `Eof -> false
+                  | `Ok -> true
+                else true
+              in
+              if socket_open then loop read_stdin
+            in
+            loop read_stdin;
+            close_capture_channel capture_channel_opt;
+            close_socket ();
+            Ok ()
+          with
+          | Failure message when contains message "console timeout reached" ->
+              close_capture_channel capture_channel_opt;
+              close_socket ();
+              Error
+                (Console_session_timed_out
+                   {
+                     instance_name;
+                     timeout_seconds =
+                       (match read_timeout_seconds with
+                       | Some seconds -> seconds
+                       | None -> 0.0);
+                   })
+          | Unix.Unix_error (error, _, _) ->
+              close_capture_channel capture_channel_opt;
+              close_socket ();
+              Error
+                (Serial_endpoint_unavailable
+                   {
+                     instance_name;
+                     endpoint;
+                     details = Unix.error_message error;
+                   })))
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->
@@ -443,6 +665,11 @@ let pp_provision_error = function
         target disk
   | Vm_exited_immediately { target; details } ->
       Printf.sprintf "VM launch failed for %s: %s" target details
+  | Vm_disk_overlay_prepare_failed { target; details } ->
+      Printf.sprintf
+        "VM launch failed for %s: unable to prepare writable overlay for \
+         target-built disk: %s"
+        target details
 
 let pp_console_error = function
   | Instance_not_running { instance_name } ->
@@ -455,3 +682,13 @@ let pp_console_error = function
         "Serial endpoint unavailable for '%s' at %s: %s. Check VM runtime \
          state for '%s'."
         instance_name endpoint details instance_name
+  | Console_capture_failed { instance_name; capture_path; details } ->
+      Printf.sprintf
+        "Console capture setup failed for '%s' at %s: %s. Check capture file \
+         path and permissions."
+        instance_name capture_path details
+  | Console_session_timed_out { instance_name; timeout_seconds } ->
+      Printf.sprintf
+        "Console session timed out for '%s' after %.3fs. Increase \
+         EPI_CONSOLE_TIMEOUT_SECONDS or retry with interactive console."
+        instance_name timeout_seconds

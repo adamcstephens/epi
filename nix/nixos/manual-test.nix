@@ -1,4 +1,9 @@
-{ lib, config, ... }:
+{
+  lib,
+  config,
+  pkgs,
+  ...
+}:
 {
   options.epi.cloudHypervisor = {
     kernel = lib.mkOption {
@@ -15,6 +20,12 @@
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = "Optional initrd path used by epi up cloud-hypervisor launch.";
+    };
+
+    cmdline = lib.mkOption {
+      type = lib.types.str;
+      default = "console=ttyS0 root=/dev/vda2 ro";
+      description = "Kernel command line used by epi up cloud-hypervisor launch.";
     };
 
     cpus = lib.mkOption {
@@ -34,13 +45,26 @@
     epi.cloudHypervisor = {
       kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
-      # Local writable image used for manual `epi up` testing.
-      disk = "/home/adam/projects/epi/nixos.img";
+      disk = "${config.system.build.images.qemu}/nixos-image-qcow2-${config.system.nixos.label}-${pkgs.stdenv.hostPlatform.system}.qcow2";
+      cmdline = "console=ttyS0 root=LABEL=nixos ro init=/nix/var/nix/profiles/system/init";
       cpus = 1;
       memory_mib = 1024;
     };
 
     networking.hostName = "manual-test";
+
+    fileSystems."/" = {
+      device = "/dev/disk/by-label/nixos";
+      fsType = "ext4";
+    };
+
+    boot.loader.grub.device = "/dev/vda";
+
+    boot.initrd.availableKernelModules = [
+      "virtio_pci"
+      "virtio_blk"
+      "ext4"
+    ];
 
     system.stateVersion = "24.11";
   };

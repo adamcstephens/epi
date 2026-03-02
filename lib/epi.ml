@@ -4,6 +4,55 @@ let fail message =
   prerr_endline message;
   exit 1
 
+type console_attach_options = {
+  read_stdin : bool;
+  capture_path : string option;
+  timeout_seconds : float option;
+}
+
+let parse_env_boolean text =
+  let lowered = String.lowercase_ascii (String.trim text) in
+  if lowered = "1" || lowered = "true" || lowered = "yes" || lowered = "on" then
+    Some true
+  else if
+    lowered = "0" || lowered = "false" || lowered = "no" || lowered = "off"
+  then Some false
+  else None
+
+let parse_env_positive_float ~name text =
+  match float_of_string_opt (String.trim text) with
+  | Some value when value > 0.0 -> value
+  | _ ->
+      fail
+        (Printf.sprintf "Invalid %s=%S. Expected a positive number of seconds."
+           name text)
+
+let resolve_console_attach_options () =
+  let stdin_fd = Unix.descr_of_in_channel stdin in
+  let default_read_stdin = Unix.isatty stdin_fd in
+  let read_stdin =
+    match Sys.getenv_opt "EPI_CONSOLE_NON_INTERACTIVE" with
+    | Some flag -> (
+        match parse_env_boolean flag with
+        | Some true -> false
+        | Some false -> true
+        | None ->
+            fail
+              (Printf.sprintf
+                 "Invalid EPI_CONSOLE_NON_INTERACTIVE=%S. Use true/false." flag)
+        )
+    | None -> default_read_stdin
+  in
+  let capture_path = Sys.getenv_opt "EPI_CONSOLE_CAPTURE_FILE" in
+  let timeout_seconds =
+    match Sys.getenv_opt "EPI_CONSOLE_TIMEOUT_SECONDS" with
+    | Some seconds ->
+        Some
+          (parse_env_positive_float ~name:"EPI_CONSOLE_TIMEOUT_SECONDS" seconds)
+    | None -> None
+  in
+  { read_stdin; capture_path; timeout_seconds }
+
 let resolve_instance_name instance_name_opt =
   match instance_name_opt with
   | Some instance_name -> instance_name
@@ -28,14 +77,18 @@ let resolve_instance_target ~command_name instance_name_opt =
             instances, or create it with `epi up %s --target <flake#config>`."
            instance_name instance_name)
 
-let attach_console_for_running_instance ~instance_name runtime =
+let attach_console_for_running_instance ~instance_name ~options runtime =
   if not (Process.pid_is_alive runtime.Instance_store.pid) then (
     Instance_store.clear_runtime instance_name;
     fail
       (Vm_launch.pp_console_error
          (Vm_launch.Instance_not_running { instance_name })))
   else
-    match Vm_launch.attach_console ~instance_name runtime with
+    match
+      Vm_launch.attach_console ~instance_name ~read_stdin:options.read_stdin
+        ?capture_path:options.capture_path
+        ?timeout_seconds:options.timeout_seconds runtime
+    with
     | Ok () -> ()
     | Error error -> fail (Vm_launch.pp_console_error error)
 
@@ -76,12 +129,14 @@ let up_command =
            "Attach to the instance serial console immediately after ensuring \
             runtime is active."
      in
+     let console_options = resolve_console_attach_options () in
      Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name in
      match Instance_store.find_runtime instance_name with
      | Some runtime when Process.pid_is_alive runtime.pid ->
          if attach_console then
-           attach_console_for_running_instance ~instance_name runtime
+           attach_console_for_running_instance ~instance_name
+             ~options:console_options runtime
          else
            Printf.printf
              "up: instance=%s target=%s already-running pid=%d serial=%s\n"
@@ -92,7 +147,8 @@ let up_command =
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
-               attach_console_for_running_instance ~instance_name runtime
+               attach_console_for_running_instance ~instance_name
+                 ~options:console_options runtime
              else
                Printf.printf
                  "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
@@ -104,7 +160,8 @@ let up_command =
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
-               attach_console_for_running_instance ~instance_name runtime
+               attach_console_for_running_instance ~instance_name
+                 ~options:console_options runtime
              else
                Printf.printf
                  "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
@@ -138,6 +195,7 @@ let console_command =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
      in
      Instance_store.reconcile_runtime ();
+     let console_options = resolve_console_attach_options () in
      let instance_name = resolve_instance_name instance_name_opt in
      match Instance_store.find_runtime instance_name with
      | None ->
@@ -145,7 +203,8 @@ let console_command =
            (Vm_launch.pp_console_error
               (Vm_launch.Instance_not_running { instance_name }))
      | Some runtime ->
-         attach_console_for_running_instance ~instance_name runtime)
+         attach_console_for_running_instance ~instance_name
+           ~options:console_options runtime)
 
 let terminate_instance_runtime ~instance_name runtime =
   let pid = runtime.Instance_store.pid in
