@@ -33,3 +33,17 @@ Basic failure triage:
   confirm the output is present.
 - If evaluation fails, inspect referenced module paths and flake output wiring
   in `flake.nix`.
+
+## Instance Removal
+
+Use `epi rm` to remove an instance from local state:
+
+```bash
+dune exec epi -- rm dev-a
+```
+
+If the instance is running, use force removal to terminate it first:
+
+```bash
+dune exec epi -- rm --force dev-a
+```

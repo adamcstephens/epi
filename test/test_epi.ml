@@ -124,6 +124,12 @@ let find_state_entry path instance_name =
   read_state_entries path
   |> List.find_opt (fun entry -> String.equal entry.instance_name instance_name)
 
+let assert_missing_state_entry ~context path instance_name =
+  match find_state_entry path instance_name with
+  | None -> ()
+  | Some _ ->
+      fail "%s: expected state entry %S to be removed" context instance_name
+
 let pid_is_alive pid =
   try
     Unix.kill pid 0;
@@ -503,6 +509,89 @@ let () =
                   match live with
                   | Some { pid = Some pid; _ } when pid = live_pid -> ()
                   | _ -> fail "expected live runtime metadata to remain active"))));
+  run_test ~name:"rm removes stopped instances from state" (fun () ->
+      with_state_file (fun state_file ->
+          write_state_entry state_file
+            {
+              instance_name = "dev-a";
+              target = ".#dev-a";
+              pid = None;
+              serial_socket = None;
+              disk = None;
+            };
+          let removed = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
+          assert_success ~context:"rm stopped instance" removed;
+          let _, out, _ = removed in
+          assert_contains ~context:"rm stopped output" out
+            "rm: removed instance=dev-a";
+          assert_missing_state_entry ~context:"rm stopped state cleanup"
+            state_file "dev-a"));
+  run_test ~name:"rm refuses to remove running instance without --force"
+    (fun () ->
+      with_state_file (fun state_file ->
+          with_sleep_process (fun pid ->
+              write_state_entry state_file
+                {
+                  instance_name = "dev-a";
+                  target = ".#dev-a";
+                  pid = Some pid;
+                  serial_socket = Some "/tmp/dev-a.serial.sock";
+                  disk = Some "/tmp/dev-a.disk";
+                };
+              let rejected = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
+              assert_failure ~context:"rm running without force" rejected;
+              let _, _, err = rejected in
+              assert_contains ~context:"rm running rejection message" err
+                "Instance 'dev-a' is running";
+              assert_contains ~context:"rm running rejection guidance" err
+                "use `epi rm --force dev-a`";
+              match find_state_entry state_file "dev-a" with
+              | Some { pid = Some active_pid; _ } when active_pid = pid -> ()
+              | _ -> fail "expected running instance to remain in state")));
+  run_test ~name:"rm --force terminates running instance before removing"
+    (fun () ->
+      with_state_file (fun state_file ->
+          with_sleep_process (fun pid ->
+              write_state_entry state_file
+                {
+                  instance_name = "dev-a";
+                  target = ".#dev-a";
+                  pid = Some pid;
+                  serial_socket = Some "/tmp/dev-a.serial.sock";
+                  disk = Some "/tmp/dev-a.disk";
+                };
+              let removed =
+                run_cli ~bin ~state_file [ "rm"; "--force"; "dev-a" ]
+              in
+              assert_success ~context:"rm force running" removed;
+              let _, out, _ = removed in
+              assert_contains ~context:"rm force output" out
+                "rm: removed instance=dev-a";
+              assert_missing_state_entry ~context:"rm force state cleanup"
+                state_file "dev-a")));
+  run_test ~name:"rm --force reports termination errors and keeps state"
+    (fun () ->
+      if Unix.geteuid () = 0 then ()
+      else
+        with_state_file (fun state_file ->
+            write_state_entry state_file
+              {
+                instance_name = "protected";
+                target = ".#protected";
+                pid = Some 1;
+                serial_socket = Some "/tmp/protected.serial.sock";
+                disk = Some "/tmp/protected.disk";
+              };
+            let failed =
+              run_cli ~bin ~state_file [ "rm"; "--force"; "protected" ]
+            in
+            assert_failure ~context:"rm force termination failure" failed;
+            let _, _, err = failed in
+            assert_contains ~context:"rm force termination failure output" err
+              "failed to terminate";
+            match find_state_entry state_file "protected" with
+            | Some { pid = Some 1; _ } -> ()
+            | _ -> fail "expected entry to remain after failed force removal"));
   run_test ~name:"list shows empty and multi-instance state" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
           with_state_file (fun state_file ->

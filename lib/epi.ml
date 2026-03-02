@@ -28,6 +28,20 @@ let resolve_instance_target ~command_name instance_name_opt =
             instances, or create it with `epi up %s --target <flake#config>`."
            instance_name instance_name)
 
+let pid_is_zombie pid =
+  let path = Printf.sprintf "/proc/%d/stat" pid in
+  if not (Sys.file_exists path) then false
+  else
+    let channel = open_in path in
+    Fun.protect
+      ~finally:(fun () -> close_in channel)
+      (fun () ->
+        let line = input_line channel in
+        match String.rindex_opt line ')' with
+        | Some index when index + 2 < String.length line ->
+            line.[index + 2] = 'Z'
+        | _ -> false)
+
 let up_command =
   Command.make ~summary:"Create or start an instance from a flake target."
     ~readme:(fun () ->
@@ -99,6 +113,63 @@ let console_command =
            | Ok () -> ()
            | Error error -> fail (Vm_launch.pp_console_error error)))
 
+let terminate_instance_runtime ~instance_name runtime =
+  let pid = runtime.Instance_store.pid in
+  try
+    Unix.kill pid Sys.sigterm;
+    let rec wait_until_stopped attempts_remaining =
+      if (not (Process.pid_is_alive pid)) || pid_is_zombie pid then Ok ()
+      else if attempts_remaining <= 0 then
+        Error
+          (Printf.sprintf
+             "failed to terminate instance '%s' (pid=%d): process is still \
+              running"
+             instance_name pid)
+      else
+        let _ = Unix.select [] [] [] 0.1 in
+        wait_until_stopped (attempts_remaining - 1)
+    in
+    wait_until_stopped 50
+  with Unix.Unix_error (error, _, _) ->
+    Error
+      (Printf.sprintf "failed to terminate instance '%s' (pid=%d): %s"
+         instance_name pid (Unix.error_message error))
+
+let rm_command =
+  Command.make ~summary:"Remove an instance from state and runtime."
+    ~readme:(fun () ->
+      "Remove an existing instance.\n\
+      \       If INSTANCE is omitted, `default` is used.\n\
+      \       If the instance is running, pass --force (or -f) to terminate it \
+       first.")
+    (let open Command.Std in
+     let+ force =
+       Arg.flag [ "force"; "f" ]
+         ~doc:"Terminate a running instance before removing it."
+     and+ instance_name_opt =
+       Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
+     in
+     let instance_name, _target =
+       resolve_instance_target ~command_name:"rm" instance_name_opt
+     in
+     match Instance_store.find_runtime instance_name with
+     | Some runtime when Process.pid_is_alive runtime.pid -> (
+         if not force then
+           fail
+             (Printf.sprintf
+                "Instance '%s' is running (pid=%d). Stop it first or use `epi \
+                 rm --force %s`."
+                instance_name runtime.pid instance_name)
+         else
+           match terminate_instance_runtime ~instance_name runtime with
+           | Ok () ->
+               Instance_store.remove instance_name;
+               Printf.printf "rm: removed instance=%s\n" instance_name
+           | Error message -> fail message)
+     | _ ->
+         Instance_store.remove instance_name;
+         Printf.printf "rm: removed instance=%s\n" instance_name)
+
 let list_command =
   Command.make ~summary:"List known instances and their targets."
     (let open Command.Std in
@@ -123,6 +194,7 @@ let cmd =
       \  epi up --target .#default\n\
       \  epi up dev-a --target github:org/repo#dev-a\n\
       \  epi status dev-a\n\
+      \  epi rm --force dev-a\n\
       \  epi logs")
     [
       ("up", up_command);
@@ -131,6 +203,7 @@ let cmd =
       ("down", lifecycle_command ~name:"down" ~summary:"Stop an instance.");
       ( "status",
         lifecycle_command ~name:"status" ~summary:"Show instance status." );
+      ("rm", rm_command);
       ("console", console_command);
       ( "ssh",
         lifecycle_command ~name:"ssh"

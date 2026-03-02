@@ -139,6 +139,15 @@ let clear_runtime instance_name =
     let update entry = { entry with runtime = None } in
     save (upsert_entry ~instance_name ~update entries)
 
+let remove instance_name =
+  let before = load () in
+  let after =
+    List.filter
+      (fun entry -> not (String.equal entry.instance_name instance_name))
+      before
+  in
+  if List.length before <> List.length after then save after
+
 let find_running_owner_by_disk disk =
   load ()
   |> List.find_map (fun { instance_name; runtime; _ } ->
