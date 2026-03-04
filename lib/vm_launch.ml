@@ -27,6 +27,8 @@ type provision_error =
   | Vm_exited_immediately of { target : string; details : string }
   | Vm_disk_overlay_prepare_failed of { target : string; details : string }
   | Seed_iso_generation_failed of { target : string; details : string }
+  | Pasta_missing of { target : string }
+  | Pasta_socket_unavailable of { target : string; socket : string }
 
 type console_error =
   | Instance_not_running of { instance_name : string }
@@ -484,6 +486,30 @@ let check_genisoimage () =
   in
   result.status = 0
 
+let pasta_bin () =
+  match Sys.getenv_opt "EPI_PASTA_BIN" with
+  | Some path -> path
+  | None -> "pasta"
+
+let check_pasta () =
+  let bin = pasta_bin () in
+  let result =
+    Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
+  in
+  result.status = 0
+
+let wait_for_pasta_socket socket_path max_wait_ms =
+  let step_ms = 50 in
+  let steps = max_wait_ms / step_ms in
+  let rec loop n =
+    if Sys.file_exists socket_path then true
+    else if n = 0 then false
+    else
+      let _ = Unix.select [] [] [] (float_of_int step_ms /. 1000.0) in
+      loop (n - 1)
+  in
+  loop steps
+
 let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys =
   if not (check_genisoimage ()) then Error Genisoimage_missing
   else
@@ -541,7 +567,7 @@ let launch_detached ~instance_name ~target descriptor =
   let launch_stdout = Instance_store.launch_stdout_path instance_name in
   let launch_stderr = Instance_store.launch_stderr_path instance_name in
   if Sys.file_exists serial_socket then Unix.unlink serial_socket;
-  let memory_arg = "size=" ^ string_of_int descriptor.memory_mib ^ "M" in
+  let memory_arg = "size=" ^ string_of_int descriptor.memory_mib ^ "M,shared=on" in
   let cpu_arg = "boot=" ^ string_of_int descriptor.cpus in
   let serial_arg = "socket=" ^ serial_socket in
   let username =
@@ -549,6 +575,11 @@ let launch_detached ~instance_name ~target descriptor =
   in
   let runtime_dir = Instance_store.runtime_dir () in
   let ssh_keys = read_ssh_public_keys () in
+  let pasta_sock =
+    Filename.concat runtime_dir (instance_name ^ ".passt.sock")
+  in
+  if not (check_pasta ()) then Error (Pasta_missing { target })
+  else
   match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys with
   | Error Genisoimage_missing ->
       Error
@@ -565,8 +596,26 @@ let launch_detached ~instance_name ~target descriptor =
   match ensure_writable_disk ~instance_name ~target descriptor with
   | Error _ as error -> error
   | Ok launch_disk -> (
+      if Sys.file_exists pasta_sock then Unix.unlink pasta_sock;
+      let pasta_repair_sock = pasta_sock ^ ".repair" in
+      if Sys.file_exists pasta_repair_sock then Unix.unlink pasta_repair_sock;
+      let _pasta_proc =
+        Process.run_detached ~prog:(pasta_bin ())
+          ~args:[ "--vhost-user"; "--socket"; pasta_sock ]
+          ~stdout_path:
+            (Filename.concat runtime_dir (instance_name ^ ".pasta.stdout.log"))
+          ~stderr_path:
+            (Filename.concat runtime_dir (instance_name ^ ".pasta.stderr.log"))
+          ()
+      in
+      if not (wait_for_pasta_socket pasta_sock 2000) then
+        Error (Pasta_socket_unavailable { target; socket = pasta_sock })
+      else
       let disk_arg = "path=" ^ launch_disk in
       let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
+      let net_arg =
+        "vhost_user=true,socket=" ^ pasta_sock ^ ",vhost_mode=client"
+      in
       let base_args =
         [
           "--kernel";
@@ -587,7 +636,7 @@ let launch_detached ~instance_name ~target descriptor =
           "--cmdline";
           descriptor.cmdline;
           "--net";
-          "tap=";
+          net_arg;
         ]
       in
       let args =
@@ -827,6 +876,17 @@ let pp_provision_error = function
       Printf.sprintf
         "VM launch failed for %s: seed ISO generation failed: %s" target
         details
+  | Pasta_missing { target } ->
+      Printf.sprintf
+        "VM launch failed for %s: pasta binary not found on $PATH. Set \
+         EPI_PASTA_BIN or install the passt package to enable userspace \
+         networking."
+        target
+  | Pasta_socket_unavailable { target; socket } ->
+      Printf.sprintf
+        "VM launch failed for %s: pasta failed to create vhost-user socket \
+         at %s. Check that the pasta binary supports --vhost-user mode."
+        target socket
 
 let pp_console_error = function
   | Instance_not_running { instance_name } ->

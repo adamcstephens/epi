@@ -34,6 +34,7 @@
               packages = [
                 pkgs.cdrkit
                 pkgs.cloud-hypervisor
+                pkgs.passt
               ]
               ++ (with ocamlPackages; [
                 dune_3

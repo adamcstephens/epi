@@ -413,14 +413,28 @@ let with_mock_runtime f =
          \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
           fi\n\
           exit 0\n");
+      let pasta = Filename.concat dir "pasta.sh" in
+      write_file pasta
+        "#!/usr/bin/env sh\n\
+         # Mock pasta: find --socket arg, touch the socket file, stay alive\n\
+         prev=\"\"\n\
+         for arg in \"$@\"; do\n\
+        \  if [ \"$prev\" = \"--socket\" ]; then\n\
+        \    touch \"$arg\"\n\
+        \  fi\n\
+        \  prev=\"$arg\"\n\
+         done\n\
+         exec sleep 30\n";
       make_executable resolver;
       make_executable cloud_hypervisor;
       make_executable genisoimage;
+      make_executable pasta;
       let extra_env =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
           ("EPI_GENISOIMAGE_BIN", genisoimage);
+          ("EPI_PASTA_BIN", pasta);
           ("EPI_MOCK_VM_SLEEP", "30");
         ]
       in
@@ -1181,6 +1195,54 @@ let () =
               in
               assert_contains ~context:"seed iso disk arg" launch_contents
                 "cidata.iso,readonly=on";
-              assert_contains ~context:"net tap arg" launch_contents
-                "--net tap=")));
+              assert_contains ~context:"pasta net arg" launch_contents
+                "--net vhost_user=true,socket=")));
+  run_test ~name:"EPI_PASTA_BIN overrides pasta binary path" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_temp_dir "epi-pasta-override" (fun custom_dir ->
+              with_state_file (fun state_file ->
+                  let custom_pasta =
+                    Filename.concat custom_dir "custom-pasta.sh"
+                  in
+                  write_file custom_pasta
+                    "#!/usr/bin/env sh\n\
+                     prev=\"\"\n\
+                     for arg in \"$@\"; do\n\
+                    \  if [ \"$prev\" = \"--socket\" ]; then\n\
+                    \    touch \"$arg\"\n\
+                    \  fi\n\
+                    \  prev=\"$arg\"\n\
+                     done\n\
+                     exec sleep 30\n";
+                  make_executable custom_pasta;
+                  let extra_env =
+                    List.filter
+                      (fun (key, _) ->
+                        not (String.equal key "EPI_PASTA_BIN"))
+                      extra_env
+                    @ [ ("EPI_PASTA_BIN", custom_pasta) ]
+                  in
+                  let result =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "pasta-override"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"custom pasta bin up" result))));
+  run_test ~name:"missing pasta binary produces a clear error" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let extra_env =
+                List.filter
+                  (fun (key, _) -> not (String.equal key "EPI_PASTA_BIN"))
+                  extra_env
+                @ [ ("EPI_PASTA_BIN", "nonexistent-pasta-bin") ]
+              in
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "no-pasta"; "--target"; ".#dev" ]
+              in
+              assert_failure ~context:"missing pasta" result;
+              let _, _, err = result in
+              assert_contains ~context:"pasta error message" err "pasta";
+              assert_contains ~context:"pasta EPI_PASTA_BIN hint" err
+                "EPI_PASTA_BIN")));
   ()
