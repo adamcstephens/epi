@@ -32,6 +32,7 @@
           {
             devShells.default = pkgs.mkShell {
               packages = [
+                pkgs.cdrkit
                 pkgs.cloud-hypervisor
               ]
               ++ (with ocamlPackages; [

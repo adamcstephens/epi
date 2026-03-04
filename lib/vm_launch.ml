@@ -26,6 +26,7 @@ type provision_error =
   | Vm_disk_lock_held_unknown of { target : string; disk : string }
   | Vm_exited_immediately of { target : string; details : string }
   | Vm_disk_overlay_prepare_failed of { target : string; details : string }
+  | Seed_iso_generation_failed of { target : string; details : string }
 
 type console_error =
   | Instance_not_running of { instance_name : string }
@@ -344,7 +345,8 @@ let validate_descriptor ~target descriptor =
 
 let lock_conflict stderr =
   let lowered = lowercase stderr in
-  contains lowered "lock"
+  contains lowered "locked"
+  || contains lowered "lock conflict"
   || contains lowered "resource temporarily unavailable"
   || contains lowered "already in use"
 
@@ -402,6 +404,133 @@ let ensure_writable_disk ~instance_name ~target descriptor =
         Error (Vm_disk_overlay_prepare_failed { target; details }))
   else Ok descriptor.disk
 
+let read_ssh_public_keys () =
+  let ssh_dir =
+    match Sys.getenv_opt "EPI_SSH_DIR" with
+    | Some dir -> Some dir
+    | None -> (
+        match Sys.getenv_opt "HOME" with
+        | Some home -> Some (Filename.concat home ".ssh")
+        | None -> None)
+  in
+  match ssh_dir with
+  | None ->
+      Printf.eprintf
+        "warning: HOME not set, cannot read SSH public keys\n%!";
+      []
+  | Some ssh_dir ->
+      if not (Sys.file_exists ssh_dir) then (
+        Printf.eprintf
+          "warning: no SSH public keys found (no ~/.ssh directory)\n%!";
+        [])
+      else
+        let entries = Sys.readdir ssh_dir |> Array.to_list in
+        let pub_files =
+          List.filter
+            (fun name ->
+              let len = String.length name in
+              len > 4 && String.sub name (len - 4) 4 = ".pub")
+            entries
+        in
+        let keys =
+          List.filter_map
+            (fun name ->
+              let path = Filename.concat ssh_dir name in
+              let content = read_file_if_exists path |> String.trim in
+              if content = "" then None else Some content)
+            pub_files
+        in
+        if keys = [] then
+          Printf.eprintf
+            "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
+        keys
+
+let generate_user_data ~username ~ssh_keys =
+  let buf = Buffer.create 256 in
+  Buffer.add_string buf "#cloud-config\nusers:\n";
+  Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
+  Buffer.add_string buf "    groups: wheel\n";
+  Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
+  Buffer.add_string buf "    shell: /bin/bash\n";
+  (match ssh_keys with
+  | [] -> ()
+  | keys ->
+      Buffer.add_string buf "    ssh_authorized_keys:\n";
+      List.iter
+        (fun key ->
+          Buffer.add_string buf (Printf.sprintf "      - %s\n" key))
+        keys);
+  Buffer.contents buf
+
+let generate_meta_data ~instance_name =
+  Printf.sprintf "instance-id: %s\nlocal-hostname: %s\n" instance_name
+    instance_name
+
+type seed_iso_error =
+  | Genisoimage_missing
+  | Seed_iso_creation_failed of { details : string }
+
+let genisoimage_bin () =
+  match Sys.getenv_opt "EPI_GENISOIMAGE_BIN" with
+  | Some path -> path
+  | None -> "genisoimage"
+
+let check_genisoimage () =
+  let bin = genisoimage_bin () in
+  let result =
+    Process.run ~prog:"sh"
+      ~args:[ "-c"; "command -v " ^ bin ]
+      ()
+  in
+  result.status = 0
+
+let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys =
+  if not (check_genisoimage ()) then Error Genisoimage_missing
+  else
+    let iso_path =
+      Filename.concat runtime_dir (instance_name ^ ".cidata.iso")
+    in
+    let staging_dir =
+      Filename.concat runtime_dir (instance_name ^ ".cidata")
+    in
+    Process.ensure_parent_dir iso_path;
+    (if not (Sys.file_exists staging_dir) then
+       Unix.mkdir staging_dir 0o755);
+    let user_data_path = Filename.concat staging_dir "user-data" in
+    let meta_data_path = Filename.concat staging_dir "meta-data" in
+    let user_data = generate_user_data ~username ~ssh_keys in
+    let meta_data = generate_meta_data ~instance_name in
+    let write path content =
+      let channel = open_out path in
+      output_string channel content;
+      close_out channel
+    in
+    write user_data_path user_data;
+    write meta_data_path meta_data;
+    let result =
+      Process.run ~prog:(genisoimage_bin ())
+        ~args:
+          [
+            "-output";
+            iso_path;
+            "-volid";
+            "cidata";
+            "-joliet";
+            "-rock";
+            user_data_path;
+            meta_data_path;
+          ]
+        ()
+    in
+    if result.status <> 0 then
+      Error
+        (Seed_iso_creation_failed
+           {
+             details =
+               (if result.stderr = "" then "<no stderr>" else result.stderr);
+           })
+    else Ok iso_path
+
 let launch_detached ~instance_name ~target descriptor =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
@@ -415,16 +544,38 @@ let launch_detached ~instance_name ~target descriptor =
   let memory_arg = "size=" ^ string_of_int descriptor.memory_mib ^ "M" in
   let cpu_arg = "boot=" ^ string_of_int descriptor.cpus in
   let serial_arg = "socket=" ^ serial_socket in
+  let username =
+    match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
+  in
+  let runtime_dir = Instance_store.runtime_dir () in
+  let ssh_keys = read_ssh_public_keys () in
+  match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys with
+  | Error Genisoimage_missing ->
+      Error
+        (Seed_iso_generation_failed
+           {
+             target;
+             details =
+               "genisoimage not found on $PATH. Install cdrkit to enable \
+                cloud-init seed ISO generation.";
+           })
+  | Error (Seed_iso_creation_failed { details }) ->
+      Error (Seed_iso_generation_failed { target; details })
+  | Ok seed_iso_path ->
   match ensure_writable_disk ~instance_name ~target descriptor with
   | Error _ as error -> error
   | Ok launch_disk -> (
       let disk_arg = "path=" ^ launch_disk in
+      let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
       let base_args =
         [
           "--kernel";
           descriptor.kernel;
           "--disk";
           disk_arg;
+          seed_disk_arg;
+        ]
+        @ [
           "--cpus";
           cpu_arg;
           "--memory";
@@ -435,6 +586,8 @@ let launch_detached ~instance_name ~target descriptor =
           "off";
           "--cmdline";
           descriptor.cmdline;
+          "--net";
+          "tap=";
         ]
       in
       let args =
@@ -670,6 +823,10 @@ let pp_provision_error = function
         "VM launch failed for %s: unable to prepare writable overlay for \
          target-built disk: %s"
         target details
+  | Seed_iso_generation_failed { target; details } ->
+      Printf.sprintf
+        "VM launch failed for %s: seed ISO generation failed: %s" target
+        details
 
 let pp_console_error = function
   | Instance_not_running { instance_name } ->

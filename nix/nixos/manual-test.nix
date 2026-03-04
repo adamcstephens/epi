@@ -63,8 +63,18 @@
     boot.initrd.availableKernelModules = [
       "virtio_pci"
       "virtio_blk"
+      "virtio_net"
       "ext4"
     ];
+
+    services.cloud-init.enable = true;
+
+    services.openssh = {
+      enable = true;
+      settings.PasswordAuthentication = false;
+    };
+
+    networking.useDHCP = true;
 
     system.stateVersion = "24.11";
   };

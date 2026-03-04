@@ -398,12 +398,29 @@ let with_mock_runtime f =
          \  exit 23\n\
           fi\n\
           exec sleep \"${EPI_MOCK_VM_SLEEP:-30}\"\n");
+      let genisoimage = Filename.concat dir "genisoimage.sh" in
+      write_file genisoimage
+        ("#!/usr/bin/env sh\n\
+          # Mock genisoimage: create a fake ISO file at -output path\n\
+          OUTPUT=\"\"\n\
+          while [ $# -gt 0 ]; do\n\
+         \  case \"$1\" in\n\
+         \    -output) OUTPUT=\"$2\"; shift 2 ;;\n\
+         \    *) shift ;;\n\
+         \  esac\n\
+          done\n\
+          if [ -n \"$OUTPUT\" ]; then\n\
+         \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
+          fi\n\
+          exit 0\n");
       make_executable resolver;
       make_executable cloud_hypervisor;
+      make_executable genisoimage;
       let extra_env =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
+          ("EPI_GENISOIMAGE_BIN", genisoimage);
           ("EPI_MOCK_VM_SLEEP", "30");
         ]
       in
@@ -991,4 +1008,179 @@ let () =
                 "default\t.#default";
               assert_contains ~context:"list qa row" listed_out
                 "qa-1\tgithub:org/repo#qa-1")));
+  run_test
+    ~name:
+      "seed ISO generation creates valid user-data and meta-data with correct \
+       content"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "seed-test"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"seed iso up" result;
+              let runtime_dir =
+                Filename.concat (Filename.dirname state_file) "runtime"
+              in
+              let staging_dir =
+                Filename.concat runtime_dir "seed-test.cidata"
+              in
+              let user_data_path =
+                Filename.concat staging_dir "user-data"
+              in
+              let meta_data_path =
+                Filename.concat staging_dir "meta-data"
+              in
+              if not (Sys.file_exists user_data_path) then
+                fail "user-data file was not created";
+              if not (Sys.file_exists meta_data_path) then
+                fail "meta-data file was not created";
+              let user_data =
+                let channel = open_in user_data_path in
+                Fun.protect
+                  ~finally:(fun () -> close_in channel)
+                  (fun () -> read_all channel)
+              in
+              let meta_data =
+                let channel = open_in meta_data_path in
+                Fun.protect
+                  ~finally:(fun () -> close_in channel)
+                  (fun () -> read_all channel)
+              in
+              assert_contains ~context:"user-data cloud-config header"
+                user_data "#cloud-config";
+              assert_contains ~context:"user-data users section" user_data
+                "users:";
+              assert_contains ~context:"user-data wheel group" user_data
+                "groups: wheel";
+              assert_contains ~context:"user-data sudo" user_data
+                "sudo: ALL=(ALL) NOPASSWD:ALL";
+              assert_contains ~context:"user-data shell" user_data
+                "shell: /bin/bash";
+              assert_contains ~context:"meta-data instance-id" meta_data
+                "instance-id: seed-test";
+              assert_contains ~context:"meta-data local-hostname" meta_data
+                "local-hostname: seed-test")));
+  run_test
+    ~name:"SSH keys are read from ~/.ssh/*.pub and included in user-data"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-ssh-key-test" (fun ssh_dir ->
+                  write_file
+                    (Filename.concat ssh_dir "id_ed25519.pub")
+                    "ssh-ed25519 AAAAC3test testkey@host";
+                  write_file
+                    (Filename.concat ssh_dir "id_rsa.pub")
+                    "ssh-rsa AAAAB3test testkey2@host";
+                  let extra_env =
+                    ("EPI_SSH_DIR", ssh_dir) :: extra_env
+                  in
+                  let result =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "ssh-key-test"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"ssh key up" result;
+                  let runtime_dir =
+                    Filename.concat (Filename.dirname state_file) "runtime"
+                  in
+                  let user_data_path =
+                    Filename.concat
+                      (Filename.concat runtime_dir "ssh-key-test.cidata")
+                      "user-data"
+                  in
+                  if not (Sys.file_exists user_data_path) then
+                    fail "user-data file was not created";
+                  let user_data =
+                    let channel = open_in user_data_path in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  assert_contains ~context:"user-data ssh_authorized_keys"
+                    user_data "ssh_authorized_keys:";
+                  assert_contains ~context:"user-data ed25519 key" user_data
+                    "ssh-ed25519 AAAAC3test testkey@host";
+                  assert_contains ~context:"user-data rsa key" user_data
+                    "ssh-rsa AAAAB3test testkey2@host"))));
+  run_test
+    ~name:"missing SSH keys produce a warning but don't fail provisioning"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-no-ssh-test" (fun empty_ssh_dir ->
+                  let extra_env =
+                    ("EPI_SSH_DIR", empty_ssh_dir) :: extra_env
+                  in
+                  let result =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "no-ssh-test"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"no ssh keys up" result;
+                  let _, _, stderr = result in
+                  assert_contains ~context:"no ssh keys warning" stderr
+                    "no SSH public keys found";
+                  let runtime_dir =
+                    Filename.concat (Filename.dirname state_file) "runtime"
+                  in
+                  let user_data_path =
+                    Filename.concat
+                      (Filename.concat runtime_dir "no-ssh-test.cidata")
+                      "user-data"
+                  in
+                  if not (Sys.file_exists user_data_path) then
+                    fail "user-data file was not created";
+                  let user_data =
+                    let channel = open_in user_data_path in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  if contains user_data "ssh_authorized_keys" then
+                    fail
+                      "ssh_authorized_keys should be omitted when no keys \
+                       found"))));
+  run_test ~name:"missing genisoimage produces a clear error" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let extra_env =
+                List.filter
+                  (fun (key, _) ->
+                    not (String.equal key "EPI_GENISOIMAGE_BIN"))
+                  extra_env
+                @ [ ("EPI_GENISOIMAGE_BIN", "nonexistent-genisoimage-bin") ]
+              in
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "no-genisoimage"; "--target"; ".#dev" ]
+              in
+              assert_failure ~context:"missing genisoimage" result;
+              let _, _, err = result in
+              assert_contains ~context:"genisoimage error message" err
+                "genisoimage not found";
+              assert_contains ~context:"genisoimage cdrkit hint" err
+                "cdrkit")));
+  run_test
+    ~name:"seed ISO is passed as additional --disk argument to cloud-hypervisor"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "disk-test"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"seed iso disk arg up" result;
+              let launch_contents =
+                if Sys.file_exists launch_log then
+                  let channel = open_in launch_log in
+                  Fun.protect
+                    ~finally:(fun () -> close_in channel)
+                    (fun () -> read_all channel)
+                else ""
+              in
+              assert_contains ~context:"seed iso disk arg" launch_contents
+                "cidata.iso,readonly=on";
+              assert_contains ~context:"net tap arg" launch_contents
+                "--net tap=")));
   ()
