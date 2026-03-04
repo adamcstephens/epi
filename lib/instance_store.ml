@@ -1,6 +1,11 @@
 let default_instance_name = "default"
 
-type runtime = { pid : int; serial_socket : string; disk : string }
+type runtime = {
+  pid : int;
+  serial_socket : string;
+  disk : string;
+  passt_pid : int option;
+}
 
 type entry = {
   instance_name : string;
@@ -41,21 +46,35 @@ let launch_stderr_path instance_name =
 
 let parse_int text = int_of_string_opt text
 
-let runtime_of_fields pid_text serial_socket disk =
+let runtime_of_fields pid_text serial_socket disk passt_pid =
   match parse_int pid_text with
-  | Some pid when pid > 0 -> Some { pid; serial_socket; disk }
+  | Some pid when pid > 0 -> Some { pid; serial_socket; disk; passt_pid }
   | _ -> None
 
 let entry_of_fields = function
   | [ instance_name; target ] -> Some { instance_name; target; runtime = None }
   | [ instance_name; target; pid_text ] ->
-      Some { instance_name; target; runtime = runtime_of_fields pid_text "" "" }
+      Some
+        {
+          instance_name;
+          target;
+          runtime = runtime_of_fields pid_text "" "" None;
+        }
   | [ instance_name; target; pid_text; serial_socket; disk ] ->
       Some
         {
           instance_name;
           target;
-          runtime = runtime_of_fields pid_text serial_socket disk;
+          runtime = runtime_of_fields pid_text serial_socket disk None;
+        }
+  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
+      Some
+        {
+          instance_name;
+          target;
+          runtime =
+            runtime_of_fields pid_text serial_socket disk
+              (parse_int passt_pid_text);
         }
   | _ -> None
 
@@ -83,10 +102,13 @@ let save entries =
   List.iter
     (fun { instance_name; target; runtime } ->
       match runtime with
-      | Some { pid; serial_socket; disk } ->
-          Printf.fprintf channel "%s\t%s\t%d\t%s\t%s\n" instance_name target pid
-            serial_socket disk
-      | None -> Printf.fprintf channel "%s\t%s\t\t\t\n" instance_name target)
+      | Some { pid; serial_socket; disk; passt_pid } ->
+          let passt_pid_text =
+            match passt_pid with Some p -> string_of_int p | None -> ""
+          in
+          Printf.fprintf channel "%s\t%s\t%d\t%s\t%s\t%s\n" instance_name
+            target pid serial_socket disk passt_pid_text
+      | None -> Printf.fprintf channel "%s\t%s\t\t\t\t\n" instance_name target)
     entries;
   close_out channel
 
@@ -157,10 +179,18 @@ let find_running_owner_by_disk disk =
           Some (instance_name, instance_runtime)
       | _ -> None)
 
+let kill_if_alive pid =
+  try Unix.kill pid Sys.sigterm
+  with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
+
 let reconcile_runtime () =
   let clear_if_stale entry =
     match entry.runtime with
-    | Some { pid; serial_socket; _ } when not (Process.pid_is_alive pid) ->
+    | Some { pid; serial_socket; passt_pid; _ }
+      when not (Process.pid_is_alive pid) ->
+        (match passt_pid with
+        | Some passt_pid -> kill_if_alive passt_pid
+        | None -> ());
         if Sys.file_exists serial_socket then Unix.unlink serial_socket;
         { entry with runtime = None }
     | _ -> entry

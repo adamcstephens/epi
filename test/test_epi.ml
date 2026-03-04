@@ -4,6 +4,7 @@ type state_entry = {
   pid : int option;
   serial_socket : string option;
   disk : string option;
+  passt_pid : int option;
 }
 
 let contains text snippet =
@@ -95,12 +96,30 @@ let parse_state_line line =
   match fields with
   | [ instance_name; target ] ->
       Some
-        { instance_name; target; pid = None; serial_socket = None; disk = None }
+        {
+          instance_name;
+          target;
+          pid = None;
+          serial_socket = None;
+          disk = None;
+          passt_pid = None;
+        }
   | [ instance_name; target; pid_text; serial_socket; disk ] ->
       let pid, serial_socket, disk =
         parse_runtime pid_text serial_socket disk
       in
-      Some { instance_name; target; pid; serial_socket; disk }
+      Some
+        { instance_name; target; pid; serial_socket; disk; passt_pid = None }
+  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
+      let pid, serial_socket, disk =
+        parse_runtime pid_text serial_socket disk
+      in
+      let passt_pid =
+        match int_of_string_opt passt_pid_text with
+        | Some value when value > 0 -> Some value
+        | _ -> None
+      in
+      Some { instance_name; target; pid; serial_socket; disk; passt_pid }
   | _ -> None
 
 let read_state_entries path =
@@ -138,6 +157,16 @@ let pid_is_alive pid =
   | Unix.Unix_error (Unix.ESRCH, _, _) -> false
   | Unix.Unix_error (Unix.EPERM, _, _) -> true
 
+let wait_for_pid_to_die ~attempts pid =
+  let rec loop remaining =
+    if not (pid_is_alive pid) then true
+    else if remaining <= 0 then false
+    else
+      let _ = Unix.select [] [] [] 0.05 in
+      loop (remaining - 1)
+  in
+  loop attempts
+
 let terminate_pid pid =
   (if pid_is_alive pid then
      try Unix.kill pid Sys.sigterm with Unix.Unix_error _ -> ());
@@ -147,7 +176,10 @@ let terminate_pid pid =
 let cleanup_state_pids path =
   read_state_entries path
   |> List.iter (fun entry ->
-      match entry.pid with Some pid -> terminate_pid pid | None -> ())
+      (match entry.pid with Some pid -> terminate_pid pid | None -> ());
+      match entry.passt_pid with
+      | Some pid -> terminate_pid pid
+      | None -> ())
 
 let with_state_file f =
   let path = Filename.temp_file "epi-cli-test" ".tsv" in
@@ -196,9 +228,13 @@ let write_state_entry path entry =
     match entry.serial_socket with Some value -> value | None -> ""
   in
   let disk = match entry.disk with Some value -> value | None -> "" in
+  let passt_pid =
+    match entry.passt_pid with Some value -> string_of_int value | None -> ""
+  in
   output_string channel
     (String.concat "\t"
-       [ entry.instance_name; entry.target; pid; serial_socket; disk ]);
+       [ entry.instance_name; entry.target; pid; serial_socket; disk;
+         passt_pid ]);
   output_char channel '\n';
   close_out channel
 
@@ -413,28 +449,14 @@ let with_mock_runtime f =
          \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
           fi\n\
           exit 0\n");
-      let pasta = Filename.concat dir "pasta.sh" in
-      write_file pasta
-        "#!/usr/bin/env sh\n\
-         # Mock pasta: find --socket arg, touch the socket file, stay alive\n\
-         prev=\"\"\n\
-         for arg in \"$@\"; do\n\
-        \  if [ \"$prev\" = \"--socket\" ]; then\n\
-        \    touch \"$arg\"\n\
-        \  fi\n\
-        \  prev=\"$arg\"\n\
-         done\n\
-         exec sleep 30\n";
       make_executable resolver;
       make_executable cloud_hypervisor;
       make_executable genisoimage;
-      make_executable pasta;
       let extra_env =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
           ("EPI_GENISOIMAGE_BIN", genisoimage);
-          ("EPI_PASST_BIN", pasta);
           ("EPI_MOCK_VM_SLEEP", "30");
         ]
       in
@@ -496,12 +518,20 @@ let () =
                 "socket=";
               let dev_a = find_state_entry state_file "dev-a" in
               (match dev_a with
-              | Some { pid = Some _; serial_socket = Some _; _ } -> ()
-              | _ -> fail "expected runtime metadata for dev-a");
+              | Some { pid = Some _; serial_socket = Some _; passt_pid = Some _; _ }
+                ->
+                  ()
+              | _ ->
+                  fail
+                    "expected runtime metadata with passt_pid for dev-a");
               let default = find_state_entry state_file "default" in
               (match default with
-              | Some { pid = Some _; serial_socket = Some _; _ } -> ()
-              | _ -> fail "expected runtime metadata for default");
+              | Some { pid = Some _; serial_socket = Some _; passt_pid = Some _; _ }
+                ->
+                  ()
+              | _ ->
+                  fail
+                    "expected runtime metadata with passt_pid for default");
               let status_default =
                 run_cli_with_env ~bin ~state_file ~extra_env [ "status" ]
               in
@@ -685,6 +715,7 @@ let () =
               pid = None;
               serial_socket = None;
               disk = None;
+            passt_pid = None;
             };
           let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
           assert_failure ~context:"console not running" result;
@@ -707,6 +738,7 @@ let () =
                           pid = Some pid;
                           serial_socket = Some serial_socket;
                           disk = Some "/tmp/dev-a.disk";
+                        passt_pid = None;
                         };
                       let result =
                         run_cli ~bin ~state_file [ "console"; "dev-a" ]
@@ -730,6 +762,7 @@ let () =
                           pid = Some pid;
                           serial_socket = Some serial_socket;
                           disk = Some "/tmp/dev-a.disk";
+                        passt_pid = None;
                         };
                       let result =
                         run_cli_with_env ~bin ~state_file
@@ -774,6 +807,7 @@ let () =
                   pid = Some pid;
                   serial_socket = Some "/tmp/epi-nonexistent.sock";
                   disk = Some "/tmp/disk.img";
+                passt_pid = None;
                 };
               let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
               assert_failure ~context:"console unavailable endpoint" result;
@@ -796,6 +830,7 @@ let () =
                           pid = Some pid;
                           serial_socket = Some serial_socket;
                           disk = Some "/tmp/dev-a.disk";
+                        passt_pid = None;
                         };
                       let result =
                         run_cli_with_env ~bin ~state_file
@@ -877,6 +912,7 @@ let () =
                               pid = Some pid;
                               serial_socket = Some serial_socket;
                               disk = Some "/tmp/dev-a.disk";
+                            passt_pid = None;
                             };
                           let result =
                             run_cli_with_env ~bin ~state_file ~extra_env
@@ -917,6 +953,7 @@ let () =
                       pid = Some 999_999;
                       serial_socket = Some (Filename.concat dir "stale.sock");
                       disk = Some "/tmp/stale-disk.img";
+                    passt_pid = None;
                     };
                   write_state_entry state_file
                     {
@@ -925,6 +962,7 @@ let () =
                       pid = Some live_pid;
                       serial_socket = Some (Filename.concat dir "live.sock");
                       disk = Some "/tmp/live-disk.img";
+                    passt_pid = None;
                     };
                   let listed = run_cli ~bin ~state_file [ "list" ] in
                   assert_success ~context:"list with reconciliation" listed;
@@ -945,6 +983,7 @@ let () =
               pid = None;
               serial_socket = None;
               disk = None;
+            passt_pid = None;
             };
           let removed = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
           assert_success ~context:"rm stopped instance" removed;
@@ -964,6 +1003,7 @@ let () =
                   pid = Some pid;
                   serial_socket = Some "/tmp/dev-a.serial.sock";
                   disk = Some "/tmp/dev-a.disk";
+                passt_pid = None;
                 };
               let rejected = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
               assert_failure ~context:"rm running without force" rejected;
@@ -986,6 +1026,7 @@ let () =
                   pid = Some pid;
                   serial_socket = Some "/tmp/dev-a.serial.sock";
                   disk = Some "/tmp/dev-a.disk";
+                passt_pid = None;
                 };
               let removed =
                 run_cli ~bin ~state_file [ "rm"; "--force"; "dev-a" ]
@@ -1008,6 +1049,7 @@ let () =
                 pid = Some 1;
                 serial_socket = Some "/tmp/protected.serial.sock";
                 disk = Some "/tmp/protected.disk";
+              passt_pid = None;
               };
             let failed =
               run_cli ~bin ~state_file [ "rm"; "--force"; "protected" ]
@@ -1019,6 +1061,37 @@ let () =
             match find_state_entry state_file "protected" with
             | Some { pid = Some 1; _ } -> ()
             | _ -> fail "expected entry to remain after failed force removal"));
+  run_test
+    ~name:"rm kills passt process when hypervisor is already dead"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "stale-rm"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"up for stale rm" result;
+              let entry = find_state_entry state_file "stale-rm" in
+              let hypervisor_pid =
+                match entry with
+                | Some { pid = Some pid; _ } -> pid
+                | _ -> fail "expected pid in state after up"
+              in
+              let passt_pid =
+                match entry with
+                | Some { passt_pid = Some pid; _ } -> pid
+                | _ -> fail "expected passt_pid in state after up"
+              in
+              terminate_pid hypervisor_pid;
+              if not (pid_is_alive passt_pid) then
+                fail "passt should be alive before rm";
+              let rm_result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "rm"; "stale-rm" ]
+              in
+              assert_success ~context:"rm stale with passt" rm_result;
+              if not (wait_for_pid_to_die ~attempts:40 passt_pid) then
+                fail "passt process should be dead after rm")));
   run_test ~name:"list shows empty and multi-instance state" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
           with_state_file (fun state_file ->
@@ -1271,4 +1344,68 @@ let () =
               assert_contains ~context:"passt error message" err "passt";
               assert_contains ~context:"passt EPI_PASST_BIN hint" err
                 "EPI_PASST_BIN")));
+  run_test
+    ~name:"down terminates passt process alongside hypervisor"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "passt-kill-test"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"up for passt kill test" result;
+              let entry = find_state_entry state_file "passt-kill-test" in
+              let passt_pid =
+                match entry with
+                | Some { passt_pid = Some pid; _ } -> pid
+                | _ -> fail "expected passt_pid in state after up"
+              in
+              if not (pid_is_alive passt_pid) then
+                fail "passt process should be alive before down";
+              let down_result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "down"; "passt-kill-test" ]
+              in
+              assert_success ~context:"down passt kill" down_result;
+              if not (wait_for_pid_to_die ~attempts:40 passt_pid) then
+                fail "passt process should be dead after down";
+              let entry_after = find_state_entry state_file "passt-kill-test" in
+              (match entry_after with
+              | Some { pid = None; _ } -> ()
+              | _ ->
+                  fail
+                    "expected runtime to be cleared but instance kept after down"))));
+  run_test
+    ~name:"up over stale instance terminates old passt process"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "stale-passt"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"first up for stale passt" result;
+              let entry = find_state_entry state_file "stale-passt" in
+              let old_passt_pid =
+                match entry with
+                | Some { passt_pid = Some pid; _ } -> pid
+                | _ -> fail "expected passt_pid in state after first up"
+              in
+              let old_hypervisor_pid =
+                match entry with
+                | Some { pid = Some pid; _ } -> pid
+                | _ -> fail "expected pid in state after first up"
+              in
+              terminate_pid old_hypervisor_pid;
+              if not (pid_is_alive old_passt_pid) then
+                fail "old passt process should be alive before relaunch";
+              let result2 =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "stale-passt"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"relaunch over stale passt" result2;
+              if not (wait_for_pid_to_die ~attempts:40 old_passt_pid) then
+                fail
+                  "old passt process should be terminated after relaunch \
+                   over stale instance")));
   ()

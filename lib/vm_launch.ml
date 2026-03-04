@@ -359,7 +359,7 @@ let classify_launch_failure ~target ~descriptor ~status ~stderr =
     match Instance_store.find_running_owner_by_disk descriptor.disk with
     | Some
         ( owner_instance,
-          { Instance_store.pid = owner_pid; serial_socket = _; disk = _ } ) ->
+          { Instance_store.pid = owner_pid; _ } ) ->
         Vm_disk_lock_held_by_instance
           { target; disk = descriptor.disk; owner_instance; owner_pid }
     | None -> Vm_disk_lock_held_unknown { target; disk = descriptor.disk }
@@ -603,7 +603,7 @@ let launch_detached ~instance_name ~target descriptor =
       if Sys.file_exists pasta_repair_sock then Unix.unlink pasta_repair_sock;
       let _pasta_proc =
         Process.run_detached ~prog:(passt_bin ())
-          ~args:[ "--vhost-user"; "--socket"; pasta_sock ]
+          ~args:[ "--foreground"; "--vhost-user"; "--socket"; pasta_sock ]
           ~stdout_path:
             (Filename.concat runtime_dir (instance_name ^ ".pasta.stdout.log"))
           ~stderr_path:
@@ -658,6 +658,7 @@ let launch_detached ~instance_name ~target descriptor =
             Instance_store.pid = detached.pid;
             serial_socket;
             disk = launch_disk;
+            passt_pid = Some _pasta_proc.pid;
           }
       else
         let stderr = read_file_if_exists launch_stderr |> String.trim in

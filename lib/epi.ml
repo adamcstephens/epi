@@ -53,6 +53,10 @@ let resolve_console_attach_options () =
   in
   { read_stdin; capture_path; timeout_seconds }
 
+let kill_if_alive pid =
+  try Unix.kill pid Sys.sigterm
+  with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
+
 let resolve_instance_name instance_name_opt =
   match instance_name_opt with
   | Some instance_name -> instance_name
@@ -145,7 +149,10 @@ let up_command =
            Printf.printf
              "up: instance=%s target=%s already-running pid=%d serial=%s\n"
              instance_name target runtime.pid runtime.serial_socket
-     | Some _stale_runtime -> (
+     | Some stale_runtime -> (
+         (match stale_runtime.Instance_store.passt_pid with
+         | Some passt_pid -> kill_if_alive passt_pid
+         | None -> ());
          Instance_store.clear_runtime instance_name;
          match Vm_launch.provision ~instance_name ~target with
          | Ok runtime ->
@@ -226,11 +233,43 @@ let terminate_instance_runtime ~instance_name runtime =
         let _ = Unix.select [] [] [] 0.1 in
         wait_until_stopped (attempts_remaining - 1)
     in
-    wait_until_stopped 50
+    let result = wait_until_stopped 50 in
+    (match runtime.Instance_store.passt_pid with
+    | Some passt_pid -> kill_if_alive passt_pid
+    | None -> ());
+    result
   with Unix.Unix_error (error, _, _) ->
     Error
       (Printf.sprintf "failed to terminate instance '%s' (pid=%d): %s"
          instance_name pid (Unix.error_message error))
+
+let down_command =
+  Command.make ~summary:"Stop an instance."
+    ~readme:(fun () ->
+      "Stop a running instance.\n\
+       If INSTANCE is omitted, `default` is used.")
+    (let open Command.Std in
+     let+ instance_name_opt =
+       Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
+     in
+     Instance_store.reconcile_runtime ();
+     let instance_name = resolve_instance_name instance_name_opt in
+     match Instance_store.find_runtime instance_name with
+     | None ->
+         fail
+           (Printf.sprintf
+              "Instance '%s' is not running. Nothing to stop." instance_name)
+     | Some runtime when not (Process.pid_is_alive runtime.pid) ->
+         Instance_store.clear_runtime instance_name;
+         Printf.printf
+           "down: instance=%s was already stopped (stale runtime cleared)\n"
+           instance_name
+     | Some runtime -> (
+         match terminate_instance_runtime ~instance_name runtime with
+         | Ok () ->
+             Instance_store.clear_runtime instance_name;
+             Printf.printf "down: stopped instance=%s\n" instance_name
+         | Error message -> fail message))
 
 let rm_command =
   Command.make ~summary:"Remove an instance from state and runtime."
@@ -263,7 +302,13 @@ let rm_command =
                Instance_store.remove instance_name;
                Printf.printf "rm: removed instance=%s\n" instance_name
            | Error message -> fail message)
-     | _ ->
+     | Some stale_runtime ->
+         (match stale_runtime.Instance_store.passt_pid with
+         | Some passt_pid -> kill_if_alive passt_pid
+         | None -> ());
+         Instance_store.remove instance_name;
+         Printf.printf "rm: removed instance=%s\n" instance_name
+     | None ->
          Instance_store.remove instance_name;
          Printf.printf "rm: removed instance=%s\n" instance_name)
 
@@ -297,7 +342,7 @@ let cmd =
       ("up", up_command);
       ( "rebuild",
         lifecycle_command ~name:"rebuild" ~summary:"Rebuild an instance." );
-      ("down", lifecycle_command ~name:"down" ~summary:"Stop an instance.");
+      ("down", down_command);
       ( "status",
         lifecycle_command ~name:"status" ~summary:"Show instance status." );
       ("rm", rm_command);
