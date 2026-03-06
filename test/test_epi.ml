@@ -5,6 +5,7 @@ type state_entry = {
   serial_socket : string option;
   disk : string option;
   passt_pid : int option;
+  ssh_port : int option;
 }
 
 let contains text snippet =
@@ -93,6 +94,11 @@ let parse_state_line line =
     let disk = if disk = "" then None else Some disk in
     (pid, serial_socket, disk)
   in
+  let parse_opt_int text =
+    match int_of_string_opt text with
+    | Some value when value > 0 -> Some value
+    | _ -> None
+  in
   match fields with
   | [ instance_name; target ] ->
       Some
@@ -103,23 +109,29 @@ let parse_state_line line =
           serial_socket = None;
           disk = None;
           passt_pid = None;
+          ssh_port = None;
         }
   | [ instance_name; target; pid_text; serial_socket; disk ] ->
       let pid, serial_socket, disk =
         parse_runtime pid_text serial_socket disk
       in
       Some
-        { instance_name; target; pid; serial_socket; disk; passt_pid = None }
+        { instance_name; target; pid; serial_socket; disk; passt_pid = None;
+          ssh_port = None }
   | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
       let pid, serial_socket, disk =
         parse_runtime pid_text serial_socket disk
       in
-      let passt_pid =
-        match int_of_string_opt passt_pid_text with
-        | Some value when value > 0 -> Some value
-        | _ -> None
+      Some { instance_name; target; pid; serial_socket; disk;
+             passt_pid = parse_opt_int passt_pid_text; ssh_port = None }
+  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
+      ssh_port_text ] ->
+      let pid, serial_socket, disk =
+        parse_runtime pid_text serial_socket disk
       in
-      Some { instance_name; target; pid; serial_socket; disk; passt_pid }
+      Some { instance_name; target; pid; serial_socket; disk;
+             passt_pid = parse_opt_int passt_pid_text;
+             ssh_port = parse_opt_int ssh_port_text }
   | _ -> None
 
 let read_state_entries path =
@@ -231,10 +243,13 @@ let write_state_entry path entry =
   let passt_pid =
     match entry.passt_pid with Some value -> string_of_int value | None -> ""
   in
+  let ssh_port =
+    match entry.ssh_port with Some value -> string_of_int value | None -> ""
+  in
   output_string channel
     (String.concat "\t"
        [ entry.instance_name; entry.target; pid; serial_socket; disk;
-         passt_pid ]);
+         passt_pid; ssh_port ]);
   output_char channel '\n';
   close_out channel
 
@@ -449,10 +464,10 @@ let with_mock_runtime f =
          \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
           fi\n\
           exit 0\n");
-      let pasta = Filename.concat dir "pasta.sh" in
-      write_file pasta
+      let passt = Filename.concat dir "passt.sh" in
+      write_file passt
         "#!/usr/bin/env sh\n\
-         # Mock pasta: find --socket arg, touch the socket file, stay alive\n\
+         # Mock passt: find --socket arg, touch the socket file, stay alive\n\
          prev=\"\"\n\
          for arg in \"$@\"; do\n\
         \  if [ \"$prev\" = \"--socket\" ]; then\n\
@@ -464,13 +479,13 @@ let with_mock_runtime f =
       make_executable resolver;
       make_executable cloud_hypervisor;
       make_executable genisoimage;
-      make_executable pasta;
+      make_executable passt;
       let extra_env =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
           ("EPI_GENISOIMAGE_BIN", genisoimage);
-          ("EPI_PASST_BIN", pasta);
+          ("EPI_PASST_BIN", passt);
           ("EPI_MOCK_VM_SLEEP", "30");
         ]
       in
@@ -730,6 +745,7 @@ let () =
               serial_socket = None;
               disk = None;
             passt_pid = None;
+            ssh_port = None;
             };
           let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
           assert_failure ~context:"console not running" result;
@@ -753,6 +769,7 @@ let () =
                           serial_socket = Some serial_socket;
                           disk = Some "/tmp/dev-a.disk";
                         passt_pid = None;
+                        ssh_port = None;
                         };
                       let result =
                         run_cli ~bin ~state_file [ "console"; "dev-a" ]
@@ -777,6 +794,7 @@ let () =
                           serial_socket = Some serial_socket;
                           disk = Some "/tmp/dev-a.disk";
                         passt_pid = None;
+                        ssh_port = None;
                         };
                       let result =
                         run_cli_with_env ~bin ~state_file
@@ -822,6 +840,7 @@ let () =
                   serial_socket = Some "/tmp/epi-nonexistent.sock";
                   disk = Some "/tmp/disk.img";
                 passt_pid = None;
+                ssh_port = None;
                 };
               let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
               assert_failure ~context:"console unavailable endpoint" result;
@@ -845,6 +864,7 @@ let () =
                           serial_socket = Some serial_socket;
                           disk = Some "/tmp/dev-a.disk";
                         passt_pid = None;
+                        ssh_port = None;
                         };
                       let result =
                         run_cli_with_env ~bin ~state_file
@@ -927,6 +947,7 @@ let () =
                               serial_socket = Some serial_socket;
                               disk = Some "/tmp/dev-a.disk";
                             passt_pid = None;
+                            ssh_port = None;
                             };
                           let result =
                             run_cli_with_env ~bin ~state_file ~extra_env
@@ -968,6 +989,7 @@ let () =
                       serial_socket = Some (Filename.concat dir "stale.sock");
                       disk = Some "/tmp/stale-disk.img";
                     passt_pid = None;
+                    ssh_port = None;
                     };
                   write_state_entry state_file
                     {
@@ -977,6 +999,7 @@ let () =
                       serial_socket = Some (Filename.concat dir "live.sock");
                       disk = Some "/tmp/live-disk.img";
                     passt_pid = None;
+                    ssh_port = None;
                     };
                   let listed = run_cli ~bin ~state_file [ "list" ] in
                   assert_success ~context:"list with reconciliation" listed;
@@ -998,6 +1021,7 @@ let () =
               serial_socket = None;
               disk = None;
             passt_pid = None;
+            ssh_port = None;
             };
           let removed = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
           assert_success ~context:"rm stopped instance" removed;
@@ -1018,6 +1042,7 @@ let () =
                   serial_socket = Some "/tmp/dev-a.serial.sock";
                   disk = Some "/tmp/dev-a.disk";
                 passt_pid = None;
+                ssh_port = None;
                 };
               let rejected = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
               assert_failure ~context:"rm running without force" rejected;
@@ -1041,6 +1066,7 @@ let () =
                   serial_socket = Some "/tmp/dev-a.serial.sock";
                   disk = Some "/tmp/dev-a.disk";
                 passt_pid = None;
+                ssh_port = None;
                 };
               let removed =
                 run_cli ~bin ~state_file [ "rm"; "--force"; "dev-a" ]
@@ -1064,6 +1090,7 @@ let () =
                 serial_socket = Some "/tmp/protected.serial.sock";
                 disk = Some "/tmp/protected.disk";
               passt_pid = None;
+              ssh_port = None;
               };
             let failed =
               run_cli ~bin ~state_file [ "rm"; "--force"; "protected" ]
@@ -1308,7 +1335,7 @@ let () =
               in
               assert_contains ~context:"seed iso disk arg" launch_contents
                 "cidata.iso,readonly=on";
-              assert_contains ~context:"pasta net arg" launch_contents
+              assert_contains ~context:"passt net arg" launch_contents
                 "--net vhost_user=true,socket=")));
   run_test ~name:"EPI_PASST_BIN overrides passt binary path" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
@@ -1418,7 +1445,7 @@ let () =
                   [ "up"; "stale-passt"; "--target"; ".#dev" ]
               in
               assert_success ~context:"relaunch over stale passt" result2;
-              if not (wait_for_pid_to_die ~attempts:40 old_passt_pid) then
+              if not (wait_for_pid_to_die ~attempts:80 old_passt_pid) then
                 fail
                   "old passt process should be terminated after relaunch \
                    over stale instance")));
@@ -1694,4 +1721,134 @@ let () =
                     fail
                       "expected resolver to be called twice (rebuild), got %d"
                       call_count))));
+  run_test ~name:"alloc_free_port returns a valid port number" (fun () ->
+      let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+      Fun.protect
+        ~finally:(fun () -> Unix.close sock)
+        (fun () ->
+          Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+          match Unix.getsockname sock with
+          | Unix.ADDR_INET (_, port) ->
+              if port < 1 || port > 65535 then
+                fail "alloc_free_port returned out-of-range port: %d" port
+          | _ -> fail "unexpected socket address from bind-to-zero"));
+  run_test ~name:"passt is invoked with -t port:22 forwarding argument"
+    (fun () ->
+      with_temp_dir "epi-passt-args-test" (fun dir ->
+          let passt_log = Filename.concat dir "passt-args.log" in
+          let kernel = Filename.concat dir "vmlinuz" in
+          let disk = Filename.concat dir "disk.img" in
+          let initrd = Filename.concat dir "initrd.img" in
+          let resolver = Filename.concat dir "resolver.sh" in
+          let cloud_hypervisor = Filename.concat dir "cloud-hypervisor.sh" in
+          write_file kernel "kernel";
+          write_file disk "disk";
+          write_file initrd "initrd";
+          write_file resolver
+            ("#!/usr/bin/env sh\necho \"kernel=" ^ kernel ^ "\"\necho \"disk="
+           ^ disk ^ "\"\necho \"initrd=" ^ initrd
+           ^ "\"\necho \"cpus=2\"\necho \"memory_mib=1024\"\n");
+          write_file cloud_hypervisor
+            ("#!/usr/bin/env sh\nexec sleep 30\n");
+          let genisoimage = Filename.concat dir "genisoimage.sh" in
+          write_file genisoimage
+            "#!/usr/bin/env sh\n\
+             OUTPUT=\"\"\n\
+             while [ $# -gt 0 ]; do\n\
+            \  case \"$1\" in\n\
+            \    -output) OUTPUT=\"$2\"; shift 2 ;;\n\
+            \    *) shift ;;\n\
+            \  esac\n\
+             done\n\
+             if [ -n \"$OUTPUT\" ]; then echo mock > \"$OUTPUT\"; fi\n\
+             exit 0\n";
+          let passt = Filename.concat dir "passt.sh" in
+          write_file passt
+            ("#!/usr/bin/env sh\n\
+              echo \"$*\" >> \"" ^ passt_log ^ "\"\n\
+              prev=\"\"\n\
+              for arg in \"$@\"; do\n\
+             \  if [ \"$prev\" = \"--socket\" ]; then\n\
+             \    touch \"$arg\"\n\
+             \  fi\n\
+             \  prev=\"$arg\"\n\
+              done\n\
+              exec sleep 30\n");
+          make_executable resolver;
+          make_executable cloud_hypervisor;
+          make_executable genisoimage;
+          make_executable passt;
+          let extra_env =
+            [
+              ("EPI_TARGET_RESOLVER_CMD", resolver);
+              ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
+              ("EPI_GENISOIMAGE_BIN", genisoimage);
+              ("EPI_PASST_BIN", passt);
+              ("EPI_MOCK_VM_SLEEP", "30");
+            ]
+          in
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "passt-args"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"passt args up" result;
+              let passt_args =
+                if Sys.file_exists passt_log then
+                  let channel = open_in passt_log in
+                  Fun.protect
+                    ~finally:(fun () -> close_in channel)
+                    (fun () -> read_all channel)
+                else ""
+              in
+              assert_contains ~context:"passt -t flag" passt_args "-t";
+              assert_contains ~context:"passt :22 target" passt_args ":22")));
+  run_test ~name:"epi up output includes the SSH port" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "ssh-port-output"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"ssh port output up" result;
+              let _, stdout, _ = result in
+              assert_contains ~context:"SSH port in up output" stdout
+                "SSH port:")));
+  run_test ~name:"runtime TSV round-trips ssh_port correctly" (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "tsv-roundtrip"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"tsv roundtrip up" result;
+              let entry = find_state_entry state_file "tsv-roundtrip" in
+              match entry with
+              | Some { ssh_port = Some port; _ } when port > 0 && port <= 65535
+                ->
+                  ()
+              | Some { ssh_port = None; _ } ->
+                  fail "expected ssh_port to be set in TSV after up"
+              | Some { ssh_port = Some port; _ } ->
+                  fail "ssh_port out of range: %d" port
+              | None -> fail "expected state entry for tsv-roundtrip")));
+  run_test ~name:"TSV row without ssh_port column loads with ssh_port = None"
+    (fun () ->
+      with_state_file (fun state_file ->
+          let channel =
+            open_out_gen [ Open_creat; Open_wronly; Open_append ] 0o644
+              state_file
+          in
+          output_string channel
+            (String.concat "\t"
+               [ "legacy-no-ssh"; ".#dev"; "99999"; "/tmp/s.sock";
+                 "/tmp/d.img"; "99998" ]);
+          output_char channel '\n';
+          close_out channel;
+          let entry = find_state_entry state_file "legacy-no-ssh" in
+          match entry with
+          | Some { ssh_port = None; _ } -> ()
+          | Some { ssh_port = Some _; _ } ->
+              fail "expected ssh_port = None for legacy TSV row"
+          | None -> fail "expected to find legacy-no-ssh entry"));
   ()

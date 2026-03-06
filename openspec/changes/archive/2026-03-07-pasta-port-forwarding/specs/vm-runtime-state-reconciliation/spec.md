@@ -1,7 +1,4 @@
-## Purpose
-Define how the CLI persists and reconciles VM runtime metadata so status, lock diagnostics, and console workflows remain accurate.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: CLI tracks runtime metadata for launched VMs
 The CLI SHALL persist per-instance runtime metadata after successful VM start, including the hypervisor PID, lock-relevant launch context, and the forwarded SSH host port.
@@ -30,20 +27,3 @@ At command startup, the CLI MUST run a fast reconciliation pass over tracked run
 - **WHEN** runtime metadata for `dev-a` was written by an older version of epi that did not include `ssh_port`
 - **THEN** startup reconciliation loads the entry successfully
 - **AND** the SSH port is treated as unknown for that instance
-
-### Requirement: Lock conflicts include owner-aware diagnostics
-If VM launch fails due to an exclusive disk-image lock, the CLI MUST report conflict diagnostics using reconciled runtime metadata.
-
-#### Scenario: Lock held by tracked running instance
-- **WHEN** `epi up qa-1 --target .#qa` fails because the launch disk is write-locked by a running tracked VM
-- **THEN** the command exits non-zero
-- **AND** the error states that another running VM already holds the disk lock
-- **AND** the error includes the owning instance name and PID when available
-- **AND** the error suggests stopping that instance before retrying
-
-#### Scenario: Lock conflict with unknown owner
-- **WHEN** `epi up qa-1 --target .#qa` fails because the launch disk is write-locked and no tracked running owner matches
-- **THEN** the command exits non-zero
-- **AND** the error states that the disk image is already locked by another process
-- **AND** the error includes the disk image path
-- **AND** the error suggests checking for external cloud-hypervisor processes

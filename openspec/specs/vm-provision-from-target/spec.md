@@ -66,6 +66,18 @@ When provisioning fails, `epi up` MUST return an error message that identifies t
 - **AND** the error states that VM launch failed
 - **AND** the error includes the cloud-hypervisor exit status
 
+#### Scenario: pasta binary is missing
+- **WHEN** the pasta binary is not found on PATH and `EPI_PASTA_BIN` is not set
+- **THEN** `epi up` exits non-zero
+- **AND** the error states that pasta was not found
+- **AND** the error suggests installing the `passt` package or setting `EPI_PASTA_BIN`
+
+#### Scenario: pasta socket is unavailable
+- **WHEN** pasta is started but its vhost-user socket does not become available within the timeout
+- **THEN** `epi up` exits non-zero
+- **AND** the error states that the pasta socket did not become ready
+- **AND** cloud-hypervisor is not started
+
 ### Requirement: Up validates required launch inputs before invoking cloud-hypervisor
 Before launching cloud-hypervisor, the CLI MUST validate that all required launch descriptor fields are present, refer to accessible artifacts, and form a coherent boot tuple.
 

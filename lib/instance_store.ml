@@ -5,6 +5,7 @@ type runtime = {
   serial_socket : string;
   disk : string;
   passt_pid : int option;
+  ssh_port : int option;
 }
 
 type entry = {
@@ -46,9 +47,9 @@ let launch_stderr_path instance_name =
 
 let parse_int text = int_of_string_opt text
 
-let runtime_of_fields pid_text serial_socket disk passt_pid =
+let runtime_of_fields pid_text serial_socket disk passt_pid ssh_port =
   match parse_int pid_text with
-  | Some pid when pid > 0 -> Some { pid; serial_socket; disk; passt_pid }
+  | Some pid when pid > 0 -> Some { pid; serial_socket; disk; passt_pid; ssh_port }
   | _ -> None
 
 let entry_of_fields = function
@@ -58,14 +59,14 @@ let entry_of_fields = function
         {
           instance_name;
           target;
-          runtime = runtime_of_fields pid_text "" "" None;
+          runtime = runtime_of_fields pid_text "" "" None None;
         }
   | [ instance_name; target; pid_text; serial_socket; disk ] ->
       Some
         {
           instance_name;
           target;
-          runtime = runtime_of_fields pid_text serial_socket disk None;
+          runtime = runtime_of_fields pid_text serial_socket disk None None;
         }
   | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
       Some
@@ -74,7 +75,17 @@ let entry_of_fields = function
           target;
           runtime =
             runtime_of_fields pid_text serial_socket disk
-              (parse_int passt_pid_text);
+              (parse_int passt_pid_text) None;
+        }
+  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
+      ssh_port_text ] ->
+      Some
+        {
+          instance_name;
+          target;
+          runtime =
+            runtime_of_fields pid_text serial_socket disk
+              (parse_int passt_pid_text) (parse_int ssh_port_text);
         }
   | _ -> None
 
@@ -102,13 +113,16 @@ let save entries =
   List.iter
     (fun { instance_name; target; runtime } ->
       match runtime with
-      | Some { pid; serial_socket; disk; passt_pid } ->
+      | Some { pid; serial_socket; disk; passt_pid; ssh_port } ->
           let passt_pid_text =
             match passt_pid with Some p -> string_of_int p | None -> ""
           in
-          Printf.fprintf channel "%s\t%s\t%d\t%s\t%s\t%s\n" instance_name
-            target pid serial_socket disk passt_pid_text
-      | None -> Printf.fprintf channel "%s\t%s\t\t\t\t\n" instance_name target)
+          let ssh_port_text =
+            match ssh_port with Some p -> string_of_int p | None -> ""
+          in
+          Printf.fprintf channel "%s\t%s\t%d\t%s\t%s\t%s\t%s\n" instance_name
+            target pid serial_socket disk passt_pid_text ssh_port_text
+      | None -> Printf.fprintf channel "%s\t%s\t\t\t\t\t\n" instance_name target)
     entries;
   close_out channel
 

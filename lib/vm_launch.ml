@@ -16,8 +16,8 @@ type provision_error =
   | Vm_exited_immediately of { target : string; details : string }
   | Vm_disk_overlay_prepare_failed of { target : string; details : string }
   | Seed_iso_generation_failed of { target : string; details : string }
-  | Pasta_missing of { target : string }
-  | Pasta_socket_unavailable of { target : string; socket : string }
+  | Passt_missing of { target : string }
+  | Passt_failed of { target : string; details : string }
 
 let lock_conflict stderr =
   let lowered = Target.lowercase stderr in
@@ -172,7 +172,7 @@ let check_passt () =
   in
   result.status = 0
 
-let wait_for_pasta_socket socket_path max_wait_ms =
+let wait_for_passt_socket socket_path max_wait_ms =
   let step_ms = 50 in
   let steps = max_wait_ms / step_ms in
   let rec loop n =
@@ -231,6 +231,16 @@ let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys =
            })
     else Ok iso_path
 
+let alloc_free_port () =
+  let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close sock)
+    (fun () ->
+      Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+      match Unix.getsockname sock with
+      | Unix.ADDR_INET (_, port) -> port
+      | _ -> failwith "alloc_free_port: unexpected socket address")
+
 let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
@@ -249,10 +259,11 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
   in
   let runtime_dir = Instance_store.runtime_dir () in
   let ssh_keys = read_ssh_public_keys () in
-  let pasta_sock =
+  let passt_sock =
     Filename.concat runtime_dir (instance_name ^ ".passt.sock")
   in
-  if not (check_passt ()) then Error (Pasta_missing { target })
+  let ssh_port = alloc_free_port () in
+  if not (check_passt ()) then Error (Passt_missing { target })
   else
   match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys with
   | Error Genisoimage_missing ->
@@ -270,25 +281,39 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
   match ensure_writable_disk ~instance_name ~target descriptor with
   | Error _ as error -> error
   | Ok launch_disk -> (
-      if Sys.file_exists pasta_sock then Unix.unlink pasta_sock;
-      let pasta_repair_sock = pasta_sock ^ ".repair" in
-      if Sys.file_exists pasta_repair_sock then Unix.unlink pasta_repair_sock;
-      let _pasta_proc =
+      if Sys.file_exists passt_sock then Unix.unlink passt_sock;
+      let passt_repair_sock = passt_sock ^ ".repair" in
+      if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
+      let passt_stdout_log =
+        Filename.concat runtime_dir (instance_name ^ ".passt.stdout.log")
+      in
+      let passt_stderr_log =
+        Filename.concat runtime_dir (instance_name ^ ".passt.stderr.log")
+      in
+      let passt_proc =
         Process.run_detached ~prog:(passt_bin ())
-          ~args:[ "--vhost-user"; "--socket"; pasta_sock ]
-          ~stdout_path:
-            (Filename.concat runtime_dir (instance_name ^ ".pasta.stdout.log"))
-          ~stderr_path:
-            (Filename.concat runtime_dir (instance_name ^ ".pasta.stderr.log"))
+          ~args:[ "--vhost-user"; "--socket"; passt_sock;
+                  "-t"; Printf.sprintf "%d:22" ssh_port ]
+          ~stdout_path:passt_stdout_log
+          ~stderr_path:passt_stderr_log
           ()
       in
-      if not (wait_for_pasta_socket pasta_sock 2000) then
-        Error (Pasta_socket_unavailable { target; socket = pasta_sock })
+      if not (wait_for_passt_socket passt_sock 2000) then
+        let stdout = Target.read_file_if_exists passt_stdout_log |> String.trim in
+        let stderr = Target.read_file_if_exists passt_stderr_log |> String.trim in
+        let details =
+          match (stdout, stderr) with
+          | "", "" -> "passt produced no output"
+          | "", s | s, "" -> s
+          | out, err -> out ^ "\n" ^ err
+        in
+        let _ = Unix.waitpid [ Unix.WNOHANG ] passt_proc.pid in
+        Error (Passt_failed { target; details })
       else
       let disk_arg = "path=" ^ launch_disk in
       let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
       let net_arg =
-        "vhost_user=true,socket=" ^ pasta_sock ^ ",vhost_mode=client"
+        "vhost_user=true,socket=" ^ passt_sock ^ ",vhost_mode=client"
       in
       let base_args =
         [
@@ -330,7 +355,8 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
             Instance_store.pid = detached.pid;
             serial_socket;
             disk = launch_disk;
-            passt_pid = Some _pasta_proc.pid;
+            passt_pid = Some passt_proc.pid;
+            ssh_port = Some ssh_port;
           }
       else
         let stderr = Target.read_file_if_exists launch_stderr |> String.trim in
@@ -412,14 +438,12 @@ let pp_provision_error = function
       Printf.sprintf
         "VM launch failed for %s: seed ISO generation failed: %s" target
         details
-  | Pasta_missing { target } ->
+  | Passt_missing { target } ->
       Printf.sprintf
         "VM launch failed for %s: passt binary not found on $PATH. Set \
          EPI_PASST_BIN or install the passt package to enable userspace \
          networking."
         target
-  | Pasta_socket_unavailable { target; socket } ->
-      Printf.sprintf
-        "VM launch failed for %s: pasta failed to create vhost-user socket \
-         at %s. Check that the pasta binary supports --vhost-user mode."
-        target socket
+  | Passt_failed { target; details } ->
+      Printf.sprintf "VM launch failed for %s: passt failed to start: %s"
+        target details

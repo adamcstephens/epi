@@ -165,11 +165,14 @@ let up_command =
              if attach_console then
                attach_console_for_running_instance ~instance_name
                  ~options:console_options runtime
-             else
+             else (
                Printf.printf
                  "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
                  instance_name target runtime.Instance_store.pid
-                 runtime.serial_socket
+                 runtime.serial_socket;
+               match runtime.Instance_store.ssh_port with
+               | Some port -> Printf.printf "SSH port: %d\n" port
+               | None -> ())
          | Error error -> fail (Vm_launch.pp_provision_error error))
      | None -> (
          match Vm_launch.provision ~rebuild ~instance_name ~target with
@@ -178,11 +181,14 @@ let up_command =
              if attach_console then
                attach_console_for_running_instance ~instance_name
                  ~options:console_options runtime
-             else
+             else (
                Printf.printf
                  "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
                  instance_name target runtime.Instance_store.pid
-                 runtime.serial_socket
+                 runtime.serial_socket;
+               match runtime.Instance_store.ssh_port with
+               | Some port -> Printf.printf "SSH port: %d\n" port
+               | None -> ())
          | Error error -> fail (Vm_launch.pp_provision_error error)))
 
 let lifecycle_command ~name ~summary =
@@ -349,7 +355,25 @@ let cmd =
         lifecycle_command ~name:"rebuild" ~summary:"Rebuild an instance." );
       ("down", down_command);
       ( "status",
-        lifecycle_command ~name:"status" ~summary:"Show instance status." );
+        Command.make ~summary:"Show instance status."
+          ~readme:(fun () ->
+            "Show the status of an instance.\n\
+             If INSTANCE is omitted, `default` is used.")
+          (let open Command.Std in
+           let+ instance_name =
+             Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE"
+               ~doc:"Instance name."
+           in
+           let instance_name, target =
+             resolve_instance_target ~command_name:"status" instance_name
+           in
+           Printf.printf "status: instance=%s target=%s\n" instance_name target;
+           match Instance_store.find_runtime instance_name with
+           | Some runtime when Process.pid_is_alive runtime.pid ->
+               (match runtime.Instance_store.ssh_port with
+               | Some port -> Printf.printf "SSH port: %d\n" port
+               | None -> ())
+           | _ -> ()) );
       ("rm", rm_command);
       ("console", console_command);
       ( "ssh",
