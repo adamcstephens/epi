@@ -67,6 +67,8 @@
       "ext4"
     ];
 
+    networking.useDHCP = true;
+
     services.cloud-init.enable = true;
 
     services.openssh = {
@@ -74,7 +76,7 @@
       settings.PasswordAuthentication = false;
     };
 
-    networking.useDHCP = true;
+    users.users.root.initialHashedPassword = lib.mkOverride 150 "";
 
     system.stateVersion = "24.11";
   };

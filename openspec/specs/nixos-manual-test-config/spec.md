@@ -13,22 +13,22 @@ The `flake.nix` outputs MUST include `nixosConfigurations.manual-test` so the co
 - **AND** the configuration references the dedicated manual-test module without leaking other host-specific wiring.
 
 ### Requirement: Manual-test configuration supports a local build path
-The manual-test host MUST remain buildable via a non-destructive local command so developers can validate the configuration at will.
+The manual-test host MUST remain buildable via a non-destructive local command so developers can validate the configuration at will, and the built outputs MUST support coherent VM launch artifacts for `epi up`.
 
 #### Scenario: Manual-test configuration builds locally
 - **WHEN** a developer runs `nix build .#nixosConfigurations.manual-test.config.system.build.toplevel`
 - **THEN** Nix evaluates the manual-test derivation without performing a system switch
 - **AND** the build succeeds, proving the configuration wiring and module inputs remain valid for manual testing
-- **AND** the resulting path can be referenced by follow-up `nixos-rebuild` or virtualization flows if needed.
+- **AND** the resulting outputs can be used as a coherent source for follow-up virtualization flows
 
 ### Requirement: Repository documents the manual test workflow
-The repository documentation MUST describe how to run and judge the manual-test configuration so the workflow stays repeatable.
+The repository documentation MUST describe how to run and judge the manual-test configuration so the workflow stays repeatable, including how `epi up` consumes target-built launch artifacts.
 
 #### Scenario: Developer follows manual test instructions
 - **WHEN** a developer reads the manual-testing section in the docs
 - **THEN** the instructions include the canonical build command for `nixosConfigurations.manual-test`
-- **AND** the instructions list expected success signals plus basic failure triage guidance (e.g., verifying derivation evaluation or checking module wiring)
-- **AND** the documentation references the manual-test configuration name so future contributors can find the correct flake target.
+- **AND** the instructions describe that `epi up --target .#manual-test` expects kernel/initrd/disk to come from coherent target outputs
+- **AND** the documentation references the manual-test configuration name so future contributors can find the correct flake target
 
 ### Requirement: Manual-test VM enables cloud-init
 The manual-test NixOS configuration MUST enable `services.cloud-init` so that user provisioning data from the NoCloud seed ISO is applied at boot.
@@ -39,10 +39,10 @@ The manual-test NixOS configuration MUST enable `services.cloud-init` so that us
 - **AND** cloud-init applies the `user-data` configuration (user creation, SSH keys, sudo)
 
 ### Requirement: Manual-test VM has network connectivity
-The manual-test NixOS configuration MUST include networking support with DHCP on the virtio-net interface so the VM is reachable from the host.
+The manual-test NixOS configuration MUST include networking support with DHCP on the virtio-net interface so the VM is reachable from the host. The network connectivity SHALL be provided by pasta userspace networking rather than host-level TAP interfaces.
 
 #### Scenario: VM obtains IP address via DHCP
-- **WHEN** the manual-test VM boots with a virtio-net network device attached
+- **WHEN** the manual-test VM boots with a pasta-backed virtio-net network device attached
 - **THEN** the VM obtains an IP address via DHCP on the virtio-net interface
 - **AND** the host can reach the VM at that IP address
 

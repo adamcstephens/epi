@@ -269,7 +269,9 @@ let build_target_artifact_if_missing ~target ~label =
 let validate_file ~target ~label path =
   if path = "" then Error ("missing launch input: " ^ label)
   else (
-    if not (Sys.file_exists path) then ensure_store_realized path;
+    if not (Sys.file_exists path) then (
+      Printf.printf "up: building %s\n%!" label;
+      ensure_store_realized path);
     if not (Sys.file_exists path) then
       build_target_artifact_if_missing ~target ~label;
     if not (Sys.file_exists path) then ensure_store_realized path;
@@ -683,13 +685,17 @@ let launch_detached ~instance_name ~target descriptor =
                  }))
 
 let provision ~instance_name ~target =
+  Printf.printf "up: evaluating target=%s\n%!" target;
   match resolve_descriptor target with
   | Error _ as error -> error
   | Ok descriptor -> (
+      Printf.printf "up: building target artifacts\n%!";
       match validate_descriptor ~target descriptor with
       | Error details ->
           Error (Descriptor_validation_failed { target; details })
-      | Ok () -> launch_detached ~instance_name ~target descriptor)
+      | Ok () ->
+          Printf.printf "up: starting VM instance=%s\n%!" instance_name;
+          launch_detached ~instance_name ~target descriptor)
 
 let rec write_all fd buffer offset length =
   if length = 0 then ()

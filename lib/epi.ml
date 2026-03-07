@@ -134,9 +134,13 @@ let up_command =
      let instance_name = resolve_instance_name instance_name in
      match Instance_store.find_runtime instance_name with
      | Some runtime when Process.pid_is_alive runtime.pid ->
-         if attach_console then
+         if attach_console then (
+           Printf.printf
+             "up: instance=%s target=%s already-running pid=%d, attaching \
+              console\n%!"
+             instance_name target runtime.pid;
            attach_console_for_running_instance ~instance_name
-             ~options:console_options runtime
+             ~options:console_options runtime)
          else
            Printf.printf
              "up: instance=%s target=%s already-running pid=%d serial=%s\n"

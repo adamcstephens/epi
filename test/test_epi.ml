@@ -464,6 +464,12 @@ let () =
               assert_success ~context:"explicit up" explicit;
               let _, stdout_explicit, _ = explicit in
               assert_contains ~context:"explicit up output" stdout_explicit
+                "up: evaluating target=.#dev-a";
+              assert_contains ~context:"explicit up output" stdout_explicit
+                "up: building target artifacts";
+              assert_contains ~context:"explicit up output" stdout_explicit
+                "up: starting VM instance=dev-a";
+              assert_contains ~context:"explicit up output" stdout_explicit
                 "up: provisioned instance=dev-a target=.#dev-a pid=";
               assert_contains ~context:"explicit up output" stdout_explicit
                 "serial=";
@@ -503,6 +509,24 @@ let () =
               let _, status_out, _ = status_default in
               assert_contains ~context:"status default output" status_out
                 "status: instance=default")));
+  run_test ~name:"up emits stage progress messages during provisioning"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "stage-test"; "--target"; ".#stage-test" ]
+              in
+              assert_success ~context:"stage progress up" result;
+              let _, stdout, _ = result in
+              assert_contains ~context:"stage: target evaluation start" stdout
+                "up: evaluating target=.#stage-test";
+              assert_contains ~context:"stage: launch preparation start" stdout
+                "up: building target artifacts";
+              assert_contains ~context:"stage: VM launch start" stdout
+                "up: starting VM instance=stage-test";
+              assert_contains ~context:"stage: provisioned message" stdout
+                "up: provisioned instance=stage-test")));
   run_test ~name:"up rejects invalid target formats with actionable errors"
     (fun () ->
       with_state_file (fun state_file ->

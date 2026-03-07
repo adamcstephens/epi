@@ -3,3 +3,4 @@
 - Avoid singular functions with one or fewer lines.
 - Explicit namespace references are preferred
 - Use red/green TDD
+- When possible, manually test by yourself

@@ -4,18 +4,18 @@ Define how `epi up` resolves a target, launches a VM, and reports or persists st
 ## Requirements
 
 ### Requirement: Up provisions a VM from the requested target
-The `epi up` command SHALL evaluate the provided `--target <flake-ref>#<config-name>` and SHALL attempt to provision and start a cloud-hypervisor VM for the resolved instance.
+The `epi up` command SHALL evaluate the provided `--target <flake-ref>#<config-name>` and SHALL attempt to provision and start a cloud-hypervisor VM for the resolved instance using coherent launch inputs produced by that target evaluation. The VM SHALL be launched with pasta-backed networking instead of TAP-based networking.
 
 #### Scenario: Named instance is provisioned
 - **WHEN** a user runs `epi up dev-a --target .#dev-a`
 - **THEN** the CLI evaluates target `.#dev-a`
-- **AND** the CLI invokes cloud-hypervisor using the resolved VM launch inputs
+- **AND** the CLI invokes cloud-hypervisor using the resolved VM launch inputs with pasta networking
 - **AND** the CLI reports provisioning success for instance `dev-a`
 
 #### Scenario: Default instance is provisioned
 - **WHEN** a user runs `epi up --target github:org/repo#dev`
 - **THEN** the CLI resolves instance name `default`
-- **AND** the CLI invokes cloud-hypervisor for the resolved target
+- **AND** the CLI invokes cloud-hypervisor for the resolved target using coherent launch inputs from one evaluation result with pasta networking
 - **AND** the CLI reports provisioning success for instance `default`
 
 ### Requirement: Up persists state only after successful provisioning
@@ -47,10 +47,34 @@ When provisioning fails, `epi up` MUST return an error message that identifies t
 - **AND** the error includes the cloud-hypervisor exit status
 
 ### Requirement: Up validates required launch inputs before invoking cloud-hypervisor
-Before launching cloud-hypervisor, the CLI MUST validate that all required launch descriptor fields are present and refer to accessible artifacts.
+Before launching cloud-hypervisor, the CLI MUST validate that all required launch descriptor fields are present, refer to accessible artifacts, and form a coherent boot tuple.
 
 #### Scenario: Required artifact is missing
 - **WHEN** target resolution returns a descriptor missing a required artifact path
 - **THEN** the command exits non-zero
 - **AND** the error identifies the missing launch input
 - **AND** cloud-hypervisor is not invoked
+
+#### Scenario: Launch inputs are not coherent
+- **WHEN** target resolution returns kernel/initrd paths that do not correspond to the resolved disk artifact set
+- **THEN** the command exits non-zero before hypervisor launch
+- **AND** the error states that launch inputs are not coherent
+- **AND** the error guidance points to fixing or rebuilding target outputs instead of reusing an external mutable disk image
+
+### Requirement: Up reports setup stage progress during provisioning
+The `epi up` command SHALL emit concise, user-visible progress messages for major setup stages so users can distinguish active work from a stalled command.
+
+#### Scenario: Target evaluation and build stage is visible
+- **WHEN** a user runs `epi up --target .#manual-test` and target evaluation/build takes noticeable time
+- **THEN** the CLI outputs a stage message indicating target evaluation/build has started
+- **AND** the CLI outputs a stage transition or completion message before moving to launch preparation
+
+#### Scenario: VM launch stage is visible
+- **WHEN** a user runs `epi up dev-a --target .#dev-a` and provisioning proceeds to launch
+- **THEN** the CLI outputs a stage message indicating VM launch has started
+- **AND** the CLI outputs the existing success/failure outcome with stage-appropriate context
+
+#### Scenario: Progress messages remain concise
+- **WHEN** a user runs `epi up` for any valid target
+- **THEN** progress output is limited to major stage transitions rather than verbose per-command logs
+- **AND** the additional output remains human-readable without requiring verbose mode
