@@ -331,7 +331,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
       in
       let passt_proc =
         Process.run_detached ~prog:(passt_bin ())
-          ~args:[ "--vhost-user"; "--socket"; passt_sock;
+          ~args:[ "--foreground"; "--vhost-user"; "--socket"; passt_sock;
                   "-t"; Printf.sprintf "%d:22" ssh_port ]
           ~stdout_path:passt_stdout_log
           ~stderr_path:passt_stderr_log
