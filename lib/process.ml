@@ -62,16 +62,21 @@ let run_detached ?(env = Unix.environment ()) ~prog ~args ~stdout_path
       [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ]
       0o644
   in
-  Fun.protect
-    ~finally:(fun () ->
-      Unix.close stdin_fd;
-      Unix.close stdout_fd;
-      Unix.close stderr_fd)
-    (fun () ->
-      let pid =
-        Unix.create_process_env prog argv env stdin_fd stdout_fd stderr_fd
-      in
-      { pid })
+  let pid = Unix.fork () in
+  if pid = 0 then (
+    ignore (Unix.setsid ());
+    Unix.dup2 stdin_fd Unix.stdin;
+    Unix.dup2 stdout_fd Unix.stdout;
+    Unix.dup2 stderr_fd Unix.stderr;
+    Unix.close stdin_fd;
+    Unix.close stdout_fd;
+    Unix.close stderr_fd;
+    (try Unix.execvpe prog argv env with _ -> exit 127))
+  else (
+    Unix.close stdin_fd;
+    Unix.close stdout_fd;
+    Unix.close stderr_fd;
+    { pid })
 
 let pid_is_alive pid =
   try

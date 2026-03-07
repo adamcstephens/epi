@@ -434,7 +434,7 @@ let with_mock_runtime f =
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
           ("EPI_GENISOIMAGE_BIN", genisoimage);
-          ("EPI_PASTA_BIN", pasta);
+          ("EPI_PASST_BIN", pasta);
           ("EPI_MOCK_VM_SLEEP", "30");
         ]
       in
@@ -1096,6 +1096,8 @@ let () =
                 "sudo: ALL=(ALL) NOPASSWD:ALL";
               assert_contains ~context:"user-data shell" user_data
                 "shell: /bin/bash";
+              assert_contains ~context:"user-data disable_root" user_data
+                "disable_root: false";
               assert_contains ~context:"meta-data instance-id" meta_data
                 "instance-id: seed-test";
               assert_contains ~context:"meta-data local-hostname" meta_data
@@ -1221,14 +1223,14 @@ let () =
                 "cidata.iso,readonly=on";
               assert_contains ~context:"pasta net arg" launch_contents
                 "--net vhost_user=true,socket=")));
-  run_test ~name:"EPI_PASTA_BIN overrides pasta binary path" (fun () ->
+  run_test ~name:"EPI_PASST_BIN overrides passt binary path" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_temp_dir "epi-pasta-override" (fun custom_dir ->
+          with_temp_dir "epi-passt-override" (fun custom_dir ->
               with_state_file (fun state_file ->
-                  let custom_pasta =
-                    Filename.concat custom_dir "custom-pasta.sh"
+                  let custom_passt =
+                    Filename.concat custom_dir "custom-passt.sh"
                   in
-                  write_file custom_pasta
+                  write_file custom_passt
                     "#!/usr/bin/env sh\n\
                      prev=\"\"\n\
                      for arg in \"$@\"; do\n\
@@ -1238,35 +1240,35 @@ let () =
                     \  prev=\"$arg\"\n\
                      done\n\
                      exec sleep 30\n";
-                  make_executable custom_pasta;
+                  make_executable custom_passt;
                   let extra_env =
                     List.filter
                       (fun (key, _) ->
-                        not (String.equal key "EPI_PASTA_BIN"))
+                        not (String.equal key "EPI_PASST_BIN"))
                       extra_env
-                    @ [ ("EPI_PASTA_BIN", custom_pasta) ]
+                    @ [ ("EPI_PASST_BIN", custom_passt) ]
                   in
                   let result =
                     run_cli_with_env ~bin ~state_file ~extra_env
-                      [ "up"; "pasta-override"; "--target"; ".#dev" ]
+                      [ "up"; "passt-override"; "--target"; ".#dev" ]
                   in
-                  assert_success ~context:"custom pasta bin up" result))));
-  run_test ~name:"missing pasta binary produces a clear error" (fun () ->
+                  assert_success ~context:"custom passt bin up" result))));
+  run_test ~name:"missing passt binary produces a clear error" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
           with_state_file (fun state_file ->
               let extra_env =
                 List.filter
-                  (fun (key, _) -> not (String.equal key "EPI_PASTA_BIN"))
+                  (fun (key, _) -> not (String.equal key "EPI_PASST_BIN"))
                   extra_env
-                @ [ ("EPI_PASTA_BIN", "nonexistent-pasta-bin") ]
+                @ [ ("EPI_PASST_BIN", "nonexistent-passt-bin") ]
               in
               let result =
                 run_cli_with_env ~bin ~state_file ~extra_env
-                  [ "up"; "no-pasta"; "--target"; ".#dev" ]
+                  [ "up"; "no-passt"; "--target"; ".#dev" ]
               in
-              assert_failure ~context:"missing pasta" result;
+              assert_failure ~context:"missing passt" result;
               let _, _, err = result in
-              assert_contains ~context:"pasta error message" err "pasta";
-              assert_contains ~context:"pasta EPI_PASTA_BIN hint" err
-                "EPI_PASTA_BIN")));
+              assert_contains ~context:"passt error message" err "passt";
+              assert_contains ~context:"passt EPI_PASST_BIN hint" err
+                "EPI_PASST_BIN")));
   ()

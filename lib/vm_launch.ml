@@ -451,7 +451,7 @@ let read_ssh_public_keys () =
 
 let generate_user_data ~username ~ssh_keys =
   let buf = Buffer.create 256 in
-  Buffer.add_string buf "#cloud-config\nusers:\n";
+  Buffer.add_string buf "#cloud-config\ndisable_root: false\nusers:\n";
   Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
   Buffer.add_string buf "    groups: wheel\n";
   Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
@@ -488,13 +488,13 @@ let check_genisoimage () =
   in
   result.status = 0
 
-let pasta_bin () =
-  match Sys.getenv_opt "EPI_PASTA_BIN" with
+let passt_bin () =
+  match Sys.getenv_opt "EPI_PASST_BIN" with
   | Some path -> path
-  | None -> "pasta"
+  | None -> "passt"
 
-let check_pasta () =
-  let bin = pasta_bin () in
+let check_passt () =
+  let bin = passt_bin () in
   let result =
     Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
   in
@@ -580,7 +580,7 @@ let launch_detached ~instance_name ~target descriptor =
   let pasta_sock =
     Filename.concat runtime_dir (instance_name ^ ".passt.sock")
   in
-  if not (check_pasta ()) then Error (Pasta_missing { target })
+  if not (check_passt ()) then Error (Pasta_missing { target })
   else
   match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys with
   | Error Genisoimage_missing ->
@@ -602,7 +602,7 @@ let launch_detached ~instance_name ~target descriptor =
       let pasta_repair_sock = pasta_sock ^ ".repair" in
       if Sys.file_exists pasta_repair_sock then Unix.unlink pasta_repair_sock;
       let _pasta_proc =
-        Process.run_detached ~prog:(pasta_bin ())
+        Process.run_detached ~prog:(passt_bin ())
           ~args:[ "--vhost-user"; "--socket"; pasta_sock ]
           ~stdout_path:
             (Filename.concat runtime_dir (instance_name ^ ".pasta.stdout.log"))
@@ -779,6 +779,29 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
             | Some seconds -> Some (Unix.gettimeofday () +. seconds)
             | None -> None
           in
+          let saved_termios =
+            if read_stdin && Unix.isatty stdin_fd then (
+              let term = Unix.tcgetattr stdin_fd in
+              Unix.tcsetattr stdin_fd Unix.TCSAFLUSH
+                { term with
+                  Unix.c_echo = false;
+                  Unix.c_icanon = false;
+                  Unix.c_isig = false;
+                  Unix.c_ixon = false;
+                  Unix.c_vmin = 1;
+                  Unix.c_vtime = 0;
+                };
+              Some term)
+            else None
+          in
+          let restore_termios () =
+            match saved_termios with
+            | Some term -> Unix.tcsetattr stdin_fd Unix.TCSAFLUSH term
+            | None -> ()
+          in
+          let saw_prefix = ref false in
+          if read_stdin then
+            Printf.printf "\r[console attached — ctrl-t q to detach]\n%!";
           try
             let rec loop read_stdin =
               let read_fds =
@@ -804,11 +827,43 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
                         | None -> 0.0)));
               let read_stdin =
                 if read_stdin && List.exists (( = ) stdin_fd) ready then
-                  match read_and_forward stdin_fd socket None with
-                  | `Eof ->
+                  let buf = Bytes.create 4096 in
+                  match Unix.read stdin_fd buf 0 (Bytes.length buf) with
+                  | 0 ->
                       Unix.shutdown socket Unix.SHUTDOWN_SEND;
                       false
-                  | `Ok -> true
+                  | n ->
+                      if !saw_prefix then (
+                        saw_prefix := false;
+                        if Bytes.get buf 0 = 'q' || Bytes.get buf 0 = 'Q' then
+                          raise Exit;
+                        write_all socket (Bytes.make 1 '\x14') 0 1);
+                      let flush_from = ref 0 in
+                      let i = ref 0 in
+                      while !i < n do
+                        if Bytes.get buf !i = '\x14' then (
+                          if !i + 1 < n then (
+                            if
+                              Bytes.get buf (!i + 1) = 'q'
+                              || Bytes.get buf (!i + 1) = 'Q'
+                            then (
+                              write_all socket buf !flush_from
+                                (!i - !flush_from);
+                              raise Exit)
+                            else
+                              i := !i + 1)
+                          else (
+                            write_all socket buf !flush_from
+                              (!i - !flush_from);
+                            saw_prefix := true;
+                            flush_from := n;
+                            i := n))
+                        else
+                          i := !i + 1
+                      done;
+                      if !flush_from < n then
+                        write_all socket buf !flush_from (n - !flush_from);
+                      true
                 else read_stdin
               in
               let socket_open =
@@ -823,11 +878,19 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
               if socket_open then loop read_stdin
             in
             loop read_stdin;
+            restore_termios ();
             close_capture_channel capture_channel_opt;
             close_socket ();
             Ok ()
           with
+          | Exit ->
+              restore_termios ();
+              close_capture_channel capture_channel_opt;
+              close_socket ();
+              Printf.printf "\r\n[console detached]\n%!";
+              Ok ()
           | Failure message when contains message "console timeout reached" ->
+              restore_termios ();
               close_capture_channel capture_channel_opt;
               close_socket ();
               Error
@@ -840,6 +903,7 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
                        | None -> 0.0);
                    })
           | Unix.Unix_error (error, _, _) ->
+              restore_termios ();
               close_capture_channel capture_channel_opt;
               close_socket ();
               Error
@@ -884,8 +948,8 @@ let pp_provision_error = function
         details
   | Pasta_missing { target } ->
       Printf.sprintf
-        "VM launch failed for %s: pasta binary not found on $PATH. Set \
-         EPI_PASTA_BIN or install the passt package to enable userspace \
+        "VM launch failed for %s: passt binary not found on $PATH. Set \
+         EPI_PASST_BIN or install the passt package to enable userspace \
          networking."
         target
   | Pasta_socket_unavailable { target; socket } ->
