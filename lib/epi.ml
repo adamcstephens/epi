@@ -85,16 +85,16 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
   if not (Process.pid_is_alive runtime.Instance_store.pid) then (
     Instance_store.clear_runtime instance_name;
     fail
-      (Vm_launch.pp_console_error
-         (Vm_launch.Instance_not_running { instance_name })))
+      (Console.pp_console_error
+         (Console.Instance_not_running { instance_name })))
   else
     match
-      Vm_launch.attach_console ~instance_name ~read_stdin:options.read_stdin
+      Console.attach_console ~instance_name ~read_stdin:options.read_stdin
         ?capture_path:options.capture_path
         ?timeout_seconds:options.timeout_seconds runtime
     with
     | Ok () -> ()
-    | Error error -> fail (Vm_launch.pp_console_error error)
+    | Error error -> fail (Console.pp_console_error error)
 
 let pid_is_zombie pid =
   let path = Printf.sprintf "/proc/%d/stat" pid in
@@ -132,6 +132,11 @@ let up_command =
          ~doc:
            "Attach to the instance serial console immediately after ensuring \
             runtime is active."
+     and+ rebuild =
+       Arg.flag [ "rebuild" ]
+         ~doc:
+           "Force re-evaluation and rebuild of the target, bypassing any \
+            cached descriptor."
      in
      let console_options = resolve_console_attach_options () in
      Instance_store.reconcile_runtime ();
@@ -154,7 +159,7 @@ let up_command =
          | Some passt_pid -> kill_if_alive passt_pid
          | None -> ());
          Instance_store.clear_runtime instance_name;
-         match Vm_launch.provision ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -167,7 +172,7 @@ let up_command =
                  runtime.serial_socket
          | Error error -> fail (Vm_launch.pp_provision_error error))
      | None -> (
-         match Vm_launch.provision ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -211,8 +216,8 @@ let console_command =
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
-           (Vm_launch.pp_console_error
-              (Vm_launch.Instance_not_running { instance_name }))
+           (Console.pp_console_error
+              (Console.Instance_not_running { instance_name }))
      | Some runtime ->
          attach_console_for_running_instance ~instance_name
            ~options:console_options runtime)

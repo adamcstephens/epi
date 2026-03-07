@@ -449,14 +449,28 @@ let with_mock_runtime f =
          \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
           fi\n\
           exit 0\n");
+      let pasta = Filename.concat dir "pasta.sh" in
+      write_file pasta
+        "#!/usr/bin/env sh\n\
+         # Mock pasta: find --socket arg, touch the socket file, stay alive\n\
+         prev=\"\"\n\
+         for arg in \"$@\"; do\n\
+        \  if [ \"$prev\" = \"--socket\" ]; then\n\
+        \    touch \"$arg\"\n\
+        \  fi\n\
+        \  prev=\"$arg\"\n\
+         done\n\
+         exec sleep 30\n";
       make_executable resolver;
       make_executable cloud_hypervisor;
       make_executable genisoimage;
+      make_executable pasta;
       let extra_env =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
           ("EPI_GENISOIMAGE_BIN", genisoimage);
+          ("EPI_PASST_BIN", pasta);
           ("EPI_MOCK_VM_SLEEP", "30");
         ]
       in
@@ -486,9 +500,9 @@ let () =
               assert_success ~context:"explicit up" explicit;
               let _, stdout_explicit, _ = explicit in
               assert_contains ~context:"explicit up output" stdout_explicit
-                "up: evaluating target=.#dev-a";
+                "up: resolving target=.#dev-a";
               assert_contains ~context:"explicit up output" stdout_explicit
-                "up: building target artifacts";
+                "up: evaluated target, building artifacts";
               assert_contains ~context:"explicit up output" stdout_explicit
                 "up: starting VM instance=dev-a";
               assert_contains ~context:"explicit up output" stdout_explicit
@@ -550,9 +564,9 @@ let () =
               assert_success ~context:"stage progress up" result;
               let _, stdout, _ = result in
               assert_contains ~context:"stage: target evaluation start" stdout
-                "up: evaluating target=.#stage-test";
+                "up: resolving target=.#stage-test";
               assert_contains ~context:"stage: launch preparation start" stdout
-                "up: building target artifacts";
+                "up: evaluated target, building artifacts";
               assert_contains ~context:"stage: VM launch start" stdout
                 "up: starting VM instance=stage-test";
               assert_contains ~context:"stage: provisioned message" stdout
@@ -1408,4 +1422,276 @@ let () =
                 fail
                   "old passt process should be terminated after relaunch \
                    over stale instance")));
+  run_test
+    ~name:"cache is written after successful provision"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-cache-home" (fun cache_dir ->
+                  let extra_env = ("EPI_CACHE_DIR", cache_dir) :: extra_env in
+                  let result =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "cache-write"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"cache write up" result;
+                  let cache_dir = cache_dir in
+                  if not (Sys.file_exists cache_dir) then
+                    fail "cache directory was not created";
+                  let entries = Sys.readdir cache_dir |> Array.to_list in
+                  let descriptor_files =
+                    List.filter
+                      (fun name ->
+                        let len = String.length name in
+                        len > 11
+                        && String.sub name (len - 11) 11 = ".descriptor")
+                      entries
+                  in
+                  if descriptor_files = [] then
+                    fail "no .descriptor cache file was created"))));
+  run_test
+    ~name:"second epi up on same target uses cache"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-cache-hit" (fun test_dir ->
+                  let cache_dir = Filename.concat test_dir "cache" in
+                  let resolver_log =
+                    Filename.concat test_dir "resolver-calls.log"
+                  in
+                  let counting_resolver =
+                    Filename.concat test_dir "counting-resolver.sh"
+                  in
+                  let original_resolver =
+                    List.assoc "EPI_TARGET_RESOLVER_CMD" extra_env
+                  in
+                  write_file counting_resolver
+                    ("#!/usr/bin/env sh\n\
+                      echo \"call\" >> \"" ^ resolver_log ^ "\"\n\
+                      exec \"" ^ original_resolver ^ "\" \"$@\"\n");
+                  make_executable counting_resolver;
+                  let extra_env =
+                    ("EPI_CACHE_DIR", cache_dir)
+                    :: List.map
+                         (fun (k, v) ->
+                           if String.equal k "EPI_TARGET_RESOLVER_CMD" then
+                             (k, counting_resolver)
+                           else (k, v))
+                         extra_env
+                  in
+                  let result1 =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "cache-hit"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"cache hit first up" result1;
+                  let entry = find_state_entry state_file "cache-hit" in
+                  let hypervisor_pid =
+                    match entry with
+                    | Some { pid = Some pid; _ } -> pid
+                    | _ -> fail "expected pid after first up"
+                  in
+                  let passt_pid =
+                    match entry with
+                    | Some { passt_pid = Some pid; _ } -> pid
+                    | _ -> fail "expected passt_pid after first up"
+                  in
+                  terminate_pid hypervisor_pid;
+                  terminate_pid passt_pid;
+                  let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
+                  let result2 =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "cache-hit"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"cache hit second up" result2;
+                  let log_content =
+                    if Sys.file_exists resolver_log then
+                      let channel = open_in resolver_log in
+                      Fun.protect
+                        ~finally:(fun () -> close_in channel)
+                        (fun () -> read_all channel)
+                    else ""
+                  in
+                  let call_count =
+                    String.split_on_char '\n' log_content
+                    |> List.filter (fun line -> String.equal line "call")
+                    |> List.length
+                  in
+                  if call_count <> 1 then
+                    fail
+                      "expected resolver to be called exactly once, got %d"
+                      call_count))));
+  run_test
+    ~name:"cache with missing path triggers re-eval"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-cache-miss" (fun test_dir ->
+                  let cache_dir = Filename.concat test_dir "cache" in
+                  let resolver_log =
+                    Filename.concat test_dir "resolver-calls.log"
+                  in
+                  let counting_resolver =
+                    Filename.concat test_dir "counting-resolver.sh"
+                  in
+                  let original_resolver =
+                    List.assoc "EPI_TARGET_RESOLVER_CMD" extra_env
+                  in
+                  write_file counting_resolver
+                    ("#!/usr/bin/env sh\n\
+                      echo \"call\" >> \"" ^ resolver_log ^ "\"\n\
+                      exec \"" ^ original_resolver ^ "\" \"$@\"\n");
+                  make_executable counting_resolver;
+                  let extra_env =
+                    ("EPI_CACHE_DIR", cache_dir)
+                    :: List.map
+                         (fun (k, v) ->
+                           if String.equal k "EPI_TARGET_RESOLVER_CMD" then
+                             (k, counting_resolver)
+                           else (k, v))
+                         extra_env
+                  in
+                  let result1 =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "cache-miss"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"cache miss first up" result1;
+                  let entry = find_state_entry state_file "cache-miss" in
+                  let hypervisor_pid =
+                    match entry with
+                    | Some { pid = Some pid; _ } -> pid
+                    | _ -> fail "expected pid after first up"
+                  in
+                  let passt_pid =
+                    match entry with
+                    | Some { passt_pid = Some pid; _ } -> pid
+                    | _ -> fail "expected passt_pid after first up"
+                  in
+                  terminate_pid hypervisor_pid;
+                  terminate_pid passt_pid;
+                  let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
+                  let cache_files = Sys.readdir cache_dir |> Array.to_list in
+                  let cache_file =
+                    match
+                      List.find_opt
+                        (fun name ->
+                          let len = String.length name in
+                          len > 11
+                          && String.sub name (len - 11) 11 = ".descriptor")
+                        cache_files
+                    with
+                    | Some name -> Filename.concat cache_dir name
+                    | None -> fail "expected cache file after first up"
+                  in
+                  let cache_content =
+                    let channel = open_in cache_file in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  let corrupted =
+                    let lines = String.split_on_char '\n' cache_content in
+                    List.map
+                      (fun line ->
+                        if
+                          String.length line > 5
+                          && String.sub line 0 5 = "disk="
+                        then "disk=/nonexistent/path"
+                        else line)
+                      lines
+                    |> String.concat "\n"
+                  in
+                  write_file cache_file corrupted;
+                  let result2 =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "cache-miss"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"cache miss second up" result2;
+                  let log_content =
+                    if Sys.file_exists resolver_log then
+                      let channel = open_in resolver_log in
+                      Fun.protect
+                        ~finally:(fun () -> close_in channel)
+                        (fun () -> read_all channel)
+                    else ""
+                  in
+                  let call_count =
+                    String.split_on_char '\n' log_content
+                    |> List.filter (fun line -> String.equal line "call")
+                    |> List.length
+                  in
+                  if call_count <> 2 then
+                    fail
+                      "expected resolver to be called twice (cache miss), \
+                       got %d"
+                      call_count))));
+  run_test
+    ~name:"--rebuild busts cache and re-evals unconditionally"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-cache-rebuild" (fun test_dir ->
+                  let cache_dir = Filename.concat test_dir "cache" in
+                  let resolver_log =
+                    Filename.concat test_dir "resolver-calls.log"
+                  in
+                  let counting_resolver =
+                    Filename.concat test_dir "counting-resolver.sh"
+                  in
+                  let original_resolver =
+                    List.assoc "EPI_TARGET_RESOLVER_CMD" extra_env
+                  in
+                  write_file counting_resolver
+                    ("#!/usr/bin/env sh\n\
+                      echo \"call\" >> \"" ^ resolver_log ^ "\"\n\
+                      exec \"" ^ original_resolver ^ "\" \"$@\"\n");
+                  make_executable counting_resolver;
+                  let extra_env =
+                    ("EPI_CACHE_DIR", cache_dir)
+                    :: List.map
+                         (fun (k, v) ->
+                           if String.equal k "EPI_TARGET_RESOLVER_CMD" then
+                             (k, counting_resolver)
+                           else (k, v))
+                         extra_env
+                  in
+                  let result1 =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "rebuild-test"; "--target"; ".#dev" ]
+                  in
+                  assert_success ~context:"rebuild first up" result1;
+                  let entry = find_state_entry state_file "rebuild-test" in
+                  let hypervisor_pid =
+                    match entry with
+                    | Some { pid = Some pid; _ } -> pid
+                    | _ -> fail "expected pid after first up"
+                  in
+                  let passt_pid =
+                    match entry with
+                    | Some { passt_pid = Some pid; _ } -> pid
+                    | _ -> fail "expected passt_pid after first up"
+                  in
+                  terminate_pid hypervisor_pid;
+                  terminate_pid passt_pid;
+                  let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
+                  let result2 =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "rebuild-test"; "--target"; ".#dev"; "--rebuild" ]
+                  in
+                  assert_success ~context:"rebuild second up" result2;
+                  let log_content =
+                    if Sys.file_exists resolver_log then
+                      let channel = open_in resolver_log in
+                      Fun.protect
+                        ~finally:(fun () -> close_in channel)
+                        (fun () -> read_all channel)
+                    else ""
+                  in
+                  let call_count =
+                    String.split_on_char '\n' log_content
+                    |> List.filter (fun line -> String.equal line "call")
+                    |> List.length
+                  in
+                  if call_count <> 2 then
+                    fail
+                      "expected resolver to be called twice (rebuild), got %d"
+                      call_count))));
   ()
