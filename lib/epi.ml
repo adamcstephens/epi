@@ -207,6 +207,58 @@ let lifecycle_command ~name ~summary =
      in
      Printf.printf "%s: instance=%s target=%s\n" name instance_name target)
 
+let ssh_command =
+  Command.make ~summary:"Open SSH session to an instance."
+    ~readme:(fun () ->
+      "SSH into a running instance.\n\
+       If INSTANCE is omitted, `default` is used.\n\n\
+       Connects to 127.0.0.1 on the port allocated during `up`.\n\
+       Host key checking is disabled since VMs generate fresh keys on each \
+       provision.")
+    (let open Command.Std in
+     let+ instance_name_opt =
+       Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
+     in
+     Instance_store.reconcile_runtime ();
+     let instance_name = resolve_instance_name instance_name_opt in
+     match Instance_store.find_runtime instance_name with
+     | None ->
+         fail
+           (Printf.sprintf "Instance '%s' is not running. Start it with: epi up"
+              instance_name)
+     | Some runtime when not (Process.pid_is_alive runtime.pid) ->
+         fail
+           (Printf.sprintf "Instance '%s' is not running. Start it with: epi up"
+              instance_name)
+     | Some runtime -> (
+         match runtime.Instance_store.ssh_port with
+         | None ->
+             fail
+               (Printf.sprintf
+                  "Instance '%s' has no SSH port. Try stopping and restarting it."
+                  instance_name)
+         | Some port ->
+             let username =
+               match Sys.getenv_opt "USER" with
+               | Some u -> u
+               | None -> "user"
+             in
+             let port_str = string_of_int port in
+             let target = username ^ "@127.0.0.1" in
+             let args =
+               [|
+                 "ssh";
+                 "-p";
+                 port_str;
+                 "-o";
+                 "StrictHostKeyChecking=no";
+                 "-o";
+                 "UserKnownHostsFile=/dev/null";
+                 target;
+               |]
+             in
+             Unix.execvp "ssh" args))
+
 let console_command =
   Command.make ~summary:"Attach to an instance serial console."
     ~readme:(fun () ->
@@ -376,9 +428,7 @@ let cmd =
            | _ -> ()) );
       ("rm", rm_command);
       ("console", console_command);
-      ( "ssh",
-        lifecycle_command ~name:"ssh"
-          ~summary:"Open SSH session to an instance." );
+      ("ssh", ssh_command);
       ("logs", lifecycle_command ~name:"logs" ~summary:"Show instance logs.");
       ("list", list_command);
     ]
