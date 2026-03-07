@@ -6,6 +6,7 @@ type state_entry = {
   disk : string option;
   passt_pid : int option;
   ssh_port : int option;
+  ssh_key_path : string option;
 }
 
 let contains text snippet =
@@ -115,6 +116,7 @@ let parse_state_line line =
     | Some value when value > 0 -> Some value
     | _ -> None
   in
+  let parse_opt_string = function "" -> None | s -> Some s in
   match fields with
   | [ instance_name; target ] ->
       Some
@@ -126,6 +128,7 @@ let parse_state_line line =
           disk = None;
           passt_pid = None;
           ssh_port = None;
+          ssh_key_path = None;
         }
   | [ instance_name; target; pid_text; serial_socket; disk ] ->
       let pid, serial_socket, disk =
@@ -133,13 +136,14 @@ let parse_state_line line =
       in
       Some
         { instance_name; target; pid; serial_socket; disk; passt_pid = None;
-          ssh_port = None }
+          ssh_port = None; ssh_key_path = None }
   | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
       let pid, serial_socket, disk =
         parse_runtime pid_text serial_socket disk
       in
       Some { instance_name; target; pid; serial_socket; disk;
-             passt_pid = parse_opt_int passt_pid_text; ssh_port = None }
+             passt_pid = parse_opt_int passt_pid_text; ssh_port = None;
+             ssh_key_path = None }
   | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
       ssh_port_text ] ->
       let pid, serial_socket, disk =
@@ -147,7 +151,17 @@ let parse_state_line line =
       in
       Some { instance_name; target; pid; serial_socket; disk;
              passt_pid = parse_opt_int passt_pid_text;
-             ssh_port = parse_opt_int ssh_port_text }
+             ssh_port = parse_opt_int ssh_port_text;
+             ssh_key_path = None }
+  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
+      ssh_port_text; ssh_key_path_text ] ->
+      let pid, serial_socket, disk =
+        parse_runtime pid_text serial_socket disk
+      in
+      Some { instance_name; target; pid; serial_socket; disk;
+             passt_pid = parse_opt_int passt_pid_text;
+             ssh_port = parse_opt_int ssh_port_text;
+             ssh_key_path = parse_opt_string ssh_key_path_text }
   | _ -> None
 
 let read_state_entries path =
@@ -261,10 +275,13 @@ let write_state_entry path entry =
   let ssh_port =
     match entry.ssh_port with Some value -> string_of_int value | None -> ""
   in
+  let ssh_key_path =
+    match entry.ssh_key_path with Some value -> value | None -> ""
+  in
   output_string channel
     (String.concat "\t"
        [ entry.instance_name; entry.target; pid; serial_socket; disk;
-         passt_pid; ssh_port ]);
+         passt_pid; ssh_port; ssh_key_path ]);
   output_char channel '\n';
   close_out channel
 
@@ -773,6 +790,7 @@ let () =
               disk = None;
             passt_pid = None;
             ssh_port = None;
+            ssh_key_path = None;
             };
           let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
           assert_failure ~context:"console not running" result;
@@ -797,6 +815,7 @@ let () =
                           disk = Some "/tmp/dev-a.disk";
                         passt_pid = None;
                         ssh_port = None;
+                        ssh_key_path = None;
                         };
                       let result =
                         run_cli ~bin ~state_file [ "console"; "dev-a" ]
@@ -822,6 +841,7 @@ let () =
                           disk = Some "/tmp/dev-a.disk";
                         passt_pid = None;
                         ssh_port = None;
+                        ssh_key_path = None;
                         };
                       let result =
                         run_cli_with_env ~bin ~state_file
@@ -868,6 +888,7 @@ let () =
                   disk = Some "/tmp/disk.img";
                 passt_pid = None;
                 ssh_port = None;
+                ssh_key_path = None;
                 };
               let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
               assert_failure ~context:"console unavailable endpoint" result;
@@ -892,6 +913,7 @@ let () =
                           disk = Some "/tmp/dev-a.disk";
                         passt_pid = None;
                         ssh_port = None;
+                        ssh_key_path = None;
                         };
                       let result =
                         run_cli_with_env ~bin ~state_file
@@ -975,6 +997,7 @@ let () =
                               disk = Some "/tmp/dev-a.disk";
                             passt_pid = None;
                             ssh_port = None;
+                            ssh_key_path = None;
                             };
                           let result =
                             run_cli_with_env ~bin ~state_file ~extra_env
@@ -1017,6 +1040,7 @@ let () =
                       disk = Some "/tmp/stale-disk.img";
                     passt_pid = None;
                     ssh_port = None;
+                    ssh_key_path = None;
                     };
                   write_state_entry state_file
                     {
@@ -1027,6 +1051,7 @@ let () =
                       disk = Some "/tmp/live-disk.img";
                     passt_pid = None;
                     ssh_port = None;
+                    ssh_key_path = None;
                     };
                   let listed = run_cli ~bin ~state_file [ "list" ] in
                   assert_success ~context:"list with reconciliation" listed;
@@ -1049,6 +1074,7 @@ let () =
               disk = None;
             passt_pid = None;
             ssh_port = None;
+            ssh_key_path = None;
             };
           let removed = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
           assert_success ~context:"rm stopped instance" removed;
@@ -1070,6 +1096,7 @@ let () =
                   disk = Some "/tmp/dev-a.disk";
                 passt_pid = None;
                 ssh_port = None;
+                ssh_key_path = None;
                 };
               let rejected = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
               assert_failure ~context:"rm running without force" rejected;
@@ -1094,6 +1121,7 @@ let () =
                   disk = Some "/tmp/dev-a.disk";
                 passt_pid = None;
                 ssh_port = None;
+                ssh_key_path = None;
                 };
               let removed =
                 run_cli ~bin ~state_file [ "rm"; "--force"; "dev-a" ]
@@ -1118,6 +1146,7 @@ let () =
                 disk = Some "/tmp/protected.disk";
               passt_pid = None;
               ssh_port = None;
+              ssh_key_path = None;
               };
             let failed =
               run_cli ~bin ~state_file [ "rm"; "--force"; "protected" ]

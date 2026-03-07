@@ -137,6 +137,11 @@ let up_command =
          ~doc:
            "Force re-evaluation and rebuild of the target, bypassing any \
             cached descriptor."
+     and+ generate_ssh_key =
+       Arg.flag [ "generate-ssh-key" ]
+         ~doc:
+           "Generate an ed25519 keypair for this instance and include it in \
+            cloud-init authorized_keys."
      in
      let console_options = resolve_console_attach_options () in
      Instance_store.reconcile_runtime ();
@@ -159,7 +164,7 @@ let up_command =
          | Some passt_pid -> kill_if_alive passt_pid
          | None -> ());
          Instance_store.clear_runtime instance_name;
-         match Vm_launch.provision ~rebuild ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~generate_ssh_key ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -175,7 +180,7 @@ let up_command =
                | None -> ())
          | Error error -> fail (Vm_launch.pp_provision_error error))
      | None -> (
-         match Vm_launch.provision ~rebuild ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~generate_ssh_key ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -245,17 +250,24 @@ let ssh_command =
              in
              let port_str = string_of_int port in
              let target = username ^ "@127.0.0.1" in
+             let key_args =
+               match runtime.Instance_store.ssh_key_path with
+               | Some path -> [| "-i"; path |]
+               | None -> [||]
+             in
              let args =
-               [|
-                 "ssh";
-                 "-p";
-                 port_str;
-                 "-o";
-                 "StrictHostKeyChecking=no";
-                 "-o";
-                 "UserKnownHostsFile=/dev/null";
-                 target;
-               |]
+               Array.concat
+                 [
+                   [| "ssh"; "-p"; port_str |];
+                   key_args;
+                   [|
+                     "-o";
+                     "StrictHostKeyChecking=no";
+                     "-o";
+                     "UserKnownHostsFile=/dev/null";
+                     target;
+                   |];
+                 ]
              in
              Unix.execvp "ssh" args))
 

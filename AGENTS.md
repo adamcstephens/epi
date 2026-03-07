@@ -3,4 +3,5 @@
 - Avoid singular functions with one or fewer lines.
 - Explicit namespace references are preferred
 - Use red/green TDD
-- When possible, manually test by yourself
+- When possible, manually test by yourself, e.g. `dune exec epi -- list`
+- When running commands that take a nix target, quote them to avoid prompting. e.g. `.#manual-test` -> `'.#manual-test'`

@@ -140,8 +140,8 @@ let generate_user_data ~username ~ssh_keys ~user_exists =
   Buffer.contents buf
 
 let generate_meta_data ~instance_name =
-  Printf.sprintf "instance-id: %s\nlocal-hostname: %s\n" instance_name
-    instance_name
+  let id = Printf.sprintf "%s-%d" instance_name (int_of_float (Unix.time ())) in
+  Printf.sprintf "instance-id: %s\nlocal-hostname: %s\n" id instance_name
 
 type seed_iso_error =
   | Genisoimage_missing
@@ -242,7 +242,29 @@ let alloc_free_port () =
       | Unix.ADDR_INET (_, port) -> port
       | _ -> failwith "alloc_free_port: unexpected socket address")
 
-let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
+let generate_ssh_key ~instance_name =
+  let runtime_dir = Instance_store.runtime_dir () in
+  let key_path =
+    Filename.concat runtime_dir (instance_name ^ ".id_ed25519")
+  in
+  Process.ensure_parent_dir key_path;
+  if Sys.file_exists key_path then Unix.unlink key_path;
+  let pub_path = key_path ^ ".pub" in
+  if Sys.file_exists pub_path then Unix.unlink pub_path;
+  let result =
+    Process.run ~prog:"ssh-keygen"
+      ~args:[ "-t"; "ed25519"; "-f"; key_path; "-N"; ""; "-C"; "epi-generated" ]
+      ()
+  in
+  if result.status <> 0 then
+    failwith
+      (Printf.sprintf "ssh-keygen failed (exit=%d): %s" result.status
+         result.stderr)
+  else
+    let pub_content = Target.read_file_if_exists pub_path |> String.trim in
+    (key_path, pub_content)
+
+let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target (descriptor : Target.descriptor) =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
     | Some path -> path
@@ -260,6 +282,21 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
   in
   let runtime_dir = Instance_store.runtime_dir () in
   let ssh_keys = read_ssh_public_keys () in
+  let generated_key =
+    if do_generate_ssh_key then (
+      let key_path, pub_content = generate_ssh_key ~instance_name in
+      Printf.printf "up: generated SSH key %s\n%!" key_path;
+      Some (key_path, pub_content))
+    else None
+  in
+  let ssh_keys =
+    match generated_key with
+    | Some (_, pub_content) -> ssh_keys @ [ pub_content ]
+    | None -> ssh_keys
+  in
+  let ssh_key_path =
+    match generated_key with Some (path, _) -> Some path | None -> None
+  in
   let user_exists = List.mem username descriptor.configured_users in
   let passt_sock =
     Filename.concat runtime_dir (instance_name ^ ".passt.sock")
@@ -359,6 +396,7 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
             disk = launch_disk;
             passt_pid = Some passt_proc.pid;
             ssh_port = Some ssh_port;
+            ssh_key_path;
           }
       else
         let stderr = Target.read_file_if_exists launch_stderr |> String.trim in
@@ -385,7 +423,7 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
                        signal;
                  }))
 
-let provision ~rebuild ~instance_name ~target =
+let provision ~rebuild ~generate_ssh_key ~instance_name ~target =
   Printf.printf "up: resolving target=%s\n%!" target;
   let descriptor =
     match Target.resolve_descriptor_cached ~rebuild target with
@@ -406,7 +444,7 @@ let provision ~rebuild ~instance_name ~target =
           Error (Descriptor_validation_failed { target; details })
       | Ok () ->
           Printf.printf "up: starting VM instance=%s\n%!" instance_name;
-          launch_detached ~instance_name ~target descriptor)
+          launch_detached ~generate_ssh_key ~instance_name ~target descriptor)
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->
