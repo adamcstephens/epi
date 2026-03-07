@@ -48,7 +48,7 @@
             };
 
             packages = {
-              default = pkgs.pkgsMusl.callPackage ./package.nix {
+              default = pkgs.pkgsMusl.callPackage ./nix/package.nix {
                 inherit ocamlPackages;
               };
             };
