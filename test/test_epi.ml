@@ -33,12 +33,28 @@ let read_all channel =
   loop ()
 
 let run_cli_with_env ~bin ~state_file ~extra_env args =
+  let overrides =
+    ("EPI_STATE_DIR", Filename.dirname state_file) :: extra_env
+  in
+  let override_keys =
+    List.map (fun (key, _) -> key ^ "=") overrides
+  in
+  let base_env =
+    Unix.environment ()
+    |> Array.to_list
+    |> List.filter (fun entry ->
+        not (List.exists (fun prefix ->
+            String.length entry >= String.length prefix
+            && String.sub entry 0 (String.length prefix) = prefix)
+          override_keys))
+    |> Array.of_list
+  in
   let env_entries =
-    ("EPI_STATE_FILE", state_file) :: extra_env
+    overrides
     |> List.map (fun (key, value) -> Printf.sprintf "%s=%s" key value)
     |> Array.of_list
   in
-  let env = Array.append (Unix.environment ()) env_entries in
+  let env = Array.append base_env env_entries in
   let argv = Array.of_list (bin :: args) in
   let stdout_channel, stdin_channel, stderr_channel =
     Unix.open_process_args_full bin argv env
@@ -193,15 +209,6 @@ let cleanup_state_pids path =
       | Some pid -> terminate_pid pid
       | None -> ())
 
-let with_state_file f =
-  let path = Filename.temp_file "epi-cli-test" ".tsv" in
-  Sys.remove path;
-  Fun.protect
-    ~finally:(fun () ->
-      if Sys.file_exists path then cleanup_state_pids path;
-      if Sys.file_exists path then Sys.remove path)
-    (fun () -> f path)
-
 let with_temp_dir prefix f =
   let base =
     Filename.concat
@@ -223,6 +230,14 @@ let with_temp_dir prefix f =
       else Sys.remove path
   in
   Fun.protect ~finally:(fun () -> remove_tree dir) (fun () -> f dir)
+
+let with_state_file f =
+  with_temp_dir "epi-cli-test" (fun dir ->
+    let state_file = Filename.concat dir "instances.tsv" in
+    Fun.protect
+      ~finally:(fun () ->
+        if Sys.file_exists state_file then cleanup_state_pids state_file)
+      (fun () -> f state_file))
 
 let write_file path content =
   let channel = open_out path in
@@ -480,6 +495,8 @@ let with_mock_runtime f =
       make_executable cloud_hypervisor;
       make_executable genisoimage;
       make_executable passt;
+      let cache_dir = Filename.concat dir "cache" in
+      Unix.mkdir cache_dir 0o755;
       let extra_env =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
@@ -487,6 +504,7 @@ let with_mock_runtime f =
           ("EPI_GENISOIMAGE_BIN", genisoimage);
           ("EPI_PASST_BIN", passt);
           ("EPI_MOCK_VM_SLEEP", "30");
+          ("EPI_CACHE_DIR", cache_dir);
         ]
       in
       f ~extra_env ~launch_log ~disk)
@@ -1461,10 +1479,12 @@ let () =
                       [ "up"; "cache-write"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"cache write up" result;
-                  let cache_dir = cache_dir in
-                  if not (Sys.file_exists cache_dir) then
-                    fail "cache directory was not created";
-                  let entries = Sys.readdir cache_dir |> Array.to_list in
+                  let targets_dir =
+                    Filename.concat cache_dir "targets"
+                  in
+                  if not (Sys.file_exists targets_dir) then
+                    fail "cache targets directory was not created";
+                  let entries = Sys.readdir targets_dir |> Array.to_list in
                   let descriptor_files =
                     List.filter
                       (fun name ->
@@ -1595,7 +1615,8 @@ let () =
                   terminate_pid hypervisor_pid;
                   terminate_pid passt_pid;
                   let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
-                  let cache_files = Sys.readdir cache_dir |> Array.to_list in
+                  let targets_dir = Filename.concat cache_dir "targets" in
+                  let cache_files = Sys.readdir targets_dir |> Array.to_list in
                   let cache_file =
                     match
                       List.find_opt
@@ -1605,7 +1626,7 @@ let () =
                           && String.sub name (len - 11) 11 = ".descriptor")
                         cache_files
                     with
-                    | Some name -> Filename.concat cache_dir name
+                    | Some name -> Filename.concat targets_dir name
                     | None -> fail "expected cache file after first up"
                   in
                   let cache_content =
@@ -1778,6 +1799,8 @@ let () =
           make_executable cloud_hypervisor;
           make_executable genisoimage;
           make_executable passt;
+          let cache_dir = Filename.concat dir "cache" in
+          Unix.mkdir cache_dir 0o755;
           let extra_env =
             [
               ("EPI_TARGET_RESOLVER_CMD", resolver);
@@ -1785,6 +1808,7 @@ let () =
               ("EPI_GENISOIMAGE_BIN", genisoimage);
               ("EPI_PASST_BIN", passt);
               ("EPI_MOCK_VM_SLEEP", "30");
+              ("EPI_CACHE_DIR", cache_dir);
             ]
           in
           with_state_file (fun state_file ->

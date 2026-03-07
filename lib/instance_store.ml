@@ -14,13 +14,15 @@ type entry = {
   runtime : runtime option;
 }
 
-let state_file () =
-  match Sys.getenv_opt "EPI_STATE_FILE" with
-  | Some path -> path
+let state_dir () =
+  match Sys.getenv_opt "EPI_STATE_DIR" with
+  | Some dir -> dir
   | None -> (
       match Sys.getenv_opt "HOME" with
-      | Some home -> Filename.concat home ".local/state/epi/instances.tsv"
-      | None -> ".epi-instances.tsv")
+      | Some home -> Filename.concat home ".local/state/epi"
+      | None -> ".epi-state")
+
+let state_file () = Filename.concat (state_dir ()) "instances.tsv"
 
 let ensure_parent_dir path =
   let dir = Filename.dirname path in
@@ -49,7 +51,8 @@ let parse_int text = int_of_string_opt text
 
 let runtime_of_fields pid_text serial_socket disk passt_pid ssh_port =
   match parse_int pid_text with
-  | Some pid when pid > 0 -> Some { pid; serial_socket; disk; passt_pid; ssh_port }
+  | Some pid when pid > 0 ->
+      Some { pid; serial_socket; disk; passt_pid; ssh_port }
   | _ -> None
 
 let entry_of_fields = function
@@ -77,8 +80,15 @@ let entry_of_fields = function
             runtime_of_fields pid_text serial_socket disk
               (parse_int passt_pid_text) None;
         }
-  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
-      ssh_port_text ] ->
+  | [
+      instance_name;
+      target;
+      pid_text;
+      serial_socket;
+      disk;
+      passt_pid_text;
+      ssh_port_text;
+    ] ->
       Some
         {
           instance_name;
@@ -194,8 +204,7 @@ let find_running_owner_by_disk disk =
       | _ -> None)
 
 let kill_if_alive pid =
-  try Unix.kill pid Sys.sigterm
-  with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
+  try Unix.kill pid Sys.sigterm with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
 
 let reconcile_runtime () =
   let clear_if_stale entry =

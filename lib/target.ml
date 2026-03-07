@@ -5,13 +5,12 @@ let to_string target = target
 let of_string target =
   match String.split_on_char '#' target with
   | [ flake_ref; config_name ] when flake_ref = "" || config_name = "" ->
-    Error
-      (`Msg
-        "both flake reference and config name are required in --target \
-         <flake-ref>#<config-name>")
+      Error
+        (`Msg
+           "both flake reference and config name are required in --target \
+            <flake-ref>#<config-name>")
   | [ _flake_ref; _config_name ] -> Ok target
   | _ -> Error (`Msg "--target must use <flake-ref>#<config-name>")
-;;
 
 type descriptor = {
   kernel : string;
@@ -330,16 +329,22 @@ let validate_descriptor ~target descriptor =
               else validate_descriptor_coherence descriptor))
 
 let cache_dir () =
-  match Sys.getenv_opt "EPI_CACHE_DIR" with
-  | Some dir -> dir
-  | None -> (
-      match Sys.getenv_opt "HOME" with
-      | Some home -> Filename.concat home ".local/state/epi/targets"
-      | None -> ".epi-targets")
+  let dir =
+    match Sys.getenv_opt "EPI_CACHE_DIR" with
+    | Some dir -> dir
+    | None -> (
+        match Sys.getenv_opt "HOME" with
+        | Some home -> Filename.concat home ".local/cache/epi"
+        | None -> ".epi/cache")
+  in
+  if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+  dir
 
 let cache_path target =
   let hash = Digest.string target |> Digest.to_hex in
-  Filename.concat (cache_dir ()) (hash ^ ".descriptor")
+  let target_cache = Filename.concat (cache_dir ()) "targets" in
+  if not (Sys.file_exists target_cache) then Unix.mkdir target_cache 0o755;
+  Filename.concat target_cache (hash ^ ".descriptor")
 
 let save_descriptor_cache target descriptor =
   let path = cache_path target in
@@ -362,15 +367,12 @@ let load_descriptor_cache target =
   if not (Sys.file_exists path) then None
   else
     let content = read_file_if_exists path in
-    if content = "" then None
-    else Some (descriptor_of_output content)
+    if content = "" then None else Some (descriptor_of_output content)
 
 let descriptor_paths_exist descriptor =
   List.for_all Sys.file_exists (descriptor_paths descriptor)
 
-type cache_result =
-  | Cached of descriptor
-  | Resolved of descriptor
+type cache_result = Cached of descriptor | Resolved of descriptor
 
 let resolve_descriptor_cached ~rebuild target =
   let path = cache_path target in
