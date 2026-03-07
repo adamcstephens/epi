@@ -121,13 +121,14 @@ let read_ssh_public_keys () =
             "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
         keys
 
-let generate_user_data ~username ~ssh_keys =
+let generate_user_data ~username ~ssh_keys ~user_exists =
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#cloud-config\ndisable_root: false\nusers:\n";
   Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
-  Buffer.add_string buf "    groups: wheel\n";
-  Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
-  Buffer.add_string buf "    shell: /run/current-system/sw/bin/bash\n";
+  if not user_exists then (
+    Buffer.add_string buf "    groups: wheel\n";
+    Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
+    Buffer.add_string buf "    shell: /run/current-system/sw/bin/bash\n");
   (match ssh_keys with
   | [] -> ()
   | keys ->
@@ -184,7 +185,7 @@ let wait_for_passt_socket socket_path max_wait_ms =
   in
   loop steps
 
-let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys =
+let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys ~user_exists =
   if not (check_genisoimage ()) then Error Genisoimage_missing
   else
     let iso_path =
@@ -198,7 +199,7 @@ let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys =
        Unix.mkdir staging_dir 0o755);
     let user_data_path = Filename.concat staging_dir "user-data" in
     let meta_data_path = Filename.concat staging_dir "meta-data" in
-    let user_data = generate_user_data ~username ~ssh_keys in
+    let user_data = generate_user_data ~username ~ssh_keys ~user_exists in
     let meta_data = generate_meta_data ~instance_name in
     let write path content =
       let channel = open_out path in
@@ -259,13 +260,14 @@ let launch_detached ~instance_name ~target (descriptor : Target.descriptor) =
   in
   let runtime_dir = Instance_store.runtime_dir () in
   let ssh_keys = read_ssh_public_keys () in
+  let user_exists = List.mem username descriptor.configured_users in
   let passt_sock =
     Filename.concat runtime_dir (instance_name ^ ".passt.sock")
   in
   let ssh_port = alloc_free_port () in
   if not (check_passt ()) then Error (Passt_missing { target })
   else
-  match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys with
+  match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys ~user_exists with
   | Error Genisoimage_missing ->
       Error
         (Seed_iso_generation_failed

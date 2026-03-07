@@ -449,6 +449,15 @@ let with_mock_runtime f =
          \  echo \"memory_mib=1024\"\n\
          \  exit 0\n\
           fi\n\
+          if [ \"$EPI_TARGET\" = \".#user-configured\" ]; then\n\
+         \  echo \"kernel=" ^ kernel ^ "\"\n  echo \"disk=" ^ disk
+       ^ "\"\n  echo \"initrd=" ^ initrd
+       ^ "\"\n\
+         \  echo \"cpus=2\"\n\
+         \  echo \"memory_mib=1024\"\n\
+         \  echo \"configured_users=root,$USER\"\n\
+         \  exit 0\n\
+          fi\n\
           echo \"kernel=" ^ kernel ^ "\"\necho \"disk=" ^ disk
        ^ "\"\necho \"initrd=" ^ initrd
        ^ "\"\necho \"cpus=2\"\necho \"memory_mib=1536\"\n");
@@ -1875,4 +1884,86 @@ let () =
           | Some { ssh_port = Some _; _ } ->
               fail "expected ssh_port = None for legacy TSV row"
           | None -> fail "expected to find legacy-no-ssh entry"));
+  run_test
+    ~name:
+      "configured user produces cloud-init with only SSH keys, no \
+       groups/sudo/shell"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              with_temp_dir "epi-configured-user-test" (fun ssh_dir ->
+                  write_file
+                    (Filename.concat ssh_dir "id_ed25519.pub")
+                    "ssh-ed25519 AAAAC3test testkey@host";
+                  let extra_env =
+                    ("EPI_SSH_DIR", ssh_dir) :: extra_env
+                  in
+                  let result =
+                    run_cli_with_env ~bin ~state_file ~extra_env
+                      [ "up"; "configured-test"; "--target"; ".#user-configured" ]
+                  in
+                  assert_success ~context:"configured user up" result;
+                  let runtime_dir =
+                    Filename.concat (Filename.dirname state_file) "runtime"
+                  in
+                  let user_data_path =
+                    Filename.concat
+                      (Filename.concat runtime_dir "configured-test.cidata")
+                      "user-data"
+                  in
+                  if not (Sys.file_exists user_data_path) then
+                    fail "user-data file was not created";
+                  let user_data =
+                    let channel = open_in user_data_path in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  assert_contains ~context:"configured user ssh keys"
+                    user_data "ssh_authorized_keys:";
+                  assert_contains ~context:"configured user ssh key value"
+                    user_data "ssh-ed25519 AAAAC3test testkey@host";
+                  if contains user_data "groups: wheel" then
+                    fail
+                      "configured user cloud-init should not contain 'groups: \
+                       wheel'";
+                  if contains user_data "sudo:" then
+                    fail
+                      "configured user cloud-init should not contain 'sudo:'";
+                  if contains user_data "shell:" then
+                    fail
+                      "configured user cloud-init should not contain 'shell:'"))));
+  run_test
+    ~name:
+      "unconfigured user produces full cloud-init with groups/sudo/shell"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_file (fun state_file ->
+              let result =
+                run_cli_with_env ~bin ~state_file ~extra_env
+                  [ "up"; "unconfigured-test"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"unconfigured user up" result;
+              let runtime_dir =
+                Filename.concat (Filename.dirname state_file) "runtime"
+              in
+              let user_data_path =
+                Filename.concat
+                  (Filename.concat runtime_dir "unconfigured-test.cidata")
+                  "user-data"
+              in
+              if not (Sys.file_exists user_data_path) then
+                fail "user-data file was not created";
+              let user_data =
+                let channel = open_in user_data_path in
+                Fun.protect
+                  ~finally:(fun () -> close_in channel)
+                  (fun () -> read_all channel)
+              in
+              assert_contains ~context:"unconfigured user groups" user_data
+                "groups: wheel";
+              assert_contains ~context:"unconfigured user sudo" user_data
+                "sudo: ALL=(ALL) NOPASSWD:ALL";
+              assert_contains ~context:"unconfigured user shell" user_data
+                "shell: /run/current-system/sw/bin/bash")));
   ()

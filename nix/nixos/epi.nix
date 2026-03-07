@@ -4,8 +4,13 @@
   pkgs,
   ...
 }:
+let
+  cfg = config.epi;
+in
 {
   options.epi = {
+    enable = lib.mkEnableOption "epi";
+
     kernel = lib.mkOption {
       type = lib.types.str;
       description = "Kernel image path used by epi up cloud-hypervisor launch.";
@@ -47,7 +52,7 @@
     };
   };
 
-  config = {
+  config = lib.mkIf cfg.enable {
     epi = {
       kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
@@ -58,7 +63,7 @@
       configuredUsers = builtins.attrNames config.users.users;
     };
 
-    networking.hostName = "manual-test";
+    networking.hostName = lib.mkForce "";
 
     fileSystems."/" = {
       device = "/dev/disk/by-label/nixos";
@@ -77,14 +82,6 @@
     networking.useDHCP = true;
 
     services.cloud-init.enable = true;
-
-    # Prevent cloud-init from overriding NixOS network config via networkd.
-    # NixOS handles DHCP natively; cloud-init network config conflicts and
-    # prevents DHCPv4 from completing (only IPv6 addresses are assigned).
-    environment.etc."cloud/cloud.cfg.d/99-disable-network-config.cfg".text = ''
-      network:
-        config: disabled
-    '';
 
     services.openssh = {
       enable = true;

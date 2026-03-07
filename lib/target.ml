@@ -19,6 +19,7 @@ type descriptor = {
   cmdline : string;
   cpus : int;
   memory_mib : int;
+  configured_users : string list;
 }
 
 let default_cmdline = "console=ttyS0 root=/dev/vda2 ro"
@@ -134,6 +135,30 @@ let find_json_int ~key text =
           int_of_string_opt
             (String.sub text digit_start (digit_end - digit_start)))
 
+let parse_json_string_array text =
+  let len = String.length text in
+  let rec find_open i =
+    if i >= len then i
+    else if text.[i] = '[' then i + 1
+    else find_open (i + 1)
+  in
+  let start = find_open 0 in
+  let rec collect acc i =
+    if i >= len then List.rev acc
+    else if text.[i] = ']' then List.rev acc
+    else if text.[i] = '"' then
+      let rec find_end j =
+        if j >= len then j
+        else if text.[j] = '"' && text.[j - 1] <> '\\' then j
+        else find_end (j + 1)
+      in
+      let end_quote = find_end (i + 1) in
+      let s = String.sub text (i + 1) (end_quote - i - 1) in
+      collect (s :: acc) (end_quote + 1)
+    else collect acc (i + 1)
+  in
+  collect [] start
+
 let descriptor_of_output raw_output =
   let first_some a b = match a with Some _ -> a | None -> b in
   let kv_pairs = parse_key_value_output raw_output in
@@ -165,7 +190,39 @@ let descriptor_of_output raw_output =
     | Some value -> value
     | None -> 1024
   in
-  { kernel; disk; initrd; cmdline; cpus; memory_mib }
+  let configured_users =
+    match kv "configured_users" with
+    | Some csv when csv <> "" ->
+        String.split_on_char ',' csv
+        |> List.map String.trim
+        |> List.filter (fun s -> s <> "")
+    | _ ->
+        let marker = "\"configuredUsers\"" in
+        let marker_len = String.length marker in
+        let raw_len = String.length raw_output in
+        let rec find_marker i =
+          if i + marker_len > raw_len then None
+          else if String.sub raw_output i marker_len = marker then
+            let rec find_bracket j =
+              if j >= raw_len then None
+              else if raw_output.[j] = '[' then
+                let rec find_close k =
+                  if k >= raw_len then None
+                  else if raw_output.[k] = ']' then
+                    Some (String.sub raw_output j (k - j + 1))
+                  else find_close (k + 1)
+                in
+                find_close j
+              else find_bracket (j + 1)
+            in
+            find_bracket (i + marker_len)
+          else find_marker (i + 1)
+        in
+        (match find_marker 0 with
+         | Some array_text -> parse_json_string_array array_text
+         | None -> [])
+  in
+  { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users }
 
 type resolution_error = {
   target : string;
@@ -181,7 +238,7 @@ let resolve_descriptor target =
         Process.run ~env ~prog:"/bin/sh" ~args:[ "-c"; resolver_cmd ] ()
     | None ->
         Process.run ~prog:"nix"
-          ~args:[ "eval"; "--json"; target ^ ".config.epi.cloudHypervisor" ]
+          ~args:[ "eval"; "--json"; target ^ ".config.epi" ]
           ()
   in
   if process_result.status <> 0 then
@@ -360,7 +417,12 @@ let save_descriptor_cache target descriptor =
       | None -> ());
       Printf.fprintf channel "cmdline=%s\n" descriptor.cmdline;
       Printf.fprintf channel "cpus=%d\n" descriptor.cpus;
-      Printf.fprintf channel "memory_mib=%d\n" descriptor.memory_mib)
+      Printf.fprintf channel "memory_mib=%d\n" descriptor.memory_mib;
+      (match descriptor.configured_users with
+      | [] -> ()
+      | users ->
+          Printf.fprintf channel "configured_users=%s\n"
+            (String.concat "," users)))
 
 let load_descriptor_cache target =
   let path = cache_path target in

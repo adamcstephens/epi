@@ -19,7 +19,8 @@
         flake.nixosConfigurations.manual-test = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
-            ./nix/nixos/manual-test.nix
+            ./nix/nixos/epi.nix
+            { epi.enable = true; }
           ];
         };
         flake.manual-test = config.flake.nixosConfigurations.manual-test;
