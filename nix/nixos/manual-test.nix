@@ -71,6 +71,14 @@
 
     services.cloud-init.enable = true;
 
+    # Prevent cloud-init from overriding NixOS network config via networkd.
+    # NixOS handles DHCP natively; cloud-init network config conflicts and
+    # prevents DHCPv4 from completing (only IPv6 addresses are assigned).
+    environment.etc."cloud/cloud.cfg.d/99-disable-network-config.cfg".text = ''
+      network:
+        config: disabled
+    '';
+
     services.openssh = {
       enable = true;
       settings.PasswordAuthentication = false;

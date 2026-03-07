@@ -127,7 +127,7 @@ let generate_user_data ~username ~ssh_keys =
   Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
   Buffer.add_string buf "    groups: wheel\n";
   Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
-  Buffer.add_string buf "    shell: /bin/bash\n";
+  Buffer.add_string buf "    shell: /run/current-system/sw/bin/bash\n";
   (match ssh_keys with
   | [] -> ()
   | keys ->

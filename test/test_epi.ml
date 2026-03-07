@@ -1227,7 +1227,7 @@ let () =
               assert_contains ~context:"user-data sudo" user_data
                 "sudo: ALL=(ALL) NOPASSWD:ALL";
               assert_contains ~context:"user-data shell" user_data
-                "shell: /bin/bash";
+                "shell: /run/current-system/sw/bin/bash";
               assert_contains ~context:"user-data disable_root" user_data
                 "disable_root: false";
               assert_contains ~context:"meta-data instance-id" meta_data
