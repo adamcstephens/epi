@@ -4,7 +4,7 @@ Define how `epi up` resolves a target, launches a VM, and reports or persists st
 ## Requirements
 
 ### Requirement: Up provisions a VM from the requested target
-The `epi up` command SHALL evaluate the provided `--target <flake-ref>#<config-name>` and SHALL attempt to provision and start a cloud-hypervisor VM for the resolved instance using coherent launch inputs produced by that target evaluation. The VM SHALL be launched with pasta-backed networking instead of TAP-based networking. When a valid descriptor cache exists for the target and all artifact paths are present on disk, the CLI SHALL skip nix eval and nix build and use the cached descriptor directly.
+The `epi up` command SHALL evaluate the provided `--target <flake-ref>#<config-name>` and SHALL attempt to provision and start a cloud-hypervisor VM for the resolved instance using coherent launch inputs produced by that target evaluation. The VM SHALL be launched with pasta-backed networking instead of TAP-based networking. When a valid descriptor cache exists for the target and all artifact paths are present on disk, the CLI SHALL skip nix eval and nix build and use the cached descriptor directly. When relaunching over a stale instance, the CLI SHALL terminate any tracked pasta process from the prior runtime before starting a new one.
 
 #### Scenario: Named instance is provisioned
 - **WHEN** a user runs `epi up dev-a --target .#dev-a`
@@ -17,6 +17,12 @@ The `epi up` command SHALL evaluate the provided `--target <flake-ref>#<config-n
 - **THEN** the CLI resolves instance name `default`
 - **AND** the CLI invokes cloud-hypervisor for the resolved target using coherent launch inputs from one evaluation result with pasta networking
 - **AND** the CLI reports provisioning success for instance `default`
+
+#### Scenario: Stale pasta process is terminated before relaunch
+- **WHEN** a user runs `epi up dev-a --target .#dev-a`
+- **AND** instance `dev-a` has a stale runtime entry with a pasta PID
+- **THEN** the CLI sends SIGTERM to the stale pasta process before launching the new VM
+- **AND** the CLI successfully provisions the new instance
 
 #### Scenario: Cached descriptor is used when valid
 - **WHEN** a user runs `epi up --target .#dev-a` and a valid descriptor cache exists with all paths on disk
