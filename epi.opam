@@ -12,6 +12,7 @@ depends: [
   "cmdlang"
   "cmdliner"
   "cmdlang-to-cmdliner"
+  "alcotest"
   "odoc" {with-doc}
 ]
 build: [

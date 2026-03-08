@@ -40,21 +40,7 @@ let lowercase text = String.lowercase_ascii text
 
 let read_file_if_exists path =
   if not (Sys.file_exists path) then ""
-  else
-    let channel = open_in path in
-    Fun.protect
-      ~finally:(fun () -> close_in channel)
-      (fun () ->
-        let buffer = Buffer.create 128 in
-        let rec loop () =
-          match input_line channel with
-          | line ->
-              Buffer.add_string buffer line;
-              Buffer.add_char buffer '\n';
-              loop ()
-          | exception End_of_file -> Buffer.contents buffer
-        in
-        loop ())
+  else In_channel.with_open_text path In_channel.input_all
 
 let parse_key_value_output text =
   let add_pair acc line =
