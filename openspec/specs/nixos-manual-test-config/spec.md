@@ -55,6 +55,23 @@ The manual-test NixOS configuration MUST enable the OpenSSH server so remote acc
 - **AND** password authentication is disabled
 - **AND** only key-based authentication is accepted
 
+### Requirement: Manual-test VM grows its root partition and filesystem on boot
+
+The manual-test NixOS configuration MUST set `boot.growPartition = true` and `fileSystems."/".autoResize = true` so that the root partition is expanded to fill the available disk and the ext4 filesystem is resized to fill the partition on each boot where growth is needed.
+
+#### Scenario: Root partition grows after disk resize
+
+- **WHEN** the manual-test VM boots after its disk overlay was enlarged by `qemu-img resize`
+- **THEN** `growpart` runs in early boot and extends the root partition to fill the disk
+- **AND** the ext4 filesystem is resized to fill the enlarged partition
+- **AND** the full disk capacity is available to the running system
+
+#### Scenario: No-op when partition already fills disk
+
+- **WHEN** the manual-test VM boots and the root partition already fills the disk
+- **THEN** `growpart` exits successfully without modifying the partition table
+- **AND** `resize2fs` exits successfully without modifying the filesystem
+
 ### Requirement: Manual-test VM includes virtio-net kernel module
 The manual-test NixOS configuration MUST include the `virtio_net` kernel module in the initrd so the network device is available at boot.
 

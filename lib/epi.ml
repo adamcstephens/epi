@@ -148,7 +148,14 @@ let up_command =
          ~doc:
            "Mount a host directory into the guest at the same path using \
             virtiofsd. Pass a path or use $(pwd) for the current directory."
+     and+ disk_size =
+       Arg.named_opt [ "disk-size" ] Param.string
+         ~docv:"SIZE"
+         ~doc:
+           "Target size of the writable disk overlay (e.g. 40G, 50G). Only \
+            applies when a new overlay is created. Defaults to 40G."
      in
+     let disk_size = Option.value disk_size ~default:"40G" in
      let console_options = resolve_console_attach_options () in
      Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name in
@@ -173,7 +180,7 @@ let up_command =
          | Some virtiofsd_pid -> kill_if_alive virtiofsd_pid
          | None -> ());
          Instance_store.clear_runtime instance_name;
-         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_path ~disk_size ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -189,7 +196,7 @@ let up_command =
                | None -> ())
          | Error error -> fail (Vm_launch.pp_provision_error error))
      | None -> (
-         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_path ~disk_size ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
