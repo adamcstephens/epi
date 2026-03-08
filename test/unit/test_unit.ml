@@ -3,4 +3,5 @@ let () =
     [
       ("target", Test_target.tests);
       ("instance_store", Test_instance_store.tests);
+      ("vm_launch", Test_vm_launch.tests);
     ]

@@ -20,6 +20,7 @@ type provision_error =
   | Passt_failed of { target : string; details : string }
   | Virtiofsd_missing of { target : string }
   | Virtiofsd_failed of { target : string; details : string }
+  | Vm_disk_resize_failed of { target : string; details : string }
 
 let lock_conflict stderr =
   let lowered = Target.lowercase stderr in
@@ -45,6 +46,41 @@ let classify_launch_failure ~target ~descriptor ~status ~stderr =
         details = (if stderr = "" then "<no stderr>" else stderr);
       }
 
+let qemu_img_bin () =
+  match Sys.getenv_opt "EPI_QEMU_IMG_BIN" with
+  | Some path -> path
+  | None -> "qemu-img"
+
+let find_qemu_img () =
+  let bin = qemu_img_bin () in
+  let result =
+    Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
+  in
+  if result.status = 0 then Some bin else None
+
+let resize_disk ~target ~path ~size =
+  match find_qemu_img () with
+  | None ->
+      Error
+        (Vm_disk_resize_failed
+           {
+             target;
+             details =
+               "qemu-img not found on $PATH. Set EPI_QEMU_IMG_BIN or install \
+                qemu-utils.";
+           })
+  | Some bin ->
+      let result = Process.run ~prog:bin ~args:[ "resize"; path; size ] () in
+      if result.status <> 0 then
+        Error
+          (Vm_disk_resize_failed
+             {
+               target;
+               details =
+                 (if result.stderr = "" then "<no stderr>" else result.stderr);
+             })
+      else Ok ()
+
 let copy_file ~source ~destination =
   let input_channel = open_in_bin source in
   Fun.protect
@@ -65,7 +101,7 @@ let copy_file ~source ~destination =
           in
           loop ()))
 
-let ensure_writable_disk ~instance_name ~target (descriptor : Target.descriptor) =
+let ensure_writable_disk ~instance_name ~target ~disk_size (descriptor : Target.descriptor) =
   if Target.is_nix_store_path descriptor.disk then
     let overlay_path =
       Instance_store.instance_path instance_name "disk.img"
@@ -75,7 +111,9 @@ let ensure_writable_disk ~instance_name ~target (descriptor : Target.descriptor)
       Instance_store.ensure_instance_dir instance_name;
       try
         copy_file ~source:descriptor.disk ~destination:overlay_path;
-        Ok overlay_path
+        match resize_disk ~target ~path:overlay_path ~size:disk_size with
+        | Error _ as error -> error
+        | Ok () -> Ok overlay_path
       with Sys_error details ->
         Error (Vm_disk_overlay_prepare_failed { target; details }))
   else Ok descriptor.disk
@@ -302,7 +340,7 @@ let generate_ssh_key ~instance_name =
     let pub_content = Target.read_file_if_exists pub_path |> String.trim in
     (key_path, pub_content)
 
-let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_path ~instance_name ~target (descriptor : Target.descriptor) =
+let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_path ~disk_size ~instance_name ~target (descriptor : Target.descriptor) =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
     | Some path -> path
@@ -359,7 +397,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_path ~instance_
   | Error (Seed_iso_creation_failed { details }) ->
       Error (Seed_iso_generation_failed { target; details })
   | Ok seed_iso_path ->
-  match ensure_writable_disk ~instance_name ~target descriptor with
+  match ensure_writable_disk ~instance_name ~target ~disk_size descriptor with
   | Error _ as error -> error
   | Ok launch_disk -> (
       if Sys.file_exists passt_sock then Unix.unlink passt_sock;
@@ -512,7 +550,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_path ~instance_
                        signal;
                  }))
 
-let provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target =
+let provision ~rebuild ~generate_ssh_key ~mount_path ~disk_size ~instance_name ~target =
   Printf.printf "up: resolving target=%s\n%!" target;
   let descriptor =
     match Target.resolve_descriptor_cached ~rebuild target with
@@ -533,7 +571,7 @@ let provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target =
           Error (Descriptor_validation_failed { target; details })
       | Ok () ->
           Printf.printf "up: starting VM instance=%s\n%!" instance_name;
-          launch_detached ~generate_ssh_key ~mount_path ~instance_name ~target descriptor)
+          launch_detached ~generate_ssh_key ~mount_path ~disk_size ~instance_name ~target descriptor)
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->
@@ -585,3 +623,6 @@ let pp_provision_error = function
   | Virtiofsd_failed { target; details } ->
       Printf.sprintf
         "VM launch failed for %s: virtiofsd failed to start: %s" target details
+  | Vm_disk_resize_failed { target; details } ->
+      Printf.sprintf
+        "VM launch failed for %s: disk resize failed: %s" target details
