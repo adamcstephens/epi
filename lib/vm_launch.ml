@@ -66,13 +66,11 @@ let copy_file ~source ~destination =
 let ensure_writable_disk ~instance_name ~target (descriptor : Target.descriptor) =
   if Target.is_nix_store_path descriptor.disk then
     let overlay_path =
-      Filename.concat
-        (Instance_store.runtime_dir ())
-        (instance_name ^ ".disk.img")
+      Instance_store.instance_path instance_name "disk.img"
     in
     if Sys.file_exists overlay_path then Ok overlay_path
     else (
-      Process.ensure_parent_dir overlay_path;
+      Instance_store.ensure_instance_dir instance_name;
       try
         copy_file ~source:descriptor.disk ~destination:overlay_path;
         Ok overlay_path
@@ -185,16 +183,15 @@ let wait_for_passt_socket socket_path max_wait_ms =
   in
   loop steps
 
-let generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys ~user_exists =
+let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists =
   if not (check_genisoimage ()) then Error Genisoimage_missing
   else
     let iso_path =
-      Filename.concat runtime_dir (instance_name ^ ".cidata.iso")
+      Filename.concat instance_dir "cidata.iso"
     in
     let staging_dir =
-      Filename.concat runtime_dir (instance_name ^ ".cidata")
+      Filename.concat instance_dir "cidata"
     in
-    Process.ensure_parent_dir iso_path;
     (if not (Sys.file_exists staging_dir) then
        Unix.mkdir staging_dir 0o755);
     let user_data_path = Filename.concat staging_dir "user-data" in
@@ -243,11 +240,10 @@ let alloc_free_port () =
       | _ -> failwith "alloc_free_port: unexpected socket address")
 
 let generate_ssh_key ~instance_name =
-  let runtime_dir = Instance_store.runtime_dir () in
   let key_path =
-    Filename.concat runtime_dir (instance_name ^ ".id_ed25519")
+    Instance_store.instance_path instance_name "id_ed25519"
   in
-  Process.ensure_parent_dir key_path;
+  Instance_store.ensure_instance_dir instance_name;
   if Sys.file_exists key_path then Unix.unlink key_path;
   let pub_path = key_path ^ ".pub" in
   if Sys.file_exists pub_path then Unix.unlink pub_path;
@@ -270,6 +266,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
     | Some path -> path
     | None -> "cloud-hypervisor"
   in
+  Instance_store.ensure_instance_dir instance_name;
   let serial_socket = Instance_store.serial_socket_path instance_name in
   let launch_stdout = Instance_store.launch_stdout_path instance_name in
   let launch_stderr = Instance_store.launch_stderr_path instance_name in
@@ -280,7 +277,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
   let username =
     match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
   in
-  let runtime_dir = Instance_store.runtime_dir () in
+  let instance_dir = Instance_store.instance_dir instance_name in
   let ssh_keys = read_ssh_public_keys () in
   let generated_key =
     if do_generate_ssh_key then (
@@ -299,12 +296,12 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
   in
   let user_exists = List.mem username descriptor.configured_users in
   let passt_sock =
-    Filename.concat runtime_dir (instance_name ^ ".passt.sock")
+    Filename.concat instance_dir "passt.sock"
   in
   let ssh_port = alloc_free_port () in
   if not (check_passt ()) then Error (Passt_missing { target })
   else
-  match generate_seed_iso ~instance_name ~runtime_dir ~username ~ssh_keys ~user_exists with
+  match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists with
   | Error Genisoimage_missing ->
       Error
         (Seed_iso_generation_failed
@@ -324,10 +321,10 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
       let passt_repair_sock = passt_sock ^ ".repair" in
       if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
       let passt_stdout_log =
-        Filename.concat runtime_dir (instance_name ^ ".passt.stdout.log")
+        Filename.concat instance_dir "passt.stdout.log"
       in
       let passt_stderr_log =
-        Filename.concat runtime_dir (instance_name ^ ".passt.stderr.log")
+        Filename.concat instance_dir "passt.stderr.log"
       in
       let passt_proc =
         Process.run_detached ~prog:(passt_bin ())

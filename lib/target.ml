@@ -138,9 +138,7 @@ let find_json_int ~key text =
 let parse_json_string_array text =
   let len = String.length text in
   let rec find_open i =
-    if i >= len then i
-    else if text.[i] = '[' then i + 1
-    else find_open (i + 1)
+    if i >= len then i else if text.[i] = '[' then i + 1 else find_open (i + 1)
   in
   let start = find_open 0 in
   let rec collect acc i =
@@ -196,7 +194,7 @@ let descriptor_of_output raw_output =
         String.split_on_char ',' csv
         |> List.map String.trim
         |> List.filter (fun s -> s <> "")
-    | _ ->
+    | _ -> (
         let marker = "\"configuredUsers\"" in
         let marker_len = String.length marker in
         let raw_len = String.length raw_output in
@@ -218,9 +216,9 @@ let descriptor_of_output raw_output =
             find_bracket (i + marker_len)
           else find_marker (i + 1)
         in
-        (match find_marker 0 with
-         | Some array_text -> parse_json_string_array array_text
-         | None -> [])
+        match find_marker 0 with
+        | Some array_text -> parse_json_string_array array_text
+        | None -> [])
   in
   { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users }
 
@@ -391,7 +389,7 @@ let cache_dir () =
     | Some dir -> dir
     | None -> (
         match Sys.getenv_opt "HOME" with
-        | Some home -> Filename.concat home ".local/cache/epi"
+        | Some home -> Filename.concat home ".cache/epi"
         | None -> ".epi/cache")
   in
   if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
@@ -418,11 +416,11 @@ let save_descriptor_cache target descriptor =
       Printf.fprintf channel "cmdline=%s\n" descriptor.cmdline;
       Printf.fprintf channel "cpus=%d\n" descriptor.cpus;
       Printf.fprintf channel "memory_mib=%d\n" descriptor.memory_mib;
-      (match descriptor.configured_users with
+      match descriptor.configured_users with
       | [] -> ()
       | users ->
           Printf.fprintf channel "configured_users=%s\n"
-            (String.concat "," users)))
+            (String.concat "," users))
 
 let load_descriptor_cache target =
   let path = cache_path target in

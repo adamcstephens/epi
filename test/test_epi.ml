@@ -1,14 +1,3 @@
-type state_entry = {
-  instance_name : string;
-  target : string;
-  pid : int option;
-  serial_socket : string option;
-  disk : string option;
-  passt_pid : int option;
-  ssh_port : int option;
-  ssh_key_path : string option;
-}
-
 let contains text snippet =
   let text_len = String.length text in
   let snippet_len = String.length snippet in
@@ -33,9 +22,9 @@ let read_all channel =
   in
   loop ()
 
-let run_cli_with_env ~bin ~state_file ~extra_env args =
+let run_cli_with_env ~bin ~state_dir ~extra_env args =
   let overrides =
-    ("EPI_STATE_DIR", Filename.dirname state_file) :: extra_env
+    ("EPI_STATE_DIR", state_dir) :: extra_env
   in
   let override_keys =
     List.map (fun (key, _) -> key ^ "=") overrides
@@ -73,8 +62,8 @@ let run_cli_with_env ~bin ~state_file ~extra_env args =
   in
   (exit_code, stdout, stderr)
 
-let run_cli ~bin ~state_file args =
-  run_cli_with_env ~bin ~state_file ~extra_env:[] args
+let run_cli ~bin ~state_dir args =
+  run_cli_with_env ~bin ~state_dir ~extra_env:[] args
 
 let fail fmt = Printf.ksprintf (fun message -> raise (Failure message)) fmt
 
@@ -97,99 +86,73 @@ let run_test ~name f =
     Printf.eprintf "not ok - %s\n%s\n%!" name message;
     exit 1
 
-let parse_state_line line =
-  let fields = String.split_on_char '\t' line in
-  let parse_runtime pid_text serial_socket disk =
-    let pid =
-      match int_of_string_opt pid_text with
-      | Some value when value > 0 -> Some value
-      | _ -> None
-    in
-    let serial_socket =
-      if serial_socket = "" then None else Some serial_socket
-    in
-    let disk = if disk = "" then None else Some disk in
-    (pid, serial_socket, disk)
-  in
-  let parse_opt_int text =
-    match int_of_string_opt text with
-    | Some value when value > 0 -> Some value
-    | _ -> None
-  in
-  let parse_opt_string = function "" -> None | s -> Some s in
-  match fields with
-  | [ instance_name; target ] ->
-      Some
-        {
-          instance_name;
-          target;
-          pid = None;
-          serial_socket = None;
-          disk = None;
-          passt_pid = None;
-          ssh_port = None;
-          ssh_key_path = None;
-        }
-  | [ instance_name; target; pid_text; serial_socket; disk ] ->
-      let pid, serial_socket, disk =
-        parse_runtime pid_text serial_socket disk
-      in
-      Some
-        { instance_name; target; pid; serial_socket; disk; passt_pid = None;
-          ssh_port = None; ssh_key_path = None }
-  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
-      let pid, serial_socket, disk =
-        parse_runtime pid_text serial_socket disk
-      in
-      Some { instance_name; target; pid; serial_socket; disk;
-             passt_pid = parse_opt_int passt_pid_text; ssh_port = None;
-             ssh_key_path = None }
-  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
-      ssh_port_text ] ->
-      let pid, serial_socket, disk =
-        parse_runtime pid_text serial_socket disk
-      in
-      Some { instance_name; target; pid; serial_socket; disk;
-             passt_pid = parse_opt_int passt_pid_text;
-             ssh_port = parse_opt_int ssh_port_text;
-             ssh_key_path = None }
-  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text;
-      ssh_port_text; ssh_key_path_text ] ->
-      let pid, serial_socket, disk =
-        parse_runtime pid_text serial_socket disk
-      in
-      Some { instance_name; target; pid; serial_socket; disk;
-             passt_pid = parse_opt_int passt_pid_text;
-             ssh_port = parse_opt_int ssh_port_text;
-             ssh_key_path = parse_opt_string ssh_key_path_text }
-  | _ -> None
+let write_file path content =
+  let channel = open_out path in
+  output_string channel content;
+  close_out channel
 
-let read_state_entries path =
-  if not (Sys.file_exists path) then []
-  else
-    let channel = open_in path in
-    Fun.protect
-      ~finally:(fun () -> close_in channel)
-      (fun () ->
-        let rec loop acc =
-          match input_line channel with
-          | line -> (
-              match parse_state_line line with
-              | Some entry -> loop (entry :: acc)
-              | None -> loop acc)
-          | exception End_of_file -> List.rev acc
-        in
-        loop [])
-
-let find_state_entry path instance_name =
-  read_state_entries path
-  |> List.find_opt (fun entry -> String.equal entry.instance_name instance_name)
-
-let assert_missing_state_entry ~context path instance_name =
-  match find_state_entry path instance_name with
+let write_state_entry ~state_dir ~instance_name ~target ?pid ?serial_socket
+    ?disk ?passt_pid ?ssh_port ?ssh_key_path () =
+  let instance_dir = Filename.concat state_dir instance_name in
+  if not (Sys.file_exists instance_dir) then Unix.mkdir instance_dir 0o755;
+  write_file (Filename.concat instance_dir "target") (target ^ "\n");
+  match pid with
+  | Some pid_val ->
+      let channel = open_out (Filename.concat instance_dir "runtime") in
+      Printf.fprintf channel "pid=%d\n" pid_val;
+      (match serial_socket with
+      | Some s -> Printf.fprintf channel "serial_socket=%s\n" s
+      | None -> ());
+      (match disk with
+      | Some d -> Printf.fprintf channel "disk=%s\n" d
+      | None -> ());
+      (match passt_pid with
+      | Some p -> Printf.fprintf channel "passt_pid=%d\n" p
+      | None -> ());
+      (match ssh_port with
+      | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
+      | None -> ());
+      (match ssh_key_path with
+      | Some p -> Printf.fprintf channel "ssh_key_path=%s\n" p
+      | None -> ());
+      close_out channel
   | None -> ()
-  | Some _ ->
-      fail "%s: expected state entry %S to be removed" context instance_name
+
+let find_state_runtime ~state_dir instance_name =
+  let instance_dir = Filename.concat state_dir instance_name in
+  let runtime_path = Filename.concat instance_dir "runtime" in
+  if not (Sys.file_exists runtime_path) then None
+  else
+    let content =
+      let channel = open_in runtime_path in
+      Fun.protect
+        ~finally:(fun () -> close_in channel)
+        (fun () -> read_all channel)
+    in
+    let pairs =
+      String.split_on_char '\n' content
+      |> List.filter_map (fun line ->
+          match String.split_on_char '=' line with
+          | key :: value_parts when key <> "" ->
+              let value = String.concat "=" value_parts |> String.trim in
+              if value = "" then None else Some (String.trim key, value)
+          | _ -> None)
+    in
+    let get key = List.assoc_opt key pairs in
+    let get_int key =
+      match get key with Some v -> int_of_string_opt v | None -> None
+    in
+    Some (get_int "pid", get "serial_socket", get "disk",
+          get_int "passt_pid", get_int "ssh_port", get "ssh_key_path")
+
+let instance_exists ~state_dir instance_name =
+  let instance_dir = Filename.concat state_dir instance_name in
+  Sys.file_exists instance_dir
+  && Sys.file_exists (Filename.concat instance_dir "target")
+
+let assert_missing_state_entry ~context ~state_dir instance_name =
+  if instance_exists ~state_dir instance_name then
+    fail "%s: expected instance %S to be removed" context instance_name
 
 let pid_is_alive pid =
   try
@@ -215,13 +178,17 @@ let terminate_pid pid =
   try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
   with Unix.Unix_error (Unix.ECHILD, _, _) -> ()
 
-let cleanup_state_pids path =
-  read_state_entries path
-  |> List.iter (fun entry ->
-      (match entry.pid with Some pid -> terminate_pid pid | None -> ());
-      match entry.passt_pid with
-      | Some pid -> terminate_pid pid
-      | None -> ())
+let cleanup_state_pids ~state_dir =
+  if Sys.file_exists state_dir then
+    Sys.readdir state_dir
+    |> Array.iter (fun name ->
+        let d = Filename.concat state_dir name in
+        if Sys.is_directory d then
+          match find_state_runtime ~state_dir name with
+          | Some (pid, _, _, passt_pid, _, _) ->
+              (match pid with Some p -> terminate_pid p | None -> ());
+              (match passt_pid with Some p -> terminate_pid p | None -> ())
+          | None -> ())
 
 let with_temp_dir prefix f =
   let base =
@@ -245,54 +212,11 @@ let with_temp_dir prefix f =
   in
   Fun.protect ~finally:(fun () -> remove_tree dir) (fun () -> f dir)
 
-let with_state_file f =
+let with_state_dir f =
   with_temp_dir "epi-cli-test" (fun dir ->
-    let state_file = Filename.concat dir "instances.tsv" in
     Fun.protect
-      ~finally:(fun () ->
-        if Sys.file_exists state_file then cleanup_state_pids state_file)
-      (fun () -> f state_file))
-
-let write_file path content =
-  let channel = open_out path in
-  output_string channel content;
-  close_out channel
-
-let write_state_entry path entry =
-  let channel =
-    open_out_gen [ Open_creat; Open_wronly; Open_append ] 0o644 path
-  in
-  let pid =
-    match entry.pid with Some value -> string_of_int value | None -> ""
-  in
-  let serial_socket =
-    match entry.serial_socket with Some value -> value | None -> ""
-  in
-  let disk = match entry.disk with Some value -> value | None -> "" in
-  let passt_pid =
-    match entry.passt_pid with Some value -> string_of_int value | None -> ""
-  in
-  let ssh_port =
-    match entry.ssh_port with Some value -> string_of_int value | None -> ""
-  in
-  let ssh_key_path =
-    match entry.ssh_key_path with Some value -> value | None -> ""
-  in
-  output_string channel
-    (String.concat "\t"
-       [ entry.instance_name; entry.target; pid; serial_socket; disk;
-         passt_pid; ssh_port; ssh_key_path ]);
-  output_char channel '\n';
-  close_out channel
-
-let write_legacy_pid_state_entry path ~instance_name ~target ~pid =
-  let channel =
-    open_out_gen [ Open_creat; Open_wronly; Open_append ] 0o644 path
-  in
-  output_string channel
-    (String.concat "\t" [ instance_name; target; string_of_int pid ]);
-  output_char channel '\n';
-  close_out channel
+      ~finally:(fun () -> cleanup_state_pids ~state_dir:dir)
+      (fun () -> f dir))
 
 let make_executable path = Unix.chmod path 0o755
 
@@ -551,9 +475,9 @@ let () =
   run_test ~name:"up provisions explicit and implicit default instances"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let explicit =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "dev-a"; "--target"; ".#dev-a" ]
               in
               assert_success ~context:"explicit up" explicit;
@@ -569,7 +493,7 @@ let () =
               assert_contains ~context:"explicit up output" stdout_explicit
                 "serial=";
               let implicit =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "--target"; "github:org/repo#dev" ]
               in
               assert_success ~context:"implicit up" implicit;
@@ -589,24 +513,18 @@ let () =
                 "--serial";
               assert_contains ~context:"launch invocation log" launch_contents
                 "socket=";
-              let dev_a = find_state_entry state_file "dev-a" in
-              (match dev_a with
-              | Some { pid = Some _; serial_socket = Some _; passt_pid = Some _; _ }
-                ->
-                  ()
+              (match find_state_runtime ~state_dir "dev-a" with
+              | Some (Some _, Some _, _, Some _, _, _) -> ()
               | _ ->
                   fail
                     "expected runtime metadata with passt_pid for dev-a");
-              let default = find_state_entry state_file "default" in
-              (match default with
-              | Some { pid = Some _; serial_socket = Some _; passt_pid = Some _; _ }
-                ->
-                  ()
+              (match find_state_runtime ~state_dir "default" with
+              | Some (Some _, Some _, _, Some _, _, _) -> ()
               | _ ->
                   fail
                     "expected runtime metadata with passt_pid for default");
               let status_default =
-                run_cli_with_env ~bin ~state_file ~extra_env [ "status" ]
+                run_cli_with_env ~bin ~state_dir ~extra_env [ "status" ]
               in
               assert_success ~context:"status default" status_default;
               let _, status_out, _ = status_default in
@@ -615,9 +533,9 @@ let () =
   run_test ~name:"up emits stage progress messages during provisioning"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "stage-test"; "--target"; ".#stage-test" ]
               in
               assert_success ~context:"stage progress up" result;
@@ -632,16 +550,16 @@ let () =
                 "up: provisioned instance=stage-test")));
   run_test ~name:"up rejects invalid target formats with actionable errors"
     (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           let missing_separator =
-            run_cli ~bin ~state_file [ "up"; "dev-a"; "--target"; "." ]
+            run_cli ~bin ~state_dir [ "up"; "dev-a"; "--target"; "." ]
           in
           assert_failure ~context:"missing separator" missing_separator;
           let _, _, err1 = missing_separator in
           assert_contains ~context:"missing separator error" err1
             "--target must use <flake-ref>#<config-name>";
           let missing_config =
-            run_cli ~bin ~state_file [ "up"; "dev-a"; "--target"; ".#" ]
+            run_cli ~bin ~state_dir [ "up"; "dev-a"; "--target"; ".#" ]
           in
           assert_failure ~context:"missing config" missing_config;
           let _, _, err2 = missing_config in
@@ -650,10 +568,10 @@ let () =
   run_test ~name:"up does not persist instance when provisioning fails"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let failing_env = ("EPI_FORCE_LAUNCH_FAIL", "1") :: extra_env in
               let failed =
-                run_cli_with_env ~bin ~state_file ~extra_env:failing_env
+                run_cli_with_env ~bin ~state_dir ~extra_env:failing_env
                   [ "up"; "qa-1"; "--target"; ".#qa" ]
               in
               assert_failure ~context:"failing up" failed;
@@ -661,7 +579,7 @@ let () =
               assert_contains ~context:"launch failure error" err
                 "VM launch failed";
               let listed =
-                run_cli_with_env ~bin ~state_file ~extra_env [ "list" ]
+                run_cli_with_env ~bin ~state_dir ~extra_env [ "list" ]
               in
               assert_success ~context:"list after failed up" listed;
               let _, listed_out, _ = listed in
@@ -670,9 +588,9 @@ let () =
   run_test ~name:"up reports target resolution failures with target context"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let failed =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "dev-a"; "--target"; ".#fail-resolve" ]
               in
               assert_failure ~context:"target resolution failure" failed;
@@ -683,9 +601,9 @@ let () =
                 ".#fail-resolve")));
   run_test ~name:"up validates launch inputs before VM launch" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let failed =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "dev-a"; "--target"; ".#missing-disk" ]
               in
               assert_failure ~context:"missing disk failure" failed;
@@ -707,9 +625,9 @@ let () =
   run_test ~name:"up rejects mixed mutable disk and target-built boot artifacts"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let failed =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "dev-a"; "--target"; ".#mutable-disk" ]
               in
               assert_failure ~context:"mutable disk coherence failure" failed;
@@ -734,9 +652,9 @@ let () =
                    failure")));
   run_test ~name:"up uses target-provided cmdline when available" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let launched =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "dev-cmdline"; "--target"; ".#custom-cmdline" ]
               in
               assert_success ~context:"custom cmdline up" launched;
@@ -753,20 +671,20 @@ let () =
   run_test ~name:"up reports disk lock conflicts with tracked owner metadata"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let owner_up =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "dev-owner"; "--target"; ".#owner" ]
               in
               assert_success ~context:"owner up" owner_up;
               let owner_pid =
-                match find_state_entry state_file "dev-owner" with
-                | Some { pid = Some pid; _ } -> pid
+                match find_state_runtime ~state_dir "dev-owner" with
+                | Some (Some pid, _, _, _, _, _) -> pid
                 | _ -> fail "missing owner runtime metadata"
               in
               let failing_env = ("EPI_FORCE_LOCK_FAIL", "1") :: extra_env in
               let failed =
-                run_cli_with_env ~bin ~state_file ~extra_env:failing_env
+                run_cli_with_env ~bin ~state_dir ~extra_env:failing_env
                   [ "up"; "qa-1"; "--target"; ".#qa" ]
               in
               assert_failure ~context:"lock failure" failed;
@@ -780,19 +698,10 @@ let () =
               assert_contains ~context:"lock conflict disk" err disk)));
   run_test ~name:"console reports not-running instances with guidance"
     (fun () ->
-      with_state_file (fun state_file ->
-          write_state_entry state_file
-            {
-              instance_name = "dev-a";
-              target = ".#dev-a";
-              pid = None;
-              serial_socket = None;
-              disk = None;
-            passt_pid = None;
-            ssh_port = None;
-            ssh_key_path = None;
-            };
-          let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
+      with_state_dir (fun state_dir ->
+          write_state_entry ~state_dir ~instance_name:"dev-a"
+            ~target:".#dev-a" ();
+          let result = run_cli ~bin ~state_dir [ "console"; "dev-a" ] in
           assert_failure ~context:"console not running" result;
           let _, _, err = result in
           assert_contains ~context:"console not running message" err
@@ -800,51 +709,35 @@ let () =
           assert_contains ~context:"console not running guidance" err
             "epi up dev-a --target"));
   run_test ~name:"console attaches to running instance serial socket" (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_temp_dir "epi-console-running" (fun dir ->
               with_sleep_process (fun pid ->
                   let serial_socket = Filename.concat dir "dev-a.sock" in
                   with_unix_socket_server ~socket_path:serial_socket
                     ~payload:"console-connected\n" (fun () ->
-                      write_state_entry state_file
-                        {
-                          instance_name = "dev-a";
-                          target = ".#dev-a";
-                          pid = Some pid;
-                          serial_socket = Some serial_socket;
-                          disk = Some "/tmp/dev-a.disk";
-                        passt_pid = None;
-                        ssh_port = None;
-                        ssh_key_path = None;
-                        };
+                      write_state_entry ~state_dir ~instance_name:"dev-a"
+                        ~target:".#dev-a" ~pid ~serial_socket
+                        ~disk:"/tmp/dev-a.disk" ();
                       let result =
-                        run_cli ~bin ~state_file [ "console"; "dev-a" ]
+                        run_cli ~bin ~state_dir [ "console"; "dev-a" ]
                       in
                       assert_success ~context:"console running" result;
                       let _, out, _ = result in
                       assert_contains ~context:"console running stdout" out
                         "console-connected")))));
   run_test ~name:"console writes serial output to capture file" (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_temp_dir "epi-console-capture" (fun dir ->
               with_sleep_process (fun pid ->
                   let serial_socket = Filename.concat dir "dev-a.sock" in
                   let capture_path = Filename.concat dir "capture.log" in
                   with_unix_socket_server ~socket_path:serial_socket
                     ~payload:"capture-connected\n" (fun () ->
-                      write_state_entry state_file
-                        {
-                          instance_name = "dev-a";
-                          target = ".#dev-a";
-                          pid = Some pid;
-                          serial_socket = Some serial_socket;
-                          disk = Some "/tmp/dev-a.disk";
-                        passt_pid = None;
-                        ssh_port = None;
-                        ssh_key_path = None;
-                        };
+                      write_state_entry ~state_dir ~instance_name:"dev-a"
+                        ~target:".#dev-a" ~pid ~serial_socket
+                        ~disk:"/tmp/dev-a.disk" ();
                       let result =
-                        run_cli_with_env ~bin ~state_file
+                        run_cli_with_env ~bin ~state_dir
                           ~extra_env:
                             [
                               ("EPI_CONSOLE_NON_INTERACTIVE", "1");
@@ -863,34 +756,16 @@ let () =
                       in
                       assert_contains ~context:"console capture contents"
                         captured "capture-connected")))));
-  run_test ~name:"console treats legacy pid state rows as running metadata"
-    (fun () ->
-      with_state_file (fun state_file ->
-          with_sleep_process (fun pid ->
-              write_legacy_pid_state_entry state_file ~instance_name:"legacy"
-                ~target:".#legacy" ~pid;
-              let result = run_cli ~bin ~state_file [ "console"; "legacy" ] in
-              assert_failure ~context:"console legacy pid row" result;
-              let _, _, err = result in
-              assert_contains ~context:"console legacy pid row message" err
-                "Serial endpoint unavailable for 'legacy'")));
   run_test
     ~name:"console reports unavailable serial endpoint for running instance"
     (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_sleep_process (fun pid ->
-              write_state_entry state_file
-                {
-                  instance_name = "dev-a";
-                  target = ".#dev-a";
-                  pid = Some pid;
-                  serial_socket = Some "/tmp/epi-nonexistent.sock";
-                  disk = Some "/tmp/disk.img";
-                passt_pid = None;
-                ssh_port = None;
-                ssh_key_path = None;
-                };
-              let result = run_cli ~bin ~state_file [ "console"; "dev-a" ] in
+              write_state_entry ~state_dir ~instance_name:"dev-a"
+                ~target:".#dev-a" ~pid
+                ~serial_socket:"/tmp/epi-nonexistent.sock"
+                ~disk:"/tmp/disk.img" ();
+              let result = run_cli ~bin ~state_dir [ "console"; "dev-a" ] in
               assert_failure ~context:"console unavailable endpoint" result;
               let _, _, err = result in
               assert_contains ~context:"console unavailable message" err
@@ -898,25 +773,17 @@ let () =
               assert_contains ~context:"console unavailable guidance" err
                 "Check VM runtime state for 'dev-a'")));
   run_test ~name:"console non-interactive timeout reports guidance" (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_temp_dir "epi-console-timeout" (fun dir ->
               with_sleep_process (fun pid ->
                   let serial_socket = Filename.concat dir "dev-a.sock" in
                   with_hanging_unix_socket_server ~socket_path:serial_socket
                     ~hold_seconds:0.5 (fun () ->
-                      write_state_entry state_file
-                        {
-                          instance_name = "dev-a";
-                          target = ".#dev-a";
-                          pid = Some pid;
-                          serial_socket = Some serial_socket;
-                          disk = Some "/tmp/dev-a.disk";
-                        passt_pid = None;
-                        ssh_port = None;
-                        ssh_key_path = None;
-                        };
+                      write_state_entry ~state_dir ~instance_name:"dev-a"
+                        ~target:".#dev-a" ~pid ~serial_socket
+                        ~disk:"/tmp/dev-a.disk" ();
                       let result =
-                        run_cli_with_env ~bin ~state_file
+                        run_cli_with_env ~bin ~state_dir
                           ~extra_env:
                             [
                               ("EPI_CONSOLE_NON_INTERACTIVE", "1");
@@ -933,7 +800,7 @@ let () =
   run_test ~name:"up --console provisions and attaches to serial socket"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let wait_for_launch () =
                 let rec loop remaining =
                   if remaining <= 0 then
@@ -957,13 +824,13 @@ let () =
               in
               let serial_socket =
                 Filename.concat
-                  (Filename.concat (Filename.dirname state_file) "runtime")
-                  "dev-a.serial.sock"
+                  (Filename.concat state_dir "dev-a")
+                  "serial.sock"
               in
               with_delayed_unix_socket_server ~socket_path:serial_socket
                 ~payload:"up-console\n" ~before_bind:wait_for_launch (fun () ->
                   let result =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "dev-a"; "--target"; ".#dev-a"; "--console" ]
                   in
                   assert_success ~context:"up console fresh" result;
@@ -982,25 +849,17 @@ let () =
                     launch_contents "--serial"))));
   run_test ~name:"up --console attaches to already running instance" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-up-console-running" (fun dir ->
                   with_sleep_process (fun pid ->
                       let serial_socket = Filename.concat dir "dev-a.sock" in
                       with_unix_socket_server ~socket_path:serial_socket
                         ~payload:"up-console-running\n" (fun () ->
-                          write_state_entry state_file
-                            {
-                              instance_name = "dev-a";
-                              target = ".#dev-a";
-                              pid = Some pid;
-                              serial_socket = Some serial_socket;
-                              disk = Some "/tmp/dev-a.disk";
-                            passt_pid = None;
-                            ssh_port = None;
-                            ssh_key_path = None;
-                            };
+                          write_state_entry ~state_dir ~instance_name:"dev-a"
+                            ~target:".#dev-a" ~pid ~serial_socket
+                            ~disk:"/tmp/dev-a.disk" ();
                           let result =
-                            run_cli_with_env ~bin ~state_file ~extra_env
+                            run_cli_with_env ~bin ~state_dir ~extra_env
                               [
                                 "up";
                                 "dev-a";
@@ -1028,162 +887,110 @@ let () =
   run_test
     ~name:"startup reconciliation clears stale runtime and keeps active runtime"
     (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_temp_dir "epi-reconcile-test" (fun dir ->
               with_sleep_process (fun live_pid ->
-                  write_state_entry state_file
-                    {
-                      instance_name = "stale";
-                      target = ".#stale";
-                      pid = Some 999_999;
-                      serial_socket = Some (Filename.concat dir "stale.sock");
-                      disk = Some "/tmp/stale-disk.img";
-                    passt_pid = None;
-                    ssh_port = None;
-                    ssh_key_path = None;
-                    };
-                  write_state_entry state_file
-                    {
-                      instance_name = "live";
-                      target = ".#live";
-                      pid = Some live_pid;
-                      serial_socket = Some (Filename.concat dir "live.sock");
-                      disk = Some "/tmp/live-disk.img";
-                    passt_pid = None;
-                    ssh_port = None;
-                    ssh_key_path = None;
-                    };
-                  let listed = run_cli ~bin ~state_file [ "list" ] in
+                  write_state_entry ~state_dir ~instance_name:"stale"
+                    ~target:".#stale" ~pid:999_999
+                    ~serial_socket:(Filename.concat dir "stale.sock")
+                    ~disk:"/tmp/stale-disk.img" ();
+                  write_state_entry ~state_dir ~instance_name:"live"
+                    ~target:".#live" ~pid:live_pid
+                    ~serial_socket:(Filename.concat dir "live.sock")
+                    ~disk:"/tmp/live-disk.img" ();
+                  let listed = run_cli ~bin ~state_dir [ "list" ] in
                   assert_success ~context:"list with reconciliation" listed;
-                  let stale = find_state_entry state_file "stale" in
-                  (match stale with
-                  | Some { pid = None; _ } -> ()
+                  (match find_state_runtime ~state_dir "stale" with
+                  | None -> ()
                   | _ -> fail "expected stale runtime metadata to be cleared");
-                  let live = find_state_entry state_file "live" in
-                  match live with
-                  | Some { pid = Some pid; _ } when pid = live_pid -> ()
+                  match find_state_runtime ~state_dir "live" with
+                  | Some (Some pid, _, _, _, _, _) when pid = live_pid -> ()
                   | _ -> fail "expected live runtime metadata to remain active"))));
   run_test ~name:"rm removes stopped instances from state" (fun () ->
-      with_state_file (fun state_file ->
-          write_state_entry state_file
-            {
-              instance_name = "dev-a";
-              target = ".#dev-a";
-              pid = None;
-              serial_socket = None;
-              disk = None;
-            passt_pid = None;
-            ssh_port = None;
-            ssh_key_path = None;
-            };
-          let removed = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
+      with_state_dir (fun state_dir ->
+          write_state_entry ~state_dir ~instance_name:"dev-a"
+            ~target:".#dev-a" ();
+          let removed = run_cli ~bin ~state_dir [ "rm"; "dev-a" ] in
           assert_success ~context:"rm stopped instance" removed;
           let _, out, _ = removed in
           assert_contains ~context:"rm stopped output" out
             "rm: removed instance=dev-a";
           assert_missing_state_entry ~context:"rm stopped state cleanup"
-            state_file "dev-a"));
+            ~state_dir "dev-a"));
   run_test ~name:"rm refuses to remove running instance without --force"
     (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_sleep_process (fun pid ->
-              write_state_entry state_file
-                {
-                  instance_name = "dev-a";
-                  target = ".#dev-a";
-                  pid = Some pid;
-                  serial_socket = Some "/tmp/dev-a.serial.sock";
-                  disk = Some "/tmp/dev-a.disk";
-                passt_pid = None;
-                ssh_port = None;
-                ssh_key_path = None;
-                };
-              let rejected = run_cli ~bin ~state_file [ "rm"; "dev-a" ] in
+              write_state_entry ~state_dir ~instance_name:"dev-a"
+                ~target:".#dev-a" ~pid
+                ~serial_socket:"/tmp/dev-a.serial.sock"
+                ~disk:"/tmp/dev-a.disk" ();
+              let rejected = run_cli ~bin ~state_dir [ "rm"; "dev-a" ] in
               assert_failure ~context:"rm running without force" rejected;
               let _, _, err = rejected in
               assert_contains ~context:"rm running rejection message" err
                 "Instance 'dev-a' is running";
               assert_contains ~context:"rm running rejection guidance" err
                 "use `epi rm --force dev-a`";
-              match find_state_entry state_file "dev-a" with
-              | Some { pid = Some active_pid; _ } when active_pid = pid -> ()
+              match find_state_runtime ~state_dir "dev-a" with
+              | Some (Some active_pid, _, _, _, _, _) when active_pid = pid -> ()
               | _ -> fail "expected running instance to remain in state")));
   run_test ~name:"rm --force terminates running instance before removing"
     (fun () ->
-      with_state_file (fun state_file ->
+      with_state_dir (fun state_dir ->
           with_sleep_process (fun pid ->
-              write_state_entry state_file
-                {
-                  instance_name = "dev-a";
-                  target = ".#dev-a";
-                  pid = Some pid;
-                  serial_socket = Some "/tmp/dev-a.serial.sock";
-                  disk = Some "/tmp/dev-a.disk";
-                passt_pid = None;
-                ssh_port = None;
-                ssh_key_path = None;
-                };
+              write_state_entry ~state_dir ~instance_name:"dev-a"
+                ~target:".#dev-a" ~pid
+                ~serial_socket:"/tmp/dev-a.serial.sock"
+                ~disk:"/tmp/dev-a.disk" ();
               let removed =
-                run_cli ~bin ~state_file [ "rm"; "--force"; "dev-a" ]
+                run_cli ~bin ~state_dir [ "rm"; "--force"; "dev-a" ]
               in
               assert_success ~context:"rm force running" removed;
               let _, out, _ = removed in
               assert_contains ~context:"rm force output" out
                 "rm: removed instance=dev-a";
               assert_missing_state_entry ~context:"rm force state cleanup"
-                state_file "dev-a")));
+                ~state_dir "dev-a")));
   run_test ~name:"rm --force reports termination errors and keeps state"
     (fun () ->
       if Unix.geteuid () = 0 then ()
       else
-        with_state_file (fun state_file ->
-            write_state_entry state_file
-              {
-                instance_name = "protected";
-                target = ".#protected";
-                pid = Some 1;
-                serial_socket = Some "/tmp/protected.serial.sock";
-                disk = Some "/tmp/protected.disk";
-              passt_pid = None;
-              ssh_port = None;
-              ssh_key_path = None;
-              };
+        with_state_dir (fun state_dir ->
+            write_state_entry ~state_dir ~instance_name:"protected"
+              ~target:".#protected" ~pid:1
+              ~serial_socket:"/tmp/protected.serial.sock"
+              ~disk:"/tmp/protected.disk" ();
             let failed =
-              run_cli ~bin ~state_file [ "rm"; "--force"; "protected" ]
+              run_cli ~bin ~state_dir [ "rm"; "--force"; "protected" ]
             in
             assert_failure ~context:"rm force termination failure" failed;
             let _, _, err = failed in
             assert_contains ~context:"rm force termination failure output" err
               "failed to terminate";
-            match find_state_entry state_file "protected" with
-            | Some { pid = Some 1; _ } -> ()
+            match find_state_runtime ~state_dir "protected" with
+            | Some (Some 1, _, _, _, _, _) -> ()
             | _ -> fail "expected entry to remain after failed force removal"));
   run_test
     ~name:"rm kills passt process when hypervisor is already dead"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "stale-rm"; "--target"; ".#dev" ]
               in
               assert_success ~context:"up for stale rm" result;
-              let entry = find_state_entry state_file "stale-rm" in
-              let hypervisor_pid =
-                match entry with
-                | Some { pid = Some pid; _ } -> pid
-                | _ -> fail "expected pid in state after up"
-              in
-              let passt_pid =
-                match entry with
-                | Some { passt_pid = Some pid; _ } -> pid
-                | _ -> fail "expected passt_pid in state after up"
+              let hypervisor_pid, passt_pid =
+                match find_state_runtime ~state_dir "stale-rm" with
+                | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                | _ -> fail "expected pid and passt_pid in state after up"
               in
               terminate_pid hypervisor_pid;
               if not (pid_is_alive passt_pid) then
                 fail "passt should be alive before rm";
               let rm_result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "rm"; "stale-rm" ]
               in
               assert_success ~context:"rm stale with passt" rm_result;
@@ -1191,22 +998,22 @@ let () =
                 fail "passt process should be dead after rm")));
   run_test ~name:"list shows empty and multi-instance state" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let empty =
-                run_cli_with_env ~bin ~state_file ~extra_env [ "list" ]
+                run_cli_with_env ~bin ~state_dir ~extra_env [ "list" ]
               in
               assert_success ~context:"list empty" empty;
               let _, empty_out, _ = empty in
               assert_contains ~context:"list empty output" empty_out
                 "No instances found.";
               ignore
-                (run_cli_with_env ~bin ~state_file ~extra_env
+                (run_cli_with_env ~bin ~state_dir ~extra_env
                    [ "up"; "--target"; ".#default" ]);
               ignore
-                (run_cli_with_env ~bin ~state_file ~extra_env
+                (run_cli_with_env ~bin ~state_dir ~extra_env
                    [ "up"; "qa-1"; "--target"; "github:org/repo#qa-1" ]);
               let listed =
-                run_cli_with_env ~bin ~state_file ~extra_env [ "list" ]
+                run_cli_with_env ~bin ~state_dir ~extra_env [ "list" ]
               in
               assert_success ~context:"list multi" listed;
               let _, listed_out, _ = listed in
@@ -1222,17 +1029,17 @@ let () =
        content"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "seed-test"; "--target"; ".#dev" ]
               in
               assert_success ~context:"seed iso up" result;
-              let runtime_dir =
-                Filename.concat (Filename.dirname state_file) "runtime"
+              let instance_dir =
+                Filename.concat state_dir "seed-test"
               in
               let staging_dir =
-                Filename.concat runtime_dir "seed-test.cidata"
+                Filename.concat instance_dir "cidata"
               in
               let user_data_path =
                 Filename.concat staging_dir "user-data"
@@ -1276,7 +1083,7 @@ let () =
     ~name:"SSH keys are read from ~/.ssh/*.pub and included in user-data"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-ssh-key-test" (fun ssh_dir ->
                   write_file
                     (Filename.concat ssh_dir "id_ed25519.pub")
@@ -1288,16 +1095,15 @@ let () =
                     ("EPI_SSH_DIR", ssh_dir) :: extra_env
                   in
                   let result =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "ssh-key-test"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"ssh key up" result;
-                  let runtime_dir =
-                    Filename.concat (Filename.dirname state_file) "runtime"
-                  in
                   let user_data_path =
                     Filename.concat
-                      (Filename.concat runtime_dir "ssh-key-test.cidata")
+                      (Filename.concat
+                        (Filename.concat state_dir "ssh-key-test")
+                        "cidata")
                       "user-data"
                   in
                   if not (Sys.file_exists user_data_path) then
@@ -1318,25 +1124,24 @@ let () =
     ~name:"missing SSH keys produce a warning but don't fail provisioning"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-no-ssh-test" (fun empty_ssh_dir ->
                   let extra_env =
                     ("EPI_SSH_DIR", empty_ssh_dir) :: extra_env
                   in
                   let result =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "no-ssh-test"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"no ssh keys up" result;
                   let _, _, stderr = result in
                   assert_contains ~context:"no ssh keys warning" stderr
                     "no SSH public keys found";
-                  let runtime_dir =
-                    Filename.concat (Filename.dirname state_file) "runtime"
-                  in
                   let user_data_path =
                     Filename.concat
-                      (Filename.concat runtime_dir "no-ssh-test.cidata")
+                      (Filename.concat
+                        (Filename.concat state_dir "no-ssh-test")
+                        "cidata")
                       "user-data"
                   in
                   if not (Sys.file_exists user_data_path) then
@@ -1353,7 +1158,7 @@ let () =
                        found"))));
   run_test ~name:"missing genisoimage produces a clear error" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let extra_env =
                 List.filter
                   (fun (key, _) ->
@@ -1362,7 +1167,7 @@ let () =
                 @ [ ("EPI_GENISOIMAGE_BIN", "nonexistent-genisoimage-bin") ]
               in
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "no-genisoimage"; "--target"; ".#dev" ]
               in
               assert_failure ~context:"missing genisoimage" result;
@@ -1375,9 +1180,9 @@ let () =
     ~name:"seed ISO is passed as additional --disk argument to cloud-hypervisor"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "disk-test"; "--target"; ".#dev" ]
               in
               assert_success ~context:"seed iso disk arg up" result;
@@ -1396,7 +1201,7 @@ let () =
   run_test ~name:"EPI_PASST_BIN overrides passt binary path" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
           with_temp_dir "epi-passt-override" (fun custom_dir ->
-              with_state_file (fun state_file ->
+              with_state_dir (fun state_dir ->
                   let custom_passt =
                     Filename.concat custom_dir "custom-passt.sh"
                   in
@@ -1419,13 +1224,13 @@ let () =
                     @ [ ("EPI_PASST_BIN", custom_passt) ]
                   in
                   let result =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "passt-override"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"custom passt bin up" result))));
   run_test ~name:"missing passt binary produces a clear error" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let extra_env =
                 List.filter
                   (fun (key, _) -> not (String.equal key "EPI_PASST_BIN"))
@@ -1433,7 +1238,7 @@ let () =
                 @ [ ("EPI_PASST_BIN", "nonexistent-passt-bin") ]
               in
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "no-passt"; "--target"; ".#dev" ]
               in
               assert_failure ~context:"missing passt" result;
@@ -1445,30 +1250,28 @@ let () =
     ~name:"down terminates passt process alongside hypervisor"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "passt-kill-test"; "--target"; ".#dev" ]
               in
               assert_success ~context:"up for passt kill test" result;
-              let entry = find_state_entry state_file "passt-kill-test" in
               let passt_pid =
-                match entry with
-                | Some { passt_pid = Some pid; _ } -> pid
+                match find_state_runtime ~state_dir "passt-kill-test" with
+                | Some (_, _, _, Some pid, _, _) -> pid
                 | _ -> fail "expected passt_pid in state after up"
               in
               if not (pid_is_alive passt_pid) then
                 fail "passt process should be alive before down";
               let down_result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "down"; "passt-kill-test" ]
               in
               assert_success ~context:"down passt kill" down_result;
               if not (wait_for_pid_to_die ~attempts:40 passt_pid) then
                 fail "passt process should be dead after down";
-              let entry_after = find_state_entry state_file "passt-kill-test" in
-              (match entry_after with
-              | Some { pid = None; _ } -> ()
+              (match find_state_runtime ~state_dir "passt-kill-test" with
+              | None -> ()
               | _ ->
                   fail
                     "expected runtime to be cleared but instance kept after down"))));
@@ -1476,28 +1279,22 @@ let () =
     ~name:"up over stale instance terminates old passt process"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "stale-passt"; "--target"; ".#dev" ]
               in
               assert_success ~context:"first up for stale passt" result;
-              let entry = find_state_entry state_file "stale-passt" in
-              let old_passt_pid =
-                match entry with
-                | Some { passt_pid = Some pid; _ } -> pid
-                | _ -> fail "expected passt_pid in state after first up"
-              in
-              let old_hypervisor_pid =
-                match entry with
-                | Some { pid = Some pid; _ } -> pid
-                | _ -> fail "expected pid in state after first up"
+              let old_hypervisor_pid, old_passt_pid =
+                match find_state_runtime ~state_dir "stale-passt" with
+                | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                | _ -> fail "expected pid and passt_pid in state after first up"
               in
               terminate_pid old_hypervisor_pid;
               if not (pid_is_alive old_passt_pid) then
                 fail "old passt process should be alive before relaunch";
               let result2 =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "stale-passt"; "--target"; ".#dev" ]
               in
               assert_success ~context:"relaunch over stale passt" result2;
@@ -1509,11 +1306,11 @@ let () =
     ~name:"cache is written after successful provision"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-cache-home" (fun cache_dir ->
                   let extra_env = ("EPI_CACHE_DIR", cache_dir) :: extra_env in
                   let result =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "cache-write"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"cache write up" result;
@@ -1537,7 +1334,7 @@ let () =
     ~name:"second epi up on same target uses cache"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-cache-hit" (fun test_dir ->
                   let cache_dir = Filename.concat test_dir "cache" in
                   let resolver_log =
@@ -1564,26 +1361,20 @@ let () =
                          extra_env
                   in
                   let result1 =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "cache-hit"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"cache hit first up" result1;
-                  let entry = find_state_entry state_file "cache-hit" in
-                  let hypervisor_pid =
-                    match entry with
-                    | Some { pid = Some pid; _ } -> pid
-                    | _ -> fail "expected pid after first up"
-                  in
-                  let passt_pid =
-                    match entry with
-                    | Some { passt_pid = Some pid; _ } -> pid
-                    | _ -> fail "expected passt_pid after first up"
+                  let hypervisor_pid, passt_pid =
+                    match find_state_runtime ~state_dir "cache-hit" with
+                    | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                    | _ -> fail "expected pid and passt_pid after first up"
                   in
                   terminate_pid hypervisor_pid;
                   terminate_pid passt_pid;
                   let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
                   let result2 =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "cache-hit"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"cache hit second up" result2;
@@ -1608,7 +1399,7 @@ let () =
     ~name:"cache with missing path triggers re-eval"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-cache-miss" (fun test_dir ->
                   let cache_dir = Filename.concat test_dir "cache" in
                   let resolver_log =
@@ -1635,20 +1426,14 @@ let () =
                          extra_env
                   in
                   let result1 =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "cache-miss"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"cache miss first up" result1;
-                  let entry = find_state_entry state_file "cache-miss" in
-                  let hypervisor_pid =
-                    match entry with
-                    | Some { pid = Some pid; _ } -> pid
-                    | _ -> fail "expected pid after first up"
-                  in
-                  let passt_pid =
-                    match entry with
-                    | Some { passt_pid = Some pid; _ } -> pid
-                    | _ -> fail "expected passt_pid after first up"
+                  let hypervisor_pid, passt_pid =
+                    match find_state_runtime ~state_dir "cache-miss" with
+                    | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                    | _ -> fail "expected pid and passt_pid after first up"
                   in
                   terminate_pid hypervisor_pid;
                   terminate_pid passt_pid;
@@ -1687,7 +1472,7 @@ let () =
                   in
                   write_file cache_file corrupted;
                   let result2 =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "cache-miss"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"cache miss second up" result2;
@@ -1713,7 +1498,7 @@ let () =
     ~name:"--rebuild busts cache and re-evals unconditionally"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-cache-rebuild" (fun test_dir ->
                   let cache_dir = Filename.concat test_dir "cache" in
                   let resolver_log =
@@ -1740,26 +1525,20 @@ let () =
                          extra_env
                   in
                   let result1 =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "rebuild-test"; "--target"; ".#dev" ]
                   in
                   assert_success ~context:"rebuild first up" result1;
-                  let entry = find_state_entry state_file "rebuild-test" in
-                  let hypervisor_pid =
-                    match entry with
-                    | Some { pid = Some pid; _ } -> pid
-                    | _ -> fail "expected pid after first up"
-                  in
-                  let passt_pid =
-                    match entry with
-                    | Some { passt_pid = Some pid; _ } -> pid
-                    | _ -> fail "expected passt_pid after first up"
+                  let hypervisor_pid, passt_pid =
+                    match find_state_runtime ~state_dir "rebuild-test" with
+                    | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                    | _ -> fail "expected pid and passt_pid after first up"
                   in
                   terminate_pid hypervisor_pid;
                   terminate_pid passt_pid;
                   let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
                   let result2 =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "rebuild-test"; "--target"; ".#dev"; "--rebuild" ]
                   in
                   assert_success ~context:"rebuild second up" result2;
@@ -1849,9 +1628,9 @@ let () =
               ("EPI_CACHE_DIR", cache_dir);
             ]
           in
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "passt-args"; "--target"; ".#dev" ]
               in
               assert_success ~context:"passt args up" result;
@@ -1867,59 +1646,39 @@ let () =
               assert_contains ~context:"passt :22 target" passt_args ":22")));
   run_test ~name:"epi up output includes the SSH port" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "ssh-port-output"; "--target"; ".#dev" ]
               in
               assert_success ~context:"ssh port output up" result;
               let _, stdout, _ = result in
               assert_contains ~context:"SSH port in up output" stdout
                 "SSH port:")));
-  run_test ~name:"runtime TSV round-trips ssh_port correctly" (fun () ->
+  run_test ~name:"runtime round-trips ssh_port correctly" (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
-                  [ "up"; "tsv-roundtrip"; "--target"; ".#dev" ]
+                run_cli_with_env ~bin ~state_dir ~extra_env
+                  [ "up"; "rt-roundtrip"; "--target"; ".#dev" ]
               in
-              assert_success ~context:"tsv roundtrip up" result;
-              let entry = find_state_entry state_file "tsv-roundtrip" in
-              match entry with
-              | Some { ssh_port = Some port; _ } when port > 0 && port <= 65535
+              assert_success ~context:"runtime roundtrip up" result;
+              match find_state_runtime ~state_dir "rt-roundtrip" with
+              | Some (_, _, _, _, Some port, _) when port > 0 && port <= 65535
                 ->
                   ()
-              | Some { ssh_port = None; _ } ->
-                  fail "expected ssh_port to be set in TSV after up"
-              | Some { ssh_port = Some port; _ } ->
+              | Some (_, _, _, _, None, _) ->
+                  fail "expected ssh_port to be set in runtime after up"
+              | Some (_, _, _, _, Some port, _) ->
                   fail "ssh_port out of range: %d" port
-              | None -> fail "expected state entry for tsv-roundtrip")));
-  run_test ~name:"TSV row without ssh_port column loads with ssh_port = None"
-    (fun () ->
-      with_state_file (fun state_file ->
-          let channel =
-            open_out_gen [ Open_creat; Open_wronly; Open_append ] 0o644
-              state_file
-          in
-          output_string channel
-            (String.concat "\t"
-               [ "legacy-no-ssh"; ".#dev"; "99999"; "/tmp/s.sock";
-                 "/tmp/d.img"; "99998" ]);
-          output_char channel '\n';
-          close_out channel;
-          let entry = find_state_entry state_file "legacy-no-ssh" in
-          match entry with
-          | Some { ssh_port = None; _ } -> ()
-          | Some { ssh_port = Some _; _ } ->
-              fail "expected ssh_port = None for legacy TSV row"
-          | None -> fail "expected to find legacy-no-ssh entry"));
+              | None -> fail "expected runtime for rt-roundtrip")));
   run_test
     ~name:
       "configured user produces cloud-init with only SSH keys, no \
        groups/sudo/shell"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               with_temp_dir "epi-configured-user-test" (fun ssh_dir ->
                   write_file
                     (Filename.concat ssh_dir "id_ed25519.pub")
@@ -1928,16 +1687,15 @@ let () =
                     ("EPI_SSH_DIR", ssh_dir) :: extra_env
                   in
                   let result =
-                    run_cli_with_env ~bin ~state_file ~extra_env
+                    run_cli_with_env ~bin ~state_dir ~extra_env
                       [ "up"; "configured-test"; "--target"; ".#user-configured" ]
                   in
                   assert_success ~context:"configured user up" result;
-                  let runtime_dir =
-                    Filename.concat (Filename.dirname state_file) "runtime"
-                  in
                   let user_data_path =
                     Filename.concat
-                      (Filename.concat runtime_dir "configured-test.cidata")
+                      (Filename.concat
+                        (Filename.concat state_dir "configured-test")
+                        "cidata")
                       "user-data"
                   in
                   if not (Sys.file_exists user_data_path) then
@@ -1967,18 +1725,17 @@ let () =
       "unconfigured user produces full cloud-init with groups/sudo/shell"
     (fun () ->
       with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
-          with_state_file (fun state_file ->
+          with_state_dir (fun state_dir ->
               let result =
-                run_cli_with_env ~bin ~state_file ~extra_env
+                run_cli_with_env ~bin ~state_dir ~extra_env
                   [ "up"; "unconfigured-test"; "--target"; ".#dev" ]
               in
               assert_success ~context:"unconfigured user up" result;
-              let runtime_dir =
-                Filename.concat (Filename.dirname state_file) "runtime"
-              in
               let user_data_path =
                 Filename.concat
-                  (Filename.concat runtime_dir "unconfigured-test.cidata")
+                  (Filename.concat
+                    (Filename.concat state_dir "unconfigured-test")
+                    "cidata")
                   "user-data"
               in
               if not (Sys.file_exists user_data_path) then

@@ -9,12 +9,6 @@ type runtime = {
   ssh_key_path : string option;
 }
 
-type entry = {
-  instance_name : string;
-  target : string;
-  runtime : runtime option;
-}
-
 let state_dir () =
   match Sys.getenv_opt "EPI_STATE_DIR" with
   | Some dir -> dir
@@ -22,8 +16,6 @@ let state_dir () =
       match Sys.getenv_opt "HOME" with
       | Some home -> Filename.concat home ".local/state/epi"
       | None -> ".epi-state")
-
-let state_file () = Filename.concat (state_dir ()) "instances.tsv"
 
 let ensure_parent_dir path =
   let dir = Filename.dirname path in
@@ -36,216 +28,159 @@ let ensure_parent_dir path =
   in
   make_dir dir
 
-let state_dir () = Filename.dirname (state_file ())
-let runtime_dir () = Filename.concat (state_dir ()) "runtime"
+let instance_dir instance_name = Filename.concat (state_dir ()) instance_name
+let instance_path instance_name filename =
+  Filename.concat (instance_dir instance_name) filename
 
-let serial_socket_path instance_name =
-  Filename.concat (runtime_dir ()) (instance_name ^ ".serial.sock")
+let serial_socket_path instance_name = instance_path instance_name "serial.sock"
+let launch_stdout_path instance_name = instance_path instance_name "stdout.log"
+let launch_stderr_path instance_name = instance_path instance_name "stderr.log"
 
-let launch_stdout_path instance_name =
-  Filename.concat (runtime_dir ()) (instance_name ^ ".stdout.log")
+let ensure_instance_dir instance_name =
+  let dir = instance_dir instance_name in
+  let rec make_dir current =
+    if current = "." || current = "/" || current = "" then ()
+    else if Sys.file_exists current then ()
+    else (
+      make_dir (Filename.dirname current);
+      Unix.mkdir current 0o755)
+  in
+  make_dir dir
 
-let launch_stderr_path instance_name =
-  Filename.concat (runtime_dir ()) (instance_name ^ ".stderr.log")
-
-let parse_int text = int_of_string_opt text
-
-let runtime_of_fields pid_text serial_socket disk passt_pid ssh_port
-    ssh_key_path =
-  match parse_int pid_text with
-  | Some pid when pid > 0 ->
-      Some { pid; serial_socket; disk; passt_pid; ssh_port; ssh_key_path }
-  | _ -> None
-
-let parse_opt_string = function "" -> None | s -> Some s
-
-let entry_of_fields = function
-  | [ instance_name; target ] -> Some { instance_name; target; runtime = None }
-  | [ instance_name; target; pid_text ] ->
-      Some
-        {
-          instance_name;
-          target;
-          runtime = runtime_of_fields pid_text "" "" None None None;
-        }
-  | [ instance_name; target; pid_text; serial_socket; disk ] ->
-      Some
-        {
-          instance_name;
-          target;
-          runtime = runtime_of_fields pid_text serial_socket disk None None None;
-        }
-  | [ instance_name; target; pid_text; serial_socket; disk; passt_pid_text ] ->
-      Some
-        {
-          instance_name;
-          target;
-          runtime =
-            runtime_of_fields pid_text serial_socket disk
-              (parse_int passt_pid_text) None None;
-        }
-  | [
-      instance_name;
-      target;
-      pid_text;
-      serial_socket;
-      disk;
-      passt_pid_text;
-      ssh_port_text;
-    ] ->
-      Some
-        {
-          instance_name;
-          target;
-          runtime =
-            runtime_of_fields pid_text serial_socket disk
-              (parse_int passt_pid_text) (parse_int ssh_port_text) None;
-        }
-  | [
-      instance_name;
-      target;
-      pid_text;
-      serial_socket;
-      disk;
-      passt_pid_text;
-      ssh_port_text;
-      ssh_key_path_text;
-    ] ->
-      Some
-        {
-          instance_name;
-          target;
-          runtime =
-            runtime_of_fields pid_text serial_socket disk
-              (parse_int passt_pid_text) (parse_int ssh_port_text)
-              (parse_opt_string ssh_key_path_text);
-        }
-  | _ -> None
-
-let load () =
-  let path = state_file () in
-  if not (Sys.file_exists path) then []
-  else
-    let channel = open_in path in
-    let rec loop acc =
-      match input_line channel with
-      | line -> (
-          match entry_of_fields (String.split_on_char '\t' line) with
-          | Some entry -> loop (entry :: acc)
-          | None -> loop acc)
-      | exception End_of_file ->
-          close_in channel;
-          List.rev acc
-    in
-    loop []
-
-let save entries =
-  let path = state_file () in
-  ensure_parent_dir path;
+let save_target instance_name target =
+  ensure_instance_dir instance_name;
+  let path = instance_path instance_name "target" in
   let channel = open_out path in
-  List.iter
-    (fun { instance_name; target; runtime } ->
-      match runtime with
-      | Some { pid; serial_socket; disk; passt_pid; ssh_port; ssh_key_path } ->
-          let passt_pid_text =
-            match passt_pid with Some p -> string_of_int p | None -> ""
-          in
-          let ssh_port_text =
-            match ssh_port with Some p -> string_of_int p | None -> ""
-          in
-          let ssh_key_path_text =
-            match ssh_key_path with Some p -> p | None -> ""
-          in
-          Printf.fprintf channel "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n"
-            instance_name target pid serial_socket disk passt_pid_text
-            ssh_port_text ssh_key_path_text
-      | None ->
-          Printf.fprintf channel "%s\t%s\t\t\t\t\t\t\n" instance_name target)
-    entries;
+  output_string channel target;
+  output_char channel '\n';
   close_out channel
 
-let upsert_entry ~instance_name ~update entries =
-  let rec upsert acc = function
-    | [] ->
-        List.rev (update { instance_name; target = ""; runtime = None } :: acc)
-    | ({ instance_name = name; _ } as entry) :: rest
-      when String.equal name instance_name ->
-        List.rev_append acc (update entry :: rest)
-    | entry :: rest -> upsert (entry :: acc) rest
-  in
-  upsert [] entries
+let load_target instance_name =
+  let path = instance_path instance_name "target" in
+  let content = Target.read_file_if_exists path in
+  let trimmed = String.trim content in
+  if trimmed = "" then None else Some trimmed
+
+let save_runtime instance_name (rt : runtime) =
+  ensure_instance_dir instance_name;
+  let path = instance_path instance_name "runtime" in
+  let channel = open_out path in
+  Printf.fprintf channel "pid=%d\n" rt.pid;
+  Printf.fprintf channel "serial_socket=%s\n" rt.serial_socket;
+  Printf.fprintf channel "disk=%s\n" rt.disk;
+  (match rt.passt_pid with
+  | Some p -> Printf.fprintf channel "passt_pid=%d\n" p
+  | None -> ());
+  (match rt.ssh_port with
+  | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
+  | None -> ());
+  (match rt.ssh_key_path with
+  | Some p -> Printf.fprintf channel "ssh_key_path=%s\n" p
+  | None -> ());
+  close_out channel
+
+let load_runtime instance_name =
+  let path = instance_path instance_name "runtime" in
+  let content = Target.read_file_if_exists path in
+  if String.trim content = "" then None
+  else
+    let pairs = Target.parse_key_value_output content in
+    let get key = List.assoc_opt key pairs in
+    let get_int key =
+      match get key with
+      | Some v -> int_of_string_opt v
+      | None -> None
+    in
+    match get_int "pid" with
+    | Some pid when pid > 0 ->
+        let serial_socket = Option.value ~default:"" (get "serial_socket") in
+        let disk = Option.value ~default:"" (get "disk") in
+        let passt_pid = get_int "passt_pid" in
+        let ssh_port = get_int "ssh_port" in
+        let ssh_key_path = get "ssh_key_path" in
+        Some { pid; serial_socket; disk; passt_pid; ssh_port; ssh_key_path }
+    | _ -> None
 
 let set ~instance_name ~target =
-  let update entry = { entry with target; runtime = None } in
-  save (upsert_entry ~instance_name ~update (load ()))
+  save_target instance_name target;
+  let runtime_path = instance_path instance_name "runtime" in
+  if Sys.file_exists runtime_path then Sys.remove runtime_path
 
 let set_provisioned ~instance_name ~target ~runtime =
-  let update entry = { entry with target; runtime = Some runtime } in
-  save (upsert_entry ~instance_name ~update (load ()))
+  save_target instance_name target;
+  save_runtime instance_name runtime
 
-let find_entry instance_name =
-  List.find_opt
-    (fun entry -> String.equal entry.instance_name instance_name)
-    (load ())
+let find instance_name = load_target instance_name
 
-let find instance_name =
-  match find_entry instance_name with
-  | Some { target; _ } -> Some target
-  | None -> None
-
-let find_runtime instance_name =
-  match find_entry instance_name with
-  | Some { runtime; _ } -> runtime
-  | None -> None
+let find_runtime instance_name = load_runtime instance_name
 
 let list () =
-  load ()
-  |> List.map (fun { instance_name; target; _ } -> (instance_name, target))
-  |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+  let dir = state_dir () in
+  if not (Sys.file_exists dir) then []
+  else
+    Sys.readdir dir
+    |> Array.to_list
+    |> List.filter (fun name ->
+        let d = Filename.concat dir name in
+        Sys.is_directory d
+        && Sys.file_exists (Filename.concat d "target"))
+    |> List.filter_map (fun name ->
+        match load_target name with
+        | Some target -> Some (name, target)
+        | None -> None)
+    |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
 let clear_runtime instance_name =
-  let entries = load () in
-  if
-    List.exists
-      (fun entry -> String.equal entry.instance_name instance_name)
-      entries
-  then
-    let update entry = { entry with runtime = None } in
-    save (upsert_entry ~instance_name ~update entries)
+  let path = instance_path instance_name "runtime" in
+  if Sys.file_exists path then Sys.remove path
+
+let remove_tree path =
+  let rec walk p =
+    if Sys.file_exists p then
+      if Sys.is_directory p then (
+        Sys.readdir p
+        |> Array.iter (fun name -> walk (Filename.concat p name));
+        Unix.rmdir p)
+      else Sys.remove p
+  in
+  walk path
 
 let remove instance_name =
-  let before = load () in
-  let after =
-    List.filter
-      (fun entry -> not (String.equal entry.instance_name instance_name))
-      before
-  in
-  if List.length before <> List.length after then save after
+  let dir = instance_dir instance_name in
+  if Sys.file_exists dir then remove_tree dir
 
 let find_running_owner_by_disk disk =
-  load ()
-  |> List.find_map (fun { instance_name; runtime; _ } ->
-      match runtime with
-      | Some ({ pid; disk = runtime_disk; _ } as instance_runtime)
-        when String.equal runtime_disk disk && Process.pid_is_alive pid ->
-          Some (instance_name, instance_runtime)
-      | _ -> None)
+  let dir = state_dir () in
+  if not (Sys.file_exists dir) then None
+  else
+    Sys.readdir dir
+    |> Array.to_list
+    |> List.filter (fun name ->
+        Sys.is_directory (Filename.concat dir name))
+    |> List.find_map (fun name ->
+        match load_runtime name with
+        | Some ({ pid; disk = runtime_disk; _ } as instance_runtime)
+          when String.equal runtime_disk disk && Process.pid_is_alive pid ->
+            Some (name, instance_runtime)
+        | _ -> None)
 
 let kill_if_alive pid =
   try Unix.kill pid Sys.sigterm with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
 
 let reconcile_runtime () =
-  let clear_if_stale entry =
-    match entry.runtime with
-    | Some { pid; serial_socket; passt_pid; _ }
-      when not (Process.pid_is_alive pid) ->
-        (match passt_pid with
-        | Some passt_pid -> kill_if_alive passt_pid
-        | None -> ());
-        if Sys.file_exists serial_socket then Unix.unlink serial_socket;
-        { entry with runtime = None }
-    | _ -> entry
-  in
-  let before = load () in
-  let after = List.map clear_if_stale before in
-  if before <> after then save after
+  let dir = state_dir () in
+  if not (Sys.file_exists dir) then ()
+  else
+    Sys.readdir dir
+    |> Array.iter (fun name ->
+        let d = Filename.concat dir name in
+        if Sys.is_directory d then
+          match load_runtime name with
+          | Some { pid; serial_socket; passt_pid; _ }
+            when not (Process.pid_is_alive pid) ->
+              (match passt_pid with
+              | Some passt_pid -> kill_if_alive passt_pid
+              | None -> ());
+              if Sys.file_exists serial_socket then Unix.unlink serial_socket;
+              clear_runtime name
+          | _ -> ())
