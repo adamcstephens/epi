@@ -1,0 +1,4 @@
+(test
+ (name test_unit)
+ (flags :standard -open Epi__)
+ (libraries alcotest epi unix))

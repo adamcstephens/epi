@@ -1,26 +1,14 @@
 type result = { status : int; stdout : string; stderr : string }
 type detached_result = { pid : int }
 
-let read_all channel =
-  let buffer = Buffer.create 256 in
-  let rec loop () =
-    match input_line channel with
-    | line ->
-        Buffer.add_string buffer line;
-        Buffer.add_char buffer '\n';
-        loop ()
-    | exception End_of_file -> Buffer.contents buffer
-  in
-  loop ()
-
 let run ?(env = Unix.environment ()) ~prog ~args () =
   let argv = Array.of_list (prog :: args) in
   let stdout_channel, stdin_channel, stderr_channel =
     Unix.open_process_args_full prog argv env
   in
   close_out stdin_channel;
-  let stdout = read_all stdout_channel |> String.trim in
-  let stderr = read_all stderr_channel |> String.trim in
+  let stdout = In_channel.input_all stdout_channel |> String.trim in
+  let stderr = In_channel.input_all stderr_channel |> String.trim in
   let status =
     match
       Unix.close_process_full (stdout_channel, stdin_channel, stderr_channel)
