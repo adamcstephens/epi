@@ -135,9 +135,26 @@ let tests ~bin =
                     match
                       find_state_runtime ~state_dir "virtiofsd-pid-test"
                     with
-                    | Some (Some _, _, _, _, Some _, _, _) -> ()
+                    | Some (Some _, _, _, _, _ :: _, _, _) -> ()
                     | _ ->
                         fail
-                          "expected virtiofsd_pid to be stored in runtime \
+                          "expected virtiofsd_pids to be stored in runtime \
                            state"))));
+    Alcotest.test_case "up with --mount pointing to a file fails with clear error"
+      `Quick (fun () ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+            with_state_dir (fun state_dir ->
+                with_temp_dir "epi-mount-file-test" (fun tmp_dir ->
+                    let file_path = Filename.concat tmp_dir "myfile.txt" in
+                    write_file file_path "contents";
+                    let result =
+                      run_cli_with_env ~bin ~state_dir ~extra_env
+                        [ "up"; "mount-file-test"; "--target"; ".#dev";
+                          "--mount"; file_path ]
+                    in
+                    assert_failure ~context:"--mount on a file" result;
+                    let _, _, stderr = result in
+                    assert_contains ~context:"not a directory error" stderr
+                      "not a directory";
+                    assert_contains ~context:"path in error" stderr file_path))));
   ]

@@ -5,7 +5,7 @@ type runtime = {
   serial_socket : string;
   disk : string;
   passt_pid : int option;
-  virtiofsd_pid : int option;
+  virtiofsd_pids : int list;
   ssh_port : int option;
   ssh_key_path : string option;
 }
@@ -72,9 +72,11 @@ let save_runtime instance_name (rt : runtime) =
   (match rt.passt_pid with
   | Some p -> Printf.fprintf channel "passt_pid=%d\n" p
   | None -> ());
-  (match rt.virtiofsd_pid with
-  | Some p -> Printf.fprintf channel "virtiofsd_pid=%d\n" p
-  | None -> ());
+  (match rt.virtiofsd_pids with
+  | [] -> ()
+  | pids ->
+      Printf.fprintf channel "virtiofsd_pids=%s\n"
+        (String.concat "," (List.map string_of_int pids)));
   (match rt.ssh_port with
   | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
   | None -> ());
@@ -100,10 +102,14 @@ let load_runtime instance_name =
         let serial_socket = Option.value ~default:"" (get "serial_socket") in
         let disk = Option.value ~default:"" (get "disk") in
         let passt_pid = get_int "passt_pid" in
-        let virtiofsd_pid = get_int "virtiofsd_pid" in
+        let virtiofsd_pids =
+          match get "virtiofsd_pids" with
+          | Some s -> String.split_on_char ',' s |> List.filter_map int_of_string_opt
+          | None -> (match get_int "virtiofsd_pid" with Some p -> [ p ] | None -> [])
+        in
         let ssh_port = get_int "ssh_port" in
         let ssh_key_path = get "ssh_key_path" in
-        Some { pid; serial_socket; disk; passt_pid; virtiofsd_pid; ssh_port; ssh_key_path }
+        Some { pid; serial_socket; disk; passt_pid; virtiofsd_pids; ssh_port; ssh_key_path }
     | _ -> None
 
 let set ~instance_name ~target =
@@ -181,14 +187,12 @@ let reconcile_runtime () =
         let d = Filename.concat dir name in
         if Sys.is_directory d then
           match load_runtime name with
-          | Some { pid; serial_socket; passt_pid; virtiofsd_pid; _ }
+          | Some { pid; serial_socket; passt_pid; virtiofsd_pids; _ }
             when not (Process.pid_is_alive pid) ->
               (match passt_pid with
               | Some passt_pid -> kill_if_alive passt_pid
               | None -> ());
-              (match virtiofsd_pid with
-              | Some virtiofsd_pid -> kill_if_alive virtiofsd_pid
-              | None -> ());
+              List.iter kill_if_alive virtiofsd_pids;
               if Sys.file_exists serial_socket then Unix.unlink serial_socket;
               clear_runtime name
           | _ -> ())

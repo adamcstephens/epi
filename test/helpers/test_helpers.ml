@@ -122,8 +122,13 @@ let find_state_runtime ~state_dir instance_name =
     let get_int key =
       match get key with Some v -> int_of_string_opt v | None -> None
     in
+    let virtiofsd_pids =
+      match get "virtiofsd_pids" with
+      | Some s -> String.split_on_char ',' s |> List.filter_map int_of_string_opt
+      | None -> (match get_int "virtiofsd_pid" with Some p -> [ p ] | None -> [])
+    in
     Some (get_int "pid", get "serial_socket", get "disk",
-          get_int "passt_pid", get_int "virtiofsd_pid",
+          get_int "passt_pid", virtiofsd_pids,
           get_int "ssh_port", get "ssh_key_path")
 
 let instance_exists ~state_dir instance_name =
@@ -166,10 +171,10 @@ let cleanup_state_pids ~state_dir =
         let d = Filename.concat state_dir name in
         if Sys.is_directory d then
           match find_state_runtime ~state_dir name with
-          | Some (pid, _, _, passt_pid, virtiofsd_pid, _, _) ->
+          | Some (pid, _, _, passt_pid, virtiofsd_pids, _, _) ->
               (match pid with Some p -> terminate_pid p | None -> ());
               (match passt_pid with Some p -> terminate_pid p | None -> ());
-              (match virtiofsd_pid with Some p -> terminate_pid p | None -> ())
+              List.iter terminate_pid virtiofsd_pids
           | None -> ())
 
 let with_temp_dir prefix f =
