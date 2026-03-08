@@ -443,4 +443,5 @@ let cmd =
       ("ssh", ssh_command);
       ("logs", lifecycle_command ~name:"logs" ~summary:"Show instance logs.");
       ("list", list_command);
+      ("ls", list_command);
     ]
