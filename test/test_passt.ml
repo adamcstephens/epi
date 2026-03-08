@@ -31,7 +31,7 @@ let tests ~bin =
                     in
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "passt-override"; "--target"; ".#dev" ]
+                        [ "launch"; "passt-override"; "--target"; ".#dev" ]
                     in
                     assert_success ~context:"custom passt bin up" result))));
     Alcotest.test_case "missing passt binary produces a clear error"
@@ -46,7 +46,7 @@ let tests ~bin =
                 in
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "no-passt"; "--target"; ".#dev" ]
+                    [ "launch"; "no-passt"; "--target"; ".#dev" ]
                 in
                 assert_failure ~context:"missing passt" result;
                 let _, _, err = result in
@@ -114,7 +114,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "passt-args"; "--target"; ".#dev" ]
+                    [ "launch"; "passt-args"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"passt args up" result;
                 let passt_args =

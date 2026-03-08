@@ -9,7 +9,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "passt-kill-test"; "--target"; ".#dev" ]
+                    [ "launch"; "passt-kill-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"up for passt kill test" result;
                 let entry = find_state_runtime ~state_dir "passt-kill-test" in
@@ -22,7 +22,7 @@ let tests ~bin =
                   fail "passt process should be alive before down";
                 let down_result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "down"; "passt-kill-test" ]
+                    [ "stop"; "passt-kill-test" ]
                 in
                 assert_success ~context:"down passt kill" down_result;
                 if not (wait_for_pid_to_die ~attempts:40 passt_pid) then
@@ -39,7 +39,7 @@ let tests ~bin =
                 with_temp_dir "epi-virtiofsd-down-test" (fun mount_dir ->
                     let up_result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "virtiofsd-down-test"; "--target"; ".#dev";
+                        [ "launch"; "virtiofsd-down-test"; "--target"; ".#dev";
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up for virtiofsd down test"
@@ -55,7 +55,7 @@ let tests ~bin =
                       fail "virtiofsd should be alive before down";
                     let down_result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "down"; "virtiofsd-down-test" ]
+                        [ "stop"; "virtiofsd-down-test" ]
                     in
                     assert_success ~context:"down virtiofsd-down-test"
                       down_result;

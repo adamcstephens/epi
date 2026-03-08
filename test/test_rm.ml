@@ -77,7 +77,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "stale-rm"; "--target"; ".#dev" ]
+                    [ "launch"; "stale-rm"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"up for stale rm" result;
                 let entry = find_state_runtime ~state_dir "stale-rm" in

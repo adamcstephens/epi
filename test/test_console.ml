@@ -13,7 +13,7 @@ let tests ~bin =
             assert_contains ~context:"console not running message" err
               "Instance 'dev-a' is not running";
             assert_contains ~context:"console not running guidance" err
-              "epi up dev-a --target"));
+              "epi launch dev-a --target"));
     Alcotest.test_case "attaches to running instance serial socket"
       `Quick (fun () ->
         with_state_dir (fun state_dir ->

@@ -247,9 +247,9 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
 let pp_console_error = function
   | Instance_not_running { instance_name } ->
       Printf.sprintf
-        "Instance '%s' is not running. Run `epi up %s --target <flake#config>` \
-         first."
-        instance_name instance_name
+        "Instance '%s' is not running. Run `epi launch %s --target <flake#config>` \
+         or `epi start %s` if the instance already exists."
+        instance_name instance_name instance_name
   | Serial_endpoint_unavailable { instance_name; endpoint; details } ->
       Printf.sprintf
         "Serial endpoint unavailable for '%s' at %s: %s. Check VM runtime \
