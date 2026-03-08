@@ -5,6 +5,8 @@
   writeText,
   ocaml,
   lockDir,
+  # Map of url -> checksum string (e.g. "sha512=abc123") to override weak hashes
+  hashOverrides ? { },
 }:
 
 let
@@ -37,9 +39,10 @@ let
     };
 
   # Create a fetch entry from url and checksum
-  makeFetch = url: checksum:
+  makeFetch = pkgName: url: checksum:
     let
-      parsed = parseChecksum checksum;
+      effective = if hashOverrides ? ${pkgName} then hashOverrides.${pkgName} else checksum;
+      parsed = parseChecksum effective;
     in
     {
       inherit url;
@@ -50,7 +53,7 @@ let
     };
 
   # Extract the main source fetch from a .pkg file
-  extractSource = content:
+  extractSource = pkgName: content:
     let
       parts = lib.splitString "(source" content;
       hasSourceBlock = builtins.length parts > 1;
@@ -63,12 +66,12 @@ let
       checksum = extractChecksum fetchBlock;
     in
     if isMainSource && hasFetch && url != null && checksum != null then
-      makeFetch url checksum
+      makeFetch pkgName url checksum
     else
       null;
 
   # Extract extra_sources fetches from a .pkg file
-  extractExtraSources = content:
+  extractExtraSources = pkgName: content:
     let
       hasExtra = builtins.match ".*(\\(extra_sources .*).*" content != null;
       afterExtra =
@@ -84,7 +87,7 @@ let
           checksum = extractChecksum block;
         in
         if url != null && checksum != null then
-          makeFetch url checksum
+          makeFetch pkgName url checksum
         else
           null;
     in
@@ -99,10 +102,11 @@ let
   parsed = lib.mapAttrs (name: _:
     let
       content = readPkg name;
+      pkgName = lib.removeSuffix ".pkg" name;
     in
     {
-      source = extractSource content;
-      extraSources = extractExtraSources content;
+      source = extractSource pkgName content;
+      extraSources = extractExtraSources pkgName content;
     }
   ) pkgFiles;
 
