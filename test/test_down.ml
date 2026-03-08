@@ -48,7 +48,7 @@ let tests ~bin =
                       match
                         find_state_runtime ~state_dir "virtiofsd-down-test"
                       with
-                      | Some (_, _, _, _, Some pid, _, _) -> pid
+                      | Some (_, _, _, _, pid :: _, _, _) -> pid
                       | _ -> fail "expected virtiofsd_pid after up"
                     in
                     if not (pid_is_alive virtiofsd_pid) then

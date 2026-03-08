@@ -1,6 +1,8 @@
+## MODIFIED Requirements
+
 ### Requirement: Mount host directory into guest via virtiofs
 
-The `epi up` command SHALL accept one or more `--mount` flags, each sharing a host directory with the guest VM using virtiofsd and cloud-hypervisor's `--fs` support. Each shared directory SHALL be mounted at the same absolute path inside the guest as the source directory on the host. The path passed to `--mount` MUST be a directory; passing a file path SHALL produce an error.
+The `epi up` command SHALL accept one or more `--mount` flags, each sharing a host directory with the guest VM using virtiofsd and cloud-hypervisor's `--fs` support. Each shared directory SHALL be mounted at the same absolute path inside the guest as the source directory on the host.
 
 #### Scenario: Mount current directory with --mount flag (no argument)
 - **WHEN** user runs `epi up --target .#config --mount` from `/home/user/project`
@@ -17,10 +19,6 @@ The `epi up` command SHALL accept one or more `--mount` flags, each sharing a ho
 #### Scenario: No --mount flag
 - **WHEN** user runs `epi up --target .#config` without `--mount`
 - **THEN** no virtiofsd is started and no `--fs` argument is passed to cloud-hypervisor
-
-#### Scenario: --mount with a file path fails
-- **WHEN** user passes a file path (not a directory) to `--mount`
-- **THEN** the system reports an error indicating the path must be a directory
 
 ### Requirement: virtiofsd daemon lifecycle
 

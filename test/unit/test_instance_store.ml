@@ -43,7 +43,7 @@ let tests =
                 serial_socket = "/tmp/test.sock";
                 disk = "/tmp/test.img";
                 passt_pid = Some 54321;
-                virtiofsd_pid = Some 11111;
+                virtiofsd_pids = [ 11111 ];
                 ssh_port = Some 2222;
                 ssh_key_path = Some "/tmp/test_key";
               }
@@ -58,8 +58,8 @@ let tests =
                 Alcotest.(check string) "disk" "/tmp/test.img" r.disk;
                 Alcotest.(check (option int)) "passt_pid" (Some 54321)
                   r.passt_pid;
-                Alcotest.(check (option int)) "virtiofsd_pid" (Some 11111)
-                  r.virtiofsd_pid;
+                Alcotest.(check (list int)) "virtiofsd_pids" [ 11111 ]
+                  r.virtiofsd_pids;
                 Alcotest.(check (option int)) "ssh_port" (Some 2222)
                   r.ssh_port;
                 Alcotest.(check (option string)) "ssh_key_path"
@@ -94,7 +94,7 @@ let tests =
                 serial_socket = "/tmp/s.sock";
                 disk = "/tmp/d.img";
                 passt_pid = None;
-                virtiofsd_pid = None;
+                virtiofsd_pids = [];
                 ssh_port = None;
                 ssh_key_path = None;
               }
@@ -124,7 +124,7 @@ let tests =
                 serial_socket = "/tmp/s.sock";
                 disk = "/tmp/d.img";
                 passt_pid = None;
-                virtiofsd_pid = None;
+                virtiofsd_pids = [];
                 ssh_port = None;
                 ssh_key_path = None;
               }
@@ -134,8 +134,46 @@ let tests =
             match Instance_store.find_runtime "none-opts" with
             | Some r ->
                 Alcotest.(check (option int)) "passt_pid" None r.passt_pid;
+                Alcotest.(check (list int)) "virtiofsd_pids" [] r.virtiofsd_pids;
                 Alcotest.(check (option int)) "ssh_port" None r.ssh_port;
                 Alcotest.(check (option string)) "ssh_key_path" None
                   r.ssh_key_path
+            | None -> Alcotest.fail "expected runtime to be found"));
+    Alcotest.test_case "virtiofsd_pids with multiple entries round-trips" `Quick
+      (fun () ->
+        with_state_dir (fun _dir ->
+            let runtime : Instance_store.runtime =
+              {
+                pid = 55;
+                serial_socket = "/tmp/s.sock";
+                disk = "/tmp/d.img";
+                passt_pid = None;
+                virtiofsd_pids = [ 111; 222; 333 ];
+                ssh_port = None;
+                ssh_key_path = None;
+              }
+            in
+            Instance_store.set_provisioned ~instance_name:"multi-virtiofsd"
+              ~target:".#test" ~runtime;
+            match Instance_store.find_runtime "multi-virtiofsd" with
+            | Some r ->
+                Alcotest.(check (list int)) "virtiofsd_pids" [ 111; 222; 333 ]
+                  r.virtiofsd_pids
+            | None -> Alcotest.fail "expected runtime to be found"));
+    Alcotest.test_case "legacy virtiofsd_pid field is promoted to list" `Quick
+      (fun () ->
+        with_state_dir (fun dir ->
+            let instance_dir = Filename.concat dir "legacy-virt" in
+            Unix.mkdir instance_dir 0o755;
+            let oc = open_out (Filename.concat instance_dir "target") in
+            output_string oc ".#test\n";
+            close_out oc;
+            let oc = open_out (Filename.concat instance_dir "runtime") in
+            output_string oc "pid=77\nserial_socket=/tmp/s.sock\ndisk=/tmp/d.img\nvirtiofsd_pid=999\n";
+            close_out oc;
+            match Instance_store.find_runtime "legacy-virt" with
+            | Some r ->
+                Alcotest.(check (list int)) "virtiofsd_pids from legacy"
+                  [ 999 ] r.virtiofsd_pids
             | None -> Alcotest.fail "expected runtime to be found"));
   ]
