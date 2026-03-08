@@ -3,7 +3,6 @@
   fetchurl,
   makeSetupHook,
   writeText,
-  ocaml,
   lockDir,
   # Map of url -> checksum string (e.g. "sha512=abc123") to override weak hashes
   hashOverrides ? { },
@@ -131,11 +130,6 @@ let
 
         # Rewrite fetch URLs to pre-fetched Nix store paths
         ${rewriteUrls}
-
-        # Stub OCaml compiler packages — nixpkgs provides OCaml
-        echo '(version ${ocaml.version})' > dune.lock/ocaml.pkg
-        echo '(version ${ocaml.version})' > dune.lock/ocaml-system.pkg
-        printf '(version 3)\n(depends ocaml-system)\n' > dune.lock/ocaml-config.pkg
 
         popd > /dev/null
       fi

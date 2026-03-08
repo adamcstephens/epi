@@ -15,7 +15,6 @@ let
       makeSetupHook
       writeText
       ;
-    inherit (ocamlPackages) ocaml;
     lockDir = ../dune.lock;
     hashOverrides = {
       re = "sha512=cd2cc39f951ca6b7be631bbb5531ed13bc040e629842671bf6fef3911b20ef1653fa9a1f0aa23b094d252cffc9a9efe7ffca69e50d362ab935bc0cc447548124";
