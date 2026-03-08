@@ -49,7 +49,8 @@
 
             packages = {
               default = pkgs.pkgsMusl.callPackage ./nix/package.nix {
-                inherit ocamlPackages;
+                ocamlPackages = pkgs.pkgsMusl.ocamlPackages_latest;
+                inherit (pkgs) curl fetchurl makeSetupHook writeText;
               };
             };
           };
