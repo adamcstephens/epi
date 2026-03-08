@@ -142,6 +142,12 @@ let up_command =
          ~doc:
            "Generate an ed25519 keypair for this instance and include it in \
             cloud-init authorized_keys."
+     and+ mount_path =
+       Arg.named_opt [ "mount" ] Param.string
+         ~docv:"PATH"
+         ~doc:
+           "Mount a host directory into the guest at the same path using \
+            virtiofsd. Pass a path or use $(pwd) for the current directory."
      in
      let console_options = resolve_console_attach_options () in
      Instance_store.reconcile_runtime ();
@@ -163,8 +169,11 @@ let up_command =
          (match stale_runtime.Instance_store.passt_pid with
          | Some passt_pid -> kill_if_alive passt_pid
          | None -> ());
+         (match stale_runtime.Instance_store.virtiofsd_pid with
+         | Some virtiofsd_pid -> kill_if_alive virtiofsd_pid
+         | None -> ());
          Instance_store.clear_runtime instance_name;
-         match Vm_launch.provision ~rebuild ~generate_ssh_key ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -180,7 +189,7 @@ let up_command =
                | None -> ())
          | Error error -> fail (Vm_launch.pp_provision_error error))
      | None -> (
-         match Vm_launch.provision ~rebuild ~generate_ssh_key ~instance_name ~target with
+         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
              if attach_console then
@@ -311,6 +320,9 @@ let terminate_instance_runtime ~instance_name runtime =
     let result = wait_until_stopped 50 in
     (match runtime.Instance_store.passt_pid with
     | Some passt_pid -> kill_if_alive passt_pid
+    | None -> ());
+    (match runtime.Instance_store.virtiofsd_pid with
+    | Some virtiofsd_pid -> kill_if_alive virtiofsd_pid
     | None -> ());
     result
   with Unix.Unix_error (error, _, _) ->

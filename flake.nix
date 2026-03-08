@@ -36,6 +36,7 @@
                 pkgs.cdrkit
                 pkgs.cloud-hypervisor
                 pkgs.passt
+                pkgs.virtiofsd
               ]
               ++ (with ocamlPackages; [
                 dune_3
@@ -50,7 +51,12 @@
             packages = {
               default = pkgs.pkgsMusl.callPackage ./nix/package.nix {
                 ocamlPackages = pkgs.pkgsMusl.ocamlPackages_latest;
-                inherit (pkgs) curl fetchurl makeSetupHook writeText;
+                inherit (pkgs)
+                  curl
+                  fetchurl
+                  makeSetupHook
+                  writeText
+                  ;
               };
             };
           };

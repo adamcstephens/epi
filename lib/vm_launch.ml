@@ -18,6 +18,8 @@ type provision_error =
   | Seed_iso_generation_failed of { target : string; details : string }
   | Passt_missing of { target : string }
   | Passt_failed of { target : string; details : string }
+  | Virtiofsd_missing of { target : string }
+  | Virtiofsd_failed of { target : string; details : string }
 
 let lock_conflict stderr =
   let lowered = Target.lowercase stderr in
@@ -119,11 +121,12 @@ let read_ssh_public_keys () =
             "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
         keys
 
-let generate_user_data ~username ~ssh_keys ~user_exists =
+let generate_user_data ~username ~ssh_keys ~user_exists ~host_uid ~mount_path =
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#cloud-config\ndisable_root: false\nusers:\n";
   Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
   if not user_exists then (
+    Buffer.add_string buf (Printf.sprintf "    uid: %d\n" host_uid);
     Buffer.add_string buf "    groups: wheel\n";
     Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
     Buffer.add_string buf "    shell: /run/current-system/sw/bin/bash\n");
@@ -135,6 +138,33 @@ let generate_user_data ~username ~ssh_keys ~user_exists =
         (fun key ->
           Buffer.add_string buf (Printf.sprintf "      - %s\n" key))
         keys);
+  (match mount_path with
+  | None -> ()
+  | Some path ->
+      let unit_name =
+        let stripped =
+          if String.length path > 0 && path.[0] = '/' then
+            String.sub path 1 (String.length path - 1)
+          else path
+        in
+        String.map (fun c -> if c = '/' then '-' else c) stripped ^ ".mount"
+      in
+      Buffer.add_string buf "write_files:\n";
+      Buffer.add_string buf
+        (Printf.sprintf "  - path: /run/systemd/system/%s\n" unit_name);
+      Buffer.add_string buf "    content: |\n";
+      Buffer.add_string buf "      [Unit]\n";
+      Buffer.add_string buf "      Description=Mount virtiofs host filesystem\n";
+      Buffer.add_string buf "      [Mount]\n";
+      Buffer.add_string buf "      What=hostfs\n";
+      Buffer.add_string buf (Printf.sprintf "      Where=%s\n" path);
+      Buffer.add_string buf "      Type=virtiofs\n";
+      Buffer.add_string buf "      [Install]\n";
+      Buffer.add_string buf "      WantedBy=multi-user.target\n";
+      Buffer.add_string buf "runcmd:\n";
+      Buffer.add_string buf (Printf.sprintf "  - mkdir -p %s\n" path);
+      Buffer.add_string buf "  - systemctl daemon-reload\n";
+      Buffer.add_string buf (Printf.sprintf "  - systemctl start %s\n" unit_name));
   Buffer.contents buf
 
 let generate_meta_data ~instance_name =
@@ -171,6 +201,18 @@ let check_passt () =
   in
   result.status = 0
 
+let virtiofsd_bin () =
+  match Sys.getenv_opt "EPI_VIRTIOFSD_BIN" with
+  | Some path -> path
+  | None -> "virtiofsd"
+
+let check_virtiofsd () =
+  let bin = virtiofsd_bin () in
+  let result =
+    Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
+  in
+  result.status = 0
+
 let wait_for_passt_socket socket_path max_wait_ms =
   let step_ms = 50 in
   let steps = max_wait_ms / step_ms in
@@ -183,7 +225,7 @@ let wait_for_passt_socket socket_path max_wait_ms =
   in
   loop steps
 
-let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists =
+let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_path =
   if not (check_genisoimage ()) then Error Genisoimage_missing
   else
     let iso_path =
@@ -196,7 +238,7 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
        Unix.mkdir staging_dir 0o755);
     let user_data_path = Filename.concat staging_dir "user-data" in
     let meta_data_path = Filename.concat staging_dir "meta-data" in
-    let user_data = generate_user_data ~username ~ssh_keys ~user_exists in
+    let user_data = generate_user_data ~username ~ssh_keys ~user_exists ~host_uid ~mount_path in
     let meta_data = generate_meta_data ~instance_name in
     let write path content =
       let channel = open_out path in
@@ -260,7 +302,7 @@ let generate_ssh_key ~instance_name =
     let pub_content = Target.read_file_if_exists pub_path |> String.trim in
     (key_path, pub_content)
 
-let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target (descriptor : Target.descriptor) =
+let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_path ~instance_name ~target (descriptor : Target.descriptor) =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
     | Some path -> path
@@ -294,14 +336,17 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
   let ssh_key_path =
     match generated_key with Some (path, _) -> Some path | None -> None
   in
+  let host_uid = Unix.getuid () in
   let user_exists = List.mem username descriptor.configured_users in
   let passt_sock =
     Filename.concat instance_dir "passt.sock"
   in
   let ssh_port = alloc_free_port () in
   if not (check_passt ()) then Error (Passt_missing { target })
+  else if mount_path <> None && not (check_virtiofsd ()) then
+    Error (Virtiofsd_missing { target })
   else
-  match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists with
+  match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_path with
   | Error Genisoimage_missing ->
       Error
         (Seed_iso_generation_failed
@@ -346,10 +391,55 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
         let _ = Unix.waitpid [ Unix.WNOHANG ] passt_proc.pid in
         Error (Passt_failed { target; details })
       else
+      let virtiofsd_sock = Filename.concat instance_dir "virtiofsd.sock" in
+      if Sys.file_exists virtiofsd_sock then Unix.unlink virtiofsd_sock;
+      let virtiofsd_result =
+        match mount_path with
+        | None -> Ok None
+        | Some path ->
+            let virtiofsd_stdout_log =
+              Filename.concat instance_dir "virtiofsd.stdout.log"
+            in
+            let virtiofsd_stderr_log =
+              Filename.concat instance_dir "virtiofsd.stderr.log"
+            in
+            let virtiofsd_proc =
+              Process.run_detached ~prog:(virtiofsd_bin ())
+                ~args:[ "--socket-path"; virtiofsd_sock; "--shared-dir"; path ]
+                ~stdout_path:virtiofsd_stdout_log
+                ~stderr_path:virtiofsd_stderr_log
+                ()
+            in
+            if not (wait_for_passt_socket virtiofsd_sock 2000) then
+              let stdout =
+                Target.read_file_if_exists virtiofsd_stdout_log |> String.trim
+              in
+              let stderr =
+                Target.read_file_if_exists virtiofsd_stderr_log |> String.trim
+              in
+              let details =
+                match (stdout, stderr) with
+                | "", "" -> "virtiofsd produced no output"
+                | "", s | s, "" -> s
+                | out, err -> out ^ "\n" ^ err
+              in
+              let _ = Unix.waitpid [ Unix.WNOHANG ] virtiofsd_proc.pid in
+              Error (Virtiofsd_failed { target; details })
+            else Ok (Some virtiofsd_proc.pid)
+      in
+      match virtiofsd_result with
+      | Error _ as error -> error
+      | Ok virtiofsd_pid ->
       let disk_arg = "path=" ^ launch_disk in
       let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
       let net_arg =
         "vhost_user=true,socket=" ^ passt_sock ^ ",vhost_mode=client"
+      in
+      let fs_args =
+        match virtiofsd_pid with
+        | None -> []
+        | Some _ ->
+            [ "--fs"; "tag=hostfs,socket=" ^ virtiofsd_sock ]
       in
       let base_args =
         [
@@ -373,6 +463,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
           "--net";
           net_arg;
         ]
+        @ fs_args
       in
       let args =
         match descriptor.initrd with
@@ -392,6 +483,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
             serial_socket;
             disk = launch_disk;
             passt_pid = Some passt_proc.pid;
+            virtiofsd_pid;
             ssh_port = Some ssh_port;
             ssh_key_path;
           }
@@ -420,7 +512,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~instance_name ~target
                        signal;
                  }))
 
-let provision ~rebuild ~generate_ssh_key ~instance_name ~target =
+let provision ~rebuild ~generate_ssh_key ~mount_path ~instance_name ~target =
   Printf.printf "up: resolving target=%s\n%!" target;
   let descriptor =
     match Target.resolve_descriptor_cached ~rebuild target with
@@ -441,7 +533,7 @@ let provision ~rebuild ~generate_ssh_key ~instance_name ~target =
           Error (Descriptor_validation_failed { target; details })
       | Ok () ->
           Printf.printf "up: starting VM instance=%s\n%!" instance_name;
-          launch_detached ~generate_ssh_key ~instance_name ~target descriptor)
+          launch_detached ~generate_ssh_key ~mount_path ~instance_name ~target descriptor)
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->
@@ -484,3 +576,12 @@ let pp_provision_error = function
   | Passt_failed { target; details } ->
       Printf.sprintf "VM launch failed for %s: passt failed to start: %s"
         target details
+  | Virtiofsd_missing { target } ->
+      Printf.sprintf
+        "VM launch failed for %s: virtiofsd binary not found on $PATH. Set \
+         EPI_VIRTIOFSD_BIN or install the virtiofsd package to enable virtiofs \
+         host directory sharing."
+        target
+  | Virtiofsd_failed { target; details } ->
+      Printf.sprintf
+        "VM launch failed for %s: virtiofsd failed to start: %s" target details

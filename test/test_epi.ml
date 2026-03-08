@@ -92,7 +92,7 @@ let write_file path content =
   close_out channel
 
 let write_state_entry ~state_dir ~instance_name ~target ?pid ?serial_socket
-    ?disk ?passt_pid ?ssh_port ?ssh_key_path () =
+    ?disk ?passt_pid ?virtiofsd_pid ?ssh_port ?ssh_key_path () =
   let instance_dir = Filename.concat state_dir instance_name in
   if not (Sys.file_exists instance_dir) then Unix.mkdir instance_dir 0o755;
   write_file (Filename.concat instance_dir "target") (target ^ "\n");
@@ -108,6 +108,9 @@ let write_state_entry ~state_dir ~instance_name ~target ?pid ?serial_socket
       | None -> ());
       (match passt_pid with
       | Some p -> Printf.fprintf channel "passt_pid=%d\n" p
+      | None -> ());
+      (match virtiofsd_pid with
+      | Some p -> Printf.fprintf channel "virtiofsd_pid=%d\n" p
       | None -> ());
       (match ssh_port with
       | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
@@ -143,7 +146,8 @@ let find_state_runtime ~state_dir instance_name =
       match get key with Some v -> int_of_string_opt v | None -> None
     in
     Some (get_int "pid", get "serial_socket", get "disk",
-          get_int "passt_pid", get_int "ssh_port", get "ssh_key_path")
+          get_int "passt_pid", get_int "virtiofsd_pid",
+          get_int "ssh_port", get "ssh_key_path")
 
 let instance_exists ~state_dir instance_name =
   let instance_dir = Filename.concat state_dir instance_name in
@@ -185,9 +189,10 @@ let cleanup_state_pids ~state_dir =
         let d = Filename.concat state_dir name in
         if Sys.is_directory d then
           match find_state_runtime ~state_dir name with
-          | Some (pid, _, _, passt_pid, _, _) ->
+          | Some (pid, _, _, passt_pid, virtiofsd_pid, _, _) ->
               (match pid with Some p -> terminate_pid p | None -> ());
-              (match passt_pid with Some p -> terminate_pid p | None -> ())
+              (match passt_pid with Some p -> terminate_pid p | None -> ());
+              (match virtiofsd_pid with Some p -> terminate_pid p | None -> ())
           | None -> ())
 
 let with_temp_dir prefix f =
@@ -441,10 +446,23 @@ let with_mock_runtime f =
         \  prev=\"$arg\"\n\
          done\n\
          exec sleep 30\n";
+      let virtiofsd = Filename.concat dir "virtiofsd.sh" in
+      write_file virtiofsd
+        "#!/usr/bin/env sh\n\
+         # Mock virtiofsd: find --socket-path arg, touch the socket file, stay alive\n\
+         prev=\"\"\n\
+         for arg in \"$@\"; do\n\
+        \  if [ \"$prev\" = \"--socket-path\" ]; then\n\
+        \    touch \"$arg\"\n\
+        \  fi\n\
+        \  prev=\"$arg\"\n\
+         done\n\
+         exec sleep 30\n";
       make_executable resolver;
       make_executable cloud_hypervisor;
       make_executable genisoimage;
       make_executable passt;
+      make_executable virtiofsd;
       let cache_dir = Filename.concat dir "cache" in
       Unix.mkdir cache_dir 0o755;
       let extra_env =
@@ -453,6 +471,7 @@ let with_mock_runtime f =
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
           ("EPI_GENISOIMAGE_BIN", genisoimage);
           ("EPI_PASST_BIN", passt);
+          ("EPI_VIRTIOFSD_BIN", virtiofsd);
           ("EPI_MOCK_VM_SLEEP", "30");
           ("EPI_CACHE_DIR", cache_dir);
         ]
@@ -514,12 +533,12 @@ let () =
               assert_contains ~context:"launch invocation log" launch_contents
                 "socket=";
               (match find_state_runtime ~state_dir "dev-a" with
-              | Some (Some _, Some _, _, Some _, _, _) -> ()
+              | Some (Some _, Some _, _, Some _, _, _, _) -> ()
               | _ ->
                   fail
                     "expected runtime metadata with passt_pid for dev-a");
               (match find_state_runtime ~state_dir "default" with
-              | Some (Some _, Some _, _, Some _, _, _) -> ()
+              | Some (Some _, Some _, _, Some _, _, _, _) -> ()
               | _ ->
                   fail
                     "expected runtime metadata with passt_pid for default");
@@ -679,7 +698,7 @@ let () =
               assert_success ~context:"owner up" owner_up;
               let owner_pid =
                 match find_state_runtime ~state_dir "dev-owner" with
-                | Some (Some pid, _, _, _, _, _) -> pid
+                | Some (Some pid, _, _, _, _, _, _) -> pid
                 | _ -> fail "missing owner runtime metadata"
               in
               let failing_env = ("EPI_FORCE_LOCK_FAIL", "1") :: extra_env in
@@ -904,7 +923,7 @@ let () =
                   | None -> ()
                   | _ -> fail "expected stale runtime metadata to be cleared");
                   match find_state_runtime ~state_dir "live" with
-                  | Some (Some pid, _, _, _, _, _) when pid = live_pid -> ()
+                  | Some (Some pid, _, _, _, _, _, _) when pid = live_pid -> ()
                   | _ -> fail "expected live runtime metadata to remain active"))));
   run_test ~name:"rm removes stopped instances from state" (fun () ->
       with_state_dir (fun state_dir ->
@@ -933,7 +952,7 @@ let () =
               assert_contains ~context:"rm running rejection guidance" err
                 "use `epi rm --force dev-a`";
               match find_state_runtime ~state_dir "dev-a" with
-              | Some (Some active_pid, _, _, _, _, _) when active_pid = pid -> ()
+              | Some (Some active_pid, _, _, _, _, _, _) when active_pid = pid -> ()
               | _ -> fail "expected running instance to remain in state")));
   run_test ~name:"rm --force terminates running instance before removing"
     (fun () ->
@@ -969,7 +988,7 @@ let () =
             assert_contains ~context:"rm force termination failure output" err
               "failed to terminate";
             match find_state_runtime ~state_dir "protected" with
-            | Some (Some 1, _, _, _, _, _) -> ()
+            | Some (Some 1, _, _, _, _, _, _) -> ()
             | _ -> fail "expected entry to remain after failed force removal"));
   run_test
     ~name:"rm kills passt process when hypervisor is already dead"
@@ -983,7 +1002,7 @@ let () =
               assert_success ~context:"up for stale rm" result;
               let hypervisor_pid, passt_pid =
                 match find_state_runtime ~state_dir "stale-rm" with
-                | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                | Some (Some pid, _, _, Some ppid, _, _, _) -> (pid, ppid)
                 | _ -> fail "expected pid and passt_pid in state after up"
               in
               terminate_pid hypervisor_pid;
@@ -1258,7 +1277,7 @@ let () =
               assert_success ~context:"up for passt kill test" result;
               let passt_pid =
                 match find_state_runtime ~state_dir "passt-kill-test" with
-                | Some (_, _, _, Some pid, _, _) -> pid
+                | Some (_, _, _, Some pid, _, _, _) -> pid
                 | _ -> fail "expected passt_pid in state after up"
               in
               if not (pid_is_alive passt_pid) then
@@ -1287,7 +1306,7 @@ let () =
               assert_success ~context:"first up for stale passt" result;
               let old_hypervisor_pid, old_passt_pid =
                 match find_state_runtime ~state_dir "stale-passt" with
-                | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                | Some (Some pid, _, _, Some ppid, _, _, _) -> (pid, ppid)
                 | _ -> fail "expected pid and passt_pid in state after first up"
               in
               terminate_pid old_hypervisor_pid;
@@ -1367,7 +1386,7 @@ let () =
                   assert_success ~context:"cache hit first up" result1;
                   let hypervisor_pid, passt_pid =
                     match find_state_runtime ~state_dir "cache-hit" with
-                    | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                    | Some (Some pid, _, _, Some ppid, _, _, _) -> (pid, ppid)
                     | _ -> fail "expected pid and passt_pid after first up"
                   in
                   terminate_pid hypervisor_pid;
@@ -1432,7 +1451,7 @@ let () =
                   assert_success ~context:"cache miss first up" result1;
                   let hypervisor_pid, passt_pid =
                     match find_state_runtime ~state_dir "cache-miss" with
-                    | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                    | Some (Some pid, _, _, Some ppid, _, _, _) -> (pid, ppid)
                     | _ -> fail "expected pid and passt_pid after first up"
                   in
                   terminate_pid hypervisor_pid;
@@ -1531,7 +1550,7 @@ let () =
                   assert_success ~context:"rebuild first up" result1;
                   let hypervisor_pid, passt_pid =
                     match find_state_runtime ~state_dir "rebuild-test" with
-                    | Some (Some pid, _, _, Some ppid, _, _) -> (pid, ppid)
+                    | Some (Some pid, _, _, Some ppid, _, _, _) -> (pid, ppid)
                     | _ -> fail "expected pid and passt_pid after first up"
                   in
                   terminate_pid hypervisor_pid;
@@ -1664,12 +1683,12 @@ let () =
               in
               assert_success ~context:"runtime roundtrip up" result;
               match find_state_runtime ~state_dir "rt-roundtrip" with
-              | Some (_, _, _, _, Some port, _) when port > 0 && port <= 65535
+              | Some (_, _, _, _, _, Some port, _) when port > 0 && port <= 65535
                 ->
                   ()
-              | Some (_, _, _, _, None, _) ->
+              | Some (_, _, _, _, _, None, _) ->
                   fail "expected ssh_port to be set in runtime after up"
-              | Some (_, _, _, _, Some port, _) ->
+              | Some (_, _, _, _, _, Some port, _) ->
                   fail "ssh_port out of range: %d" port
               | None -> fail "expected runtime for rt-roundtrip")));
   run_test
@@ -1752,4 +1771,177 @@ let () =
                 "sudo: ALL=(ALL) NOPASSWD:ALL";
               assert_contains ~context:"unconfigured user shell" user_data
                 "shell: /run/current-system/sw/bin/bash")));
+  run_test ~name:"up with --mount passes --fs to cloud-hypervisor"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              with_temp_dir "epi-mount-test" (fun mount_dir ->
+                  let result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "up"; "mount-test"; "--target"; ".#dev"; "--mount"; mount_dir ]
+                  in
+                  assert_success ~context:"up with --mount" result;
+                  let launch_contents =
+                    if Sys.file_exists launch_log then
+                      let channel = open_in launch_log in
+                      Fun.protect
+                        ~finally:(fun () -> close_in channel)
+                        (fun () -> read_all channel)
+                    else ""
+                  in
+                  assert_contains ~context:"--fs in cloud-hypervisor args"
+                    launch_contents "--fs";
+                  assert_contains ~context:"hostfs tag in --fs arg"
+                    launch_contents "hostfs"))));
+  run_test ~name:"up with --mount writes mounts directive in cloud-init user-data"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              with_temp_dir "epi-mount-userdata-test" (fun mount_dir ->
+                  let result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "up"; "mount-userdata-test"; "--target"; ".#dev";
+                        "--mount"; mount_dir ]
+                  in
+                  assert_success ~context:"up with --mount userdata" result;
+                  let user_data_path =
+                    Filename.concat
+                      (Filename.concat
+                        (Filename.concat state_dir "mount-userdata-test")
+                        "cidata")
+                      "user-data"
+                  in
+                  let user_data =
+                    let channel = open_in user_data_path in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  assert_contains ~context:"write_files directive present" user_data
+                    "write_files:";
+                  assert_contains ~context:"systemd mount unit type" user_data
+                    "Type=virtiofs";
+                  assert_contains ~context:"systemd mount unit where" user_data
+                    (Printf.sprintf "Where=%s" mount_dir);
+                  assert_contains ~context:"runcmd starts unit" user_data
+                    "systemctl start";
+                  assert_contains ~context:"mount path matches host path" user_data
+                    mount_dir))));
+  run_test ~name:"up without --mount does not write runcmd mount"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              let result =
+                run_cli_with_env ~bin ~state_dir ~extra_env
+                  [ "up"; "no-mount-test"; "--target"; ".#dev" ]
+              in
+              assert_success ~context:"up without --mount" result;
+              let user_data_path =
+                Filename.concat
+                  (Filename.concat
+                    (Filename.concat state_dir "no-mount-test")
+                    "cidata")
+                  "user-data"
+              in
+              let user_data =
+                let channel = open_in user_data_path in
+                Fun.protect
+                  ~finally:(fun () -> close_in channel)
+                  (fun () -> read_all channel)
+              in
+              if contains user_data "write_files:" then
+                fail "user-data should not contain write_files: when --mount not used")));
+  run_test
+    ~name:"up with --mount and unconfigured user includes uid in cloud-init"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              with_temp_dir "epi-mount-uid-test" (fun mount_dir ->
+                  let result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "up"; "mount-uid-test"; "--target"; ".#dev";
+                        "--mount"; mount_dir ]
+                  in
+                  assert_success ~context:"up --mount uid" result;
+                  let user_data_path =
+                    Filename.concat
+                      (Filename.concat
+                        (Filename.concat state_dir "mount-uid-test")
+                        "cidata")
+                      "user-data"
+                  in
+                  let user_data =
+                    let channel = open_in user_data_path in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  assert_contains ~context:"uid present in user-data" user_data "uid:"))));
+  run_test
+    ~name:"up with --mount and pre-configured user does not include uid"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              with_temp_dir "epi-mount-no-uid-test" (fun mount_dir ->
+                  let result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "up"; "mount-no-uid-test"; "--target"; ".#user-configured";
+                        "--mount"; mount_dir ]
+                  in
+                  assert_success ~context:"up --mount configured user" result;
+                  let user_data_path =
+                    Filename.concat
+                      (Filename.concat
+                        (Filename.concat state_dir "mount-no-uid-test")
+                        "cidata")
+                      "user-data"
+                  in
+                  let user_data =
+                    let channel = open_in user_data_path in
+                    Fun.protect
+                      ~finally:(fun () -> close_in channel)
+                      (fun () -> read_all channel)
+                  in
+                  if contains user_data "uid:" then
+                    fail
+                      "user-data should not contain uid: for pre-configured user"))));
+  run_test ~name:"up with --mount tracks virtiofsd_pid in state"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              with_temp_dir "epi-virtiofsd-pid-test" (fun mount_dir ->
+                  let result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "up"; "virtiofsd-pid-test"; "--target"; ".#dev";
+                        "--mount"; mount_dir ]
+                  in
+                  assert_success ~context:"up with --mount virtiofsd pid" result;
+                  match find_state_runtime ~state_dir "virtiofsd-pid-test" with
+                  | Some (Some _, _, _, _, Some _, _, _) -> ()
+                  | _ -> fail "expected virtiofsd_pid to be stored in runtime state"))));
+  run_test ~name:"down terminates virtiofsd process"
+    (fun () ->
+      with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+          with_state_dir (fun state_dir ->
+              with_temp_dir "epi-virtiofsd-down-test" (fun mount_dir ->
+                  let up_result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "up"; "virtiofsd-down-test"; "--target"; ".#dev";
+                        "--mount"; mount_dir ]
+                  in
+                  assert_success ~context:"up for virtiofsd down test" up_result;
+                  let virtiofsd_pid =
+                    match find_state_runtime ~state_dir "virtiofsd-down-test" with
+                    | Some (_, _, _, _, Some pid, _, _) -> pid
+                    | _ -> fail "expected virtiofsd_pid after up"
+                  in
+                  if not (pid_is_alive virtiofsd_pid) then
+                    fail "virtiofsd should be alive before down";
+                  let down_result =
+                    run_cli_with_env ~bin ~state_dir ~extra_env
+                      [ "down"; "virtiofsd-down-test" ]
+                  in
+                  assert_success ~context:"down virtiofsd-down-test" down_result;
+                  if not (wait_for_pid_to_die ~attempts:80 virtiofsd_pid) then
+                    fail "virtiofsd process should be terminated after down"))));
   ()

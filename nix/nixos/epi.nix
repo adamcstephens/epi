@@ -76,6 +76,7 @@ in
       "virtio_pci"
       "virtio_blk"
       "virtio_net"
+      "virtiofs"
       "ext4"
     ];
 
