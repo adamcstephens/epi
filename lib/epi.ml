@@ -70,7 +70,7 @@ let resolve_instance_target ~command_name instance_name_opt =
   | None when instance_name_opt = None ->
       fail
         (Printf.sprintf
-           "Instance '%s' was not found. Run `epi up --target <flake#config>` \
+           "Instance '%s' was not found. Run `epi launch --target <flake#config>` \
             to create it, or pass an instance name (for example: `epi %s \
             <instance>`)."
            Instance_store.default_instance_name command_name)
@@ -78,7 +78,7 @@ let resolve_instance_target ~command_name instance_name_opt =
       fail
         (Printf.sprintf
            "Instance '%s' was not found. Run `epi list` to see known \
-            instances, or create it with `epi up %s --target <flake#config>`."
+            instances, or create it with `epi launch %s --target <flake#config>`."
            instance_name instance_name)
 
 let attach_console_for_running_instance ~instance_name ~options runtime =
@@ -110,14 +110,14 @@ let pid_is_zombie pid =
             line.[index + 2] = 'Z'
         | _ -> false)
 
-let up_command =
+let launch_command =
   Command.make ~summary:"Create or start an instance from a flake target."
     ~readme:(fun () ->
       "Use an optional instance name plus --target <flake-ref>#<config-name>.\n\
        If no instance name is provided, the instance defaults to `default`.\n\n\
        Examples:\n\
-      \  epi up --target .#dev\n\
-      \  epi up dev-a --target github:org/repo#dev-a")
+      \  epi launch --target .#dev\n\
+      \  epi launch dev-a --target github:org/repo#dev-a")
     (let open Command.Std in
      let+ instance_name =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
@@ -163,14 +163,14 @@ let up_command =
      | Some runtime when Process.pid_is_alive runtime.pid ->
          if attach_console then (
            Printf.printf
-             "up: instance=%s target=%s already-running pid=%d, attaching \
+             "launch: instance=%s target=%s already-running pid=%d, attaching \
               console\n%!"
              instance_name target runtime.pid;
            attach_console_for_running_instance ~instance_name
              ~options:console_options runtime)
          else
            Printf.printf
-             "up: instance=%s target=%s already-running pid=%d serial=%s\n"
+             "launch: instance=%s target=%s already-running pid=%d serial=%s\n"
              instance_name target runtime.pid runtime.serial_socket
      | Some stale_runtime -> (
          (match stale_runtime.Instance_store.passt_pid with
@@ -186,7 +186,7 @@ let up_command =
                  ~options:console_options runtime
              else (
                Printf.printf
-                 "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
+                 "launch: provisioned instance=%s target=%s pid=%d serial=%s\n"
                  instance_name target runtime.Instance_store.pid
                  runtime.serial_socket;
                match runtime.Instance_store.ssh_port with
@@ -202,7 +202,7 @@ let up_command =
                  ~options:console_options runtime
              else (
                Printf.printf
-                 "up: provisioned instance=%s target=%s pid=%d serial=%s\n"
+                 "launch: provisioned instance=%s target=%s pid=%d serial=%s\n"
                  instance_name target runtime.Instance_store.pid
                  runtime.serial_socket;
                match runtime.Instance_store.ssh_port with
@@ -243,11 +243,11 @@ let ssh_command =
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
-           (Printf.sprintf "Instance '%s' is not running. Start it with: epi up"
+           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
               instance_name)
      | Some runtime when not (Process.pid_is_alive runtime.pid) ->
          fail
-           (Printf.sprintf "Instance '%s' is not running. Start it with: epi up"
+           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
               instance_name)
      | Some runtime -> (
          match runtime.Instance_store.ssh_port with
@@ -333,7 +333,7 @@ let terminate_instance_runtime ~instance_name runtime =
       (Printf.sprintf "failed to terminate instance '%s' (pid=%d): %s"
          instance_name pid (Unix.error_message error))
 
-let down_command =
+let stop_command =
   Command.make ~summary:"Stop an instance."
     ~readme:(fun () ->
       "Stop a running instance.\n\
@@ -352,14 +352,109 @@ let down_command =
      | Some runtime when not (Process.pid_is_alive runtime.pid) ->
          Instance_store.clear_runtime instance_name;
          Printf.printf
-           "down: instance=%s was already stopped (stale runtime cleared)\n"
+           "stop: instance=%s was already stopped (stale runtime cleared)\n"
            instance_name
      | Some runtime -> (
          match terminate_instance_runtime ~instance_name runtime with
          | Ok () ->
              Instance_store.clear_runtime instance_name;
-             Printf.printf "down: stopped instance=%s\n" instance_name
+             Printf.printf "stop: stopped instance=%s\n" instance_name
          | Error message -> fail message))
+
+let start_command =
+  Command.make ~summary:"Start an existing stopped instance."
+    ~readme:(fun () ->
+      "Start a stopped instance using its stored target.\n\
+       If INSTANCE is omitted, `default` is used.\n\n\
+       Unlike `launch`, no --target is required — the target from the previous\n\
+       `launch` is reused. Use `launch` to create a new instance or change its target.\n\n\
+       Examples:\n\
+      \  epi start\n\
+      \  epi start dev-a\n\
+      \  epi start dev-a --console")
+    (let open Command.Std in
+     let+ instance_name_opt =
+       Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
+     and+ attach_console =
+       Arg.flag [ "console" ]
+         ~doc:
+           "Attach to the instance serial console immediately after starting."
+     in
+     let console_options = resolve_console_attach_options () in
+     Instance_store.reconcile_runtime ();
+     let instance_name = resolve_instance_name instance_name_opt in
+     let target =
+       match Instance_store.find instance_name with
+       | Some t -> t
+       | None when instance_name_opt = None ->
+           fail
+             (Printf.sprintf
+                "Instance '%s' was not found. Run `epi launch --target \
+                 <flake#config>` to create it, or pass an instance name (for \
+                 example: `epi start <instance>`)."
+                Instance_store.default_instance_name)
+       | None ->
+           fail
+             (Printf.sprintf
+                "Instance '%s' was not found. Run `epi list` to see known \
+                 instances, or create it with `epi launch %s --target \
+                 <flake#config>`."
+                instance_name instance_name)
+     in
+     match Instance_store.find_runtime instance_name with
+     | Some runtime when Process.pid_is_alive runtime.pid ->
+         if attach_console then (
+           Printf.printf
+             "start: instance=%s already-running pid=%d, attaching console\n%!"
+             instance_name runtime.pid;
+           attach_console_for_running_instance ~instance_name
+             ~options:console_options runtime)
+         else
+           Printf.printf "start: instance=%s already-running pid=%d serial=%s\n"
+             instance_name runtime.pid runtime.serial_socket
+     | Some stale_runtime -> (
+         (match stale_runtime.Instance_store.passt_pid with
+         | Some passt_pid -> kill_if_alive passt_pid
+         | None -> ());
+         List.iter kill_if_alive stale_runtime.Instance_store.virtiofsd_pids;
+         Instance_store.clear_runtime instance_name;
+         match
+           Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
+             ~mount_paths:[] ~disk_size:"40G" ~instance_name ~target
+         with
+         | Ok runtime ->
+             Instance_store.set_provisioned ~instance_name ~target ~runtime;
+             if attach_console then
+               attach_console_for_running_instance ~instance_name
+                 ~options:console_options runtime
+             else (
+               Printf.printf
+                 "start: provisioned instance=%s target=%s pid=%d serial=%s\n"
+                 instance_name target runtime.Instance_store.pid
+                 runtime.serial_socket;
+               match runtime.Instance_store.ssh_port with
+               | Some port -> Printf.printf "SSH port: %d\n" port
+               | None -> ())
+         | Error error -> fail (Vm_launch.pp_provision_error error))
+     | None -> (
+         match
+           Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
+             ~mount_paths:[] ~disk_size:"40G" ~instance_name ~target
+         with
+         | Ok runtime ->
+             Instance_store.set_provisioned ~instance_name ~target ~runtime;
+             if attach_console then
+               attach_console_for_running_instance ~instance_name
+                 ~options:console_options runtime
+             else (
+               Printf.printf
+                 "start: provisioned instance=%s target=%s pid=%d serial=%s\n"
+                 instance_name target runtime.Instance_store.pid
+                 runtime.serial_socket;
+               match runtime.Instance_store.ssh_port with
+               | Some port -> Printf.printf "SSH port: %d\n" port
+               | None -> ())
+         | Error error -> fail (Vm_launch.pp_provision_error error)))
 
 let rm_command =
   Command.make ~summary:"Remove an instance from state and runtime."
@@ -421,18 +516,21 @@ let cmd =
     ~summary:"Manage development VM instances from Nix flake targets."
     ~readme:(fun () ->
       "Instance names identify VMs (`default`, `dev-a`, etc.), while --target \
-       identifies flake inputs (<flake-ref>#<config-name>) used during `up`.\n\n\
+       identifies flake inputs (<flake-ref>#<config-name>) used during `launch`.\n\n\
        Examples:\n\
-      \  epi up --target .#default\n\
-      \  epi up dev-a --target github:org/repo#dev-a\n\
+      \  epi launch --target .#default\n\
+      \  epi launch dev-a --target github:org/repo#dev-a\n\
+      \  epi start dev-a\n\
+      \  epi stop dev-a\n\
       \  epi status dev-a\n\
       \  epi rm --force dev-a\n\
       \  epi logs")
     [
-      ("up", up_command);
+      ("launch", launch_command);
+      ("start", start_command);
       ( "rebuild",
         lifecycle_command ~name:"rebuild" ~summary:"Rebuild an instance." );
-      ("down", down_command);
+      ("stop", stop_command);
       ( "status",
         Command.make ~summary:"Show instance status."
           ~readme:(fun () ->

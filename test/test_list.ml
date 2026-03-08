@@ -16,10 +16,10 @@ let tests ~bin =
                   "No instances found.";
                 ignore
                   (run_cli_with_env ~bin ~state_dir ~extra_env
-                     [ "up"; "--target"; ".#default" ]);
+                     [ "launch"; "--target"; ".#default" ]);
                 ignore
                   (run_cli_with_env ~bin ~state_dir ~extra_env
-                     [ "up"; "qa-1"; "--target"; "github:org/repo#qa-1" ]);
+                     [ "launch"; "qa-1"; "--target"; "github:org/repo#qa-1" ]);
                 let listed =
                   run_cli_with_env ~bin ~state_dir ~extra_env [ "list" ]
                 in

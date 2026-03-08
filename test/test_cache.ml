@@ -46,7 +46,7 @@ let tests ~bin =
                     let extra_env = ("EPI_CACHE_DIR", cache_dir) :: extra_env in
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "cache-write"; "--target"; ".#dev" ]
+                        [ "launch"; "cache-write"; "--target"; ".#dev" ]
                     in
                     assert_success ~context:"cache write up" result;
                     let targets_dir =
@@ -74,7 +74,7 @@ let tests ~bin =
                       (fun ~extra_env ~resolver_log ->
                         let result1 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
-                            [ "up"; "cache-hit"; "--target"; ".#dev" ]
+                            [ "launch"; "cache-hit"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"cache hit first up" result1;
                         let entry = find_state_runtime ~state_dir "cache-hit" in
@@ -93,7 +93,7 @@ let tests ~bin =
                         let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
                         let result2 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
-                            [ "up"; "cache-hit"; "--target"; ".#dev" ]
+                            [ "launch"; "cache-hit"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"cache hit second up" result2;
                         let call_count = count_resolver_calls resolver_log in
@@ -110,7 +110,7 @@ let tests ~bin =
                       (fun ~extra_env ~resolver_log ->
                         let result1 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
-                            [ "up"; "cache-miss"; "--target"; ".#dev" ]
+                            [ "launch"; "cache-miss"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"cache miss first up" result1;
                         let entry = find_state_runtime ~state_dir "cache-miss" in
@@ -158,7 +158,7 @@ let tests ~bin =
                         write_file cache_file corrupted;
                         let result2 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
-                            [ "up"; "cache-miss"; "--target"; ".#dev" ]
+                            [ "launch"; "cache-miss"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"cache miss second up" result2;
                         let call_count = count_resolver_calls resolver_log in
@@ -176,7 +176,7 @@ let tests ~bin =
                       (fun ~extra_env ~resolver_log ->
                         let result1 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
-                            [ "up"; "rebuild-test"; "--target"; ".#dev" ]
+                            [ "launch"; "rebuild-test"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"rebuild first up" result1;
                         let entry = find_state_runtime ~state_dir "rebuild-test" in
@@ -195,7 +195,7 @@ let tests ~bin =
                         let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
                         let result2 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
-                            [ "up"; "rebuild-test"; "--target"; ".#dev"; "--rebuild" ]
+                            [ "launch"; "rebuild-test"; "--target"; ".#dev"; "--rebuild" ]
                         in
                         assert_success ~context:"rebuild second up" result2;
                         let call_count = count_resolver_calls resolver_log in

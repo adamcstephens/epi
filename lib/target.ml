@@ -292,7 +292,7 @@ let validate_file ~target ~label path =
   if path = "" then Error ("missing launch input: " ^ label)
   else (
     if not (Sys.file_exists path) then (
-      Printf.printf "up: building %s\n%!" label;
+      Printf.printf "vm: building %s\n%!" label;
       ensure_store_realized path);
     if not (Sys.file_exists path) then
       build_target_artifact_if_missing ~target ~label;

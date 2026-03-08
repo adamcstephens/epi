@@ -9,28 +9,28 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let explicit =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "dev-a"; "--target"; ".#dev-a" ]
+                    [ "launch"; "dev-a"; "--target"; ".#dev-a" ]
                 in
                 assert_success ~context:"explicit up" explicit;
                 let _, stdout_explicit, _ = explicit in
                 assert_contains ~context:"explicit up output" stdout_explicit
-                  "up: resolving target=.#dev-a";
+                  "vm: resolving target=.#dev-a";
                 assert_contains ~context:"explicit up output" stdout_explicit
-                  "up: evaluated target, building artifacts";
+                  "vm: evaluated target, building artifacts";
                 assert_contains ~context:"explicit up output" stdout_explicit
-                  "up: starting VM instance=dev-a";
+                  "vm: starting VM instance=dev-a";
                 assert_contains ~context:"explicit up output" stdout_explicit
-                  "up: provisioned instance=dev-a target=.#dev-a pid=";
+                  "launch: provisioned instance=dev-a target=.#dev-a pid=";
                 assert_contains ~context:"explicit up output" stdout_explicit
                   "serial=";
                 let implicit =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "--target"; "github:org/repo#dev" ]
+                    [ "launch"; "--target"; "github:org/repo#dev" ]
                 in
                 assert_success ~context:"implicit up" implicit;
                 let _, stdout_implicit, _ = implicit in
                 assert_contains ~context:"implicit up output" stdout_implicit
-                  "up: provisioned instance=default target=github:org/repo#dev \
+                  "launch: provisioned instance=default target=github:org/repo#dev \
                    pid=";
                 let launch_contents =
                   if Sys.file_exists launch_log then read_file launch_log
@@ -65,30 +65,30 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "stage-test"; "--target"; ".#stage-test" ]
+                    [ "launch"; "stage-test"; "--target"; ".#stage-test" ]
                 in
                 assert_success ~context:"stage progress up" result;
                 let _, stdout, _ = result in
                 assert_contains ~context:"stage: target evaluation start" stdout
-                  "up: resolving target=.#stage-test";
+                  "vm: resolving target=.#stage-test";
                 assert_contains ~context:"stage: launch preparation start" stdout
-                  "up: evaluated target, building artifacts";
+                  "vm: evaluated target, building artifacts";
                 assert_contains ~context:"stage: VM launch start" stdout
-                  "up: starting VM instance=stage-test";
+                  "vm: starting VM instance=stage-test";
                 assert_contains ~context:"stage: provisioned message" stdout
-                  "up: provisioned instance=stage-test")));
+                  "launch: provisioned instance=stage-test")));
     Alcotest.test_case "rejects invalid target formats with actionable errors"
       `Quick (fun () ->
         with_state_dir (fun state_dir ->
             let missing_separator =
-              run_cli ~bin ~state_dir [ "up"; "dev-a"; "--target"; "." ]
+              run_cli ~bin ~state_dir [ "launch"; "dev-a"; "--target"; "." ]
             in
             assert_failure ~context:"missing separator" missing_separator;
             let _, _, err1 = missing_separator in
             assert_contains ~context:"missing separator error" err1
               "--target must use <flake-ref>#<config-name>";
             let missing_config =
-              run_cli ~bin ~state_dir [ "up"; "dev-a"; "--target"; ".#" ]
+              run_cli ~bin ~state_dir [ "launch"; "dev-a"; "--target"; ".#" ]
             in
             assert_failure ~context:"missing config" missing_config;
             let _, _, err2 = missing_config in
@@ -101,7 +101,7 @@ let tests ~bin =
                 let failing_env = ("EPI_FORCE_LAUNCH_FAIL", "1") :: extra_env in
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env:failing_env
-                    [ "up"; "qa-1"; "--target"; ".#qa" ]
+                    [ "launch"; "qa-1"; "--target"; ".#qa" ]
                 in
                 assert_failure ~context:"failing up" failed;
                 let _, _, err = failed in
@@ -120,7 +120,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "dev-a"; "--target"; ".#fail-resolve" ]
+                    [ "launch"; "dev-a"; "--target"; ".#fail-resolve" ]
                 in
                 assert_failure ~context:"target resolution failure" failed;
                 let _, _, err = failed in
@@ -134,7 +134,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "dev-a"; "--target"; ".#missing-disk" ]
+                    [ "launch"; "dev-a"; "--target"; ".#missing-disk" ]
                 in
                 assert_failure ~context:"missing disk failure" failed;
                 let _, _, err = failed in
@@ -154,7 +154,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "dev-a"; "--target"; ".#mutable-disk" ]
+                    [ "launch"; "dev-a"; "--target"; ".#mutable-disk" ]
                 in
                 assert_failure ~context:"mutable disk coherence failure" failed;
                 let _, _, err = failed in
@@ -178,7 +178,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let launched =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "dev-cmdline"; "--target"; ".#custom-cmdline" ]
+                    [ "launch"; "dev-cmdline"; "--target"; ".#custom-cmdline" ]
                 in
                 assert_success ~context:"custom cmdline up" launched;
                 let launch_contents =
@@ -193,7 +193,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let owner_up =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "dev-owner"; "--target"; ".#owner" ]
+                    [ "launch"; "dev-owner"; "--target"; ".#owner" ]
                 in
                 assert_success ~context:"owner up" owner_up;
                 let owner_pid =
@@ -204,7 +204,7 @@ let tests ~bin =
                 let failing_env = ("EPI_FORCE_LOCK_FAIL", "1") :: extra_env in
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env:failing_env
-                    [ "up"; "qa-1"; "--target"; ".#qa" ]
+                    [ "launch"; "qa-1"; "--target"; ".#qa" ]
                 in
                 assert_failure ~context:"lock failure" failed;
                 let _, _, err = failed in
@@ -244,7 +244,7 @@ let tests ~bin =
                   ~payload:"up-console\n" ~before_bind:wait_for_launch (fun () ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "dev-a"; "--target"; ".#dev-a"; "--console" ]
+                        [ "launch"; "dev-a"; "--target"; ".#dev-a"; "--console" ]
                     in
                     assert_success ~context:"up console fresh" result;
                     let _, out, _ = result in
@@ -275,7 +275,7 @@ let tests ~bin =
                             let result =
                               run_cli_with_env ~bin ~state_dir ~extra_env
                                 [
-                                  "up";
+                                  "launch";
                                   "dev-a";
                                   "--target";
                                   ".#dev-a";
@@ -301,7 +301,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "stale-passt"; "--target"; ".#dev" ]
+                    [ "launch"; "stale-passt"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"first up for stale passt" result;
                 let entry = find_state_runtime ~state_dir "stale-passt" in
@@ -320,7 +320,7 @@ let tests ~bin =
                   fail "old passt process should be alive before relaunch";
                 let result2 =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "stale-passt"; "--target"; ".#dev" ]
+                    [ "launch"; "stale-passt"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"relaunch over stale passt" result2;
                 if not (wait_for_pid_to_die ~attempts:80 old_passt_pid) then
@@ -333,7 +333,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "ssh-port-output"; "--target"; ".#dev" ]
+                    [ "launch"; "ssh-port-output"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"ssh port output up" result;
                 let _, stdout, _ = result in

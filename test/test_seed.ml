@@ -9,7 +9,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "seed-test"; "--target"; ".#dev" ]
+                    [ "launch"; "seed-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"seed iso up" result;
                 let cidata_dir =
@@ -59,7 +59,7 @@ let tests ~bin =
                     in
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "ssh-key-test"; "--target"; ".#dev" ]
+                        [ "launch"; "ssh-key-test"; "--target"; ".#dev" ]
                     in
                     assert_success ~context:"ssh key up" result;
                     let user_data_path =
@@ -88,7 +88,7 @@ let tests ~bin =
                     in
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "no-ssh-test"; "--target"; ".#dev" ]
+                        [ "launch"; "no-ssh-test"; "--target"; ".#dev" ]
                     in
                     assert_success ~context:"no ssh keys up" result;
                     let _, _, stderr = result in
@@ -121,7 +121,7 @@ let tests ~bin =
                 in
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "no-genisoimage"; "--target"; ".#dev" ]
+                    [ "launch"; "no-genisoimage"; "--target"; ".#dev" ]
                 in
                 assert_failure ~context:"missing genisoimage" result;
                 let _, _, err = result in
@@ -135,7 +135,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "disk-test"; "--target"; ".#dev" ]
+                    [ "launch"; "disk-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"seed iso disk arg up" result;
                 let launch_contents =
@@ -160,7 +160,7 @@ let tests ~bin =
                     in
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "configured-test"; "--target"; ".#user-configured" ]
+                        [ "launch"; "configured-test"; "--target"; ".#user-configured" ]
                     in
                     assert_success ~context:"configured user up" result;
                     let user_data_path =
@@ -194,7 +194,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "unconfigured-test"; "--target"; ".#dev" ]
+                    [ "launch"; "unconfigured-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"unconfigured user up" result;
                 let user_data_path =

@@ -10,7 +10,7 @@ let tests ~bin =
                 with_temp_dir "epi-mount-test" (fun mount_dir ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "mount-test"; "--target"; ".#dev";
+                        [ "launch"; "mount-test"; "--target"; ".#dev";
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up with --mount" result;
@@ -30,7 +30,7 @@ let tests ~bin =
                 with_temp_dir "epi-mount-userdata-test" (fun mount_dir ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "mount-userdata-test"; "--target"; ".#dev";
+                        [ "launch"; "mount-userdata-test"; "--target"; ".#dev";
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up with --mount userdata" result;
@@ -58,7 +58,7 @@ let tests ~bin =
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "up"; "no-mount-test"; "--target"; ".#dev" ]
+                    [ "launch"; "no-mount-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"up without --mount" result;
                 let user_data_path =
@@ -81,7 +81,7 @@ let tests ~bin =
                 with_temp_dir "epi-mount-uid-test" (fun mount_dir ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "mount-uid-test"; "--target"; ".#dev";
+                        [ "launch"; "mount-uid-test"; "--target"; ".#dev";
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up --mount uid" result;
@@ -103,7 +103,7 @@ let tests ~bin =
                 with_temp_dir "epi-mount-no-uid-test" (fun mount_dir ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "mount-no-uid-test";
+                        [ "launch"; "mount-no-uid-test";
                           "--target"; ".#user-configured";
                           "--mount"; mount_dir ]
                     in
@@ -127,7 +127,7 @@ let tests ~bin =
                 with_temp_dir "epi-virtiofsd-pid-test" (fun mount_dir ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "virtiofsd-pid-test"; "--target"; ".#dev";
+                        [ "launch"; "virtiofsd-pid-test"; "--target"; ".#dev";
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up with --mount virtiofsd pid"
@@ -149,7 +149,7 @@ let tests ~bin =
                     write_file file_path "contents";
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "up"; "mount-file-test"; "--target"; ".#dev";
+                        [ "launch"; "mount-file-test"; "--target"; ".#dev";
                           "--mount"; file_path ]
                     in
                     assert_failure ~context:"--mount on a file" result;

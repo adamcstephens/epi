@@ -370,7 +370,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
   let generated_key =
     if do_generate_ssh_key then (
       let key_path, pub_content = generate_ssh_key ~instance_name in
-      Printf.printf "up: generated SSH key %s\n%!" key_path;
+      Printf.printf "vm: generated SSH key %s\n%!" key_path;
       Some (key_path, pub_content))
     else None
   in
@@ -565,16 +565,16 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
                  }))
 
 let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target =
-  Printf.printf "up: resolving target=%s\n%!" target;
+  Printf.printf "vm: resolving target=%s\n%!" target;
   let descriptor =
     match Target.resolve_descriptor_cached ~rebuild target with
     | Error { details; exit_code; _ } ->
         Error (Target_resolution_failed { target; details; exit_code })
     | Ok (Target.Cached descriptor) ->
-        Printf.printf "up: using cached descriptor\n%!";
+        Printf.printf "vm: using cached descriptor\n%!";
         Ok descriptor
     | Ok (Target.Resolved descriptor) ->
-        Printf.printf "up: evaluated target, building artifacts\n%!";
+        Printf.printf "vm: evaluated target, building artifacts\n%!";
         Ok descriptor
   in
   match descriptor with
@@ -584,7 +584,7 @@ let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name 
       | Error details ->
           Error (Descriptor_validation_failed { target; details })
       | Ok () ->
-          Printf.printf "up: starting VM instance=%s\n%!" instance_name;
+          Printf.printf "vm: starting VM instance=%s\n%!" instance_name;
           launch_detached ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target descriptor)
 
 let pp_provision_error = function
