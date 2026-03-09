@@ -16,12 +16,19 @@
           "aarch64-darwin"
         ];
 
-        flake.nixosConfigurations.manual-test = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            ./nix/nixos/epi.nix
-            { epi.enable = true; }
-          ];
+        flake.nixosConfigurations = {
+          manual-test = nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            modules = [
+              ./nix/nixos/epi.nix
+              {
+                epi.enable = true;
+                nix.settings = {
+                  extra-experimental-features = "nix-command flakes";
+                };
+              }
+            ];
+          };
         };
         flake.manual-test = config.flake.nixosConfigurations.manual-test;
 
