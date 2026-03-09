@@ -3,6 +3,7 @@
 - Avoid singular functions with one or fewer lines.
 - Explicit namespace references are preferred
 - Use red/green TDD
+- Run quick tests (`dune test`) during development, but before completing a task run e2e tests (`dune exec test/test_epi.exe -- dummy -e`) to ensure nothing is broken
 - When possible, manually test by yourself, e.g. `dune exec epi -- list`
 - When running commands that take a nix target, quote them to avoid prompting. e.g. `.#manual-test` -> `'.#manual-test'`
 
@@ -11,9 +12,9 @@
 - Without `=plain`, the help command opens a pager and hangs in non-interactive contexts
 
 ## Testing against a real VM
-- Create a VM yourself, e.g. `dune exec --root . epi -- up --target '.#manual-test' --generate-ssh-key <UNIQUE_INSTANCE_NAME>`
+- Create a VM yourself, e.g. `dune exec --root . epi -- launch <UNIQUE_INSTANCE_NAME> --target '.#manual-test'`
 - Rebuild as necessary when changing the nix configuration, but avoid rebuilds if not to save time.
-- Generate an ssh key to avoid needing the users key
+- SSH keys are auto-generated during provisioning
 - Execute commands in VM, e.g. `dune exec epi -- exec test1 -- ls /`
 - When done testing, remove the VM `dune exec epi -- rm -f test1`
 
