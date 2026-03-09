@@ -1,4 +1,4 @@
-type result = { status : int; stdout : string; stderr : string }
+type output = { status : int; stdout : string; stderr : string }
 
 let run ?(env = Unix.environment ()) ~prog ~args () =
   let argv = Array.of_list (prog :: args) in
@@ -22,21 +22,10 @@ let env_with additions =
   Array.append (Unix.environment ())
     (Array.of_list (List.map (fun (key, value) -> key ^ "=" ^ value) additions))
 
-let ensure_parent_dir path =
-  let dir = Filename.dirname path in
-  let rec make_dir current =
-    if current = "." || current = "/" || current = "" then ()
-    else if Sys.file_exists current then ()
-    else (
-      make_dir (Filename.dirname current);
-      Unix.mkdir current 0o755)
-  in
-  make_dir dir
-
 let escape_unit_name name =
   let result = run ~prog:"systemd-escape" ~args:[ name ] () in
-  if result.status = 0 then result.stdout
-  else failwith (Printf.sprintf "systemd-escape failed for %S: %s" name result.stderr)
+  if result.status = 0 then Ok result.stdout
+  else Error (Printf.sprintf "systemd-escape failed for %S: %s" name result.stderr)
 
 let generate_unit_id () =
   let buf = Buffer.create 16 in

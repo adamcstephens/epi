@@ -27,26 +27,26 @@ let tests =
         | Error (`Msg e) -> Alcotest.fail e);
     Alcotest.test_case "parse_key_value_output parses basic pairs" `Quick
       (fun () ->
-        let pairs = Target.parse_key_value_output "kernel=/path\ndisk=/disk\n" in
+        let pairs = Util.parse_key_value_output "kernel=/path\ndisk=/disk\n" in
         Alcotest.(check (option string)) "kernel"
           (Some "/path") (List.assoc_opt "kernel" pairs);
         Alcotest.(check (option string)) "disk"
           (Some "/disk") (List.assoc_opt "disk" pairs));
     Alcotest.test_case "parse_key_value_output handles multi-equals values"
       `Quick (fun () ->
-        let pairs = Target.parse_key_value_output "cmdline=a=b=c\n" in
+        let pairs = Util.parse_key_value_output "cmdline=a=b=c\n" in
         Alcotest.(check (option string)) "cmdline"
           (Some "a=b=c") (List.assoc_opt "cmdline" pairs));
     Alcotest.test_case "parse_key_value_output skips empty values" `Quick
       (fun () ->
-        let pairs = Target.parse_key_value_output "empty=\nvalid=yes\n" in
+        let pairs = Util.parse_key_value_output "empty=\nvalid=yes\n" in
         Alcotest.(check (option string)) "empty"
           None (List.assoc_opt "empty" pairs);
         Alcotest.(check (option string)) "valid"
           (Some "yes") (List.assoc_opt "valid" pairs));
     Alcotest.test_case "parse_key_value_output skips blank lines" `Quick
       (fun () ->
-        let pairs = Target.parse_key_value_output "\n\nkey=val\n\n" in
+        let pairs = Util.parse_key_value_output "\n\nkey=val\n\n" in
         Alcotest.(check int) "count" 1 (List.length pairs));
     Alcotest.test_case "is_nix_store_path detects store paths" `Quick (fun () ->
         Alcotest.(check bool) "store path" true
@@ -81,9 +81,10 @@ let tests =
         Alcotest.(check (option (pair string string))) "empty config"
           None
           (Target.split_target ".#"));
-    Alcotest.test_case "descriptor_of_output uses defaults for missing fields"
+    Alcotest.test_case "descriptor_of_json uses defaults for missing fields"
       `Quick (fun () ->
-        let d = Target.descriptor_of_output "kernel=/k\ndisk=/d\n" in
+        let json = Yojson.Basic.from_string {|{"kernel": "/k", "disk": "/d"}|} in
+        let d = Target.descriptor_of_json json in
         Alcotest.(check string) "kernel" "/k" d.kernel;
         Alcotest.(check string) "disk" "/d" d.disk;
         Alcotest.(check (option string)) "initrd" None d.initrd;
@@ -91,16 +92,14 @@ let tests =
         Alcotest.(check int) "cpus" 1 d.cpus;
         Alcotest.(check int) "memory_mib" 1024 d.memory_mib;
         Alcotest.(check (list string)) "configured_users" [] d.configured_users);
-    Alcotest.test_case "descriptor_of_output parses all fields" `Quick (fun () ->
-        let d = Target.descriptor_of_output
-          "kernel=/k\n\
-           disk=/d\n\
-           initrd=/i\n\
-           cmdline=console=ttyS0 root=/dev/vda1\n\
-           cpus=4\n\
-           memory_mib=2048\n\
-           configured_users=root,admin\n"
+    Alcotest.test_case "descriptor_of_json parses all fields" `Quick (fun () ->
+        let json = Yojson.Basic.from_string
+          {|{"kernel": "/k", "disk": "/d", "initrd": "/i",
+             "cmdline": "console=ttyS0 root=/dev/vda1",
+             "cpus": 4, "memory_mib": 2048,
+             "configuredUsers": ["root", "admin"]}|}
         in
+        let d = Target.descriptor_of_json json in
         Alcotest.(check string) "kernel" "/k" d.kernel;
         Alcotest.(check string) "disk" "/d" d.disk;
         Alcotest.(check (option string)) "initrd" (Some "/i") d.initrd;
@@ -109,25 +108,6 @@ let tests =
         Alcotest.(check int) "memory_mib" 2048 d.memory_mib;
         Alcotest.(check (list string)) "configured_users"
           ["root"; "admin"] d.configured_users);
-    Alcotest.test_case "find_json_string extracts values" `Quick (fun () ->
-        let json = {|{"kernel": "/path/to/kernel", "disk": "/path/to/disk"}|} in
-        Alcotest.(check (option string)) "kernel"
-          (Some "/path/to/kernel")
-          (Target.find_json_string ~key:"kernel" json);
-        Alcotest.(check (option string)) "disk"
-          (Some "/path/to/disk")
-          (Target.find_json_string ~key:"disk" json);
-        Alcotest.(check (option string)) "missing"
-          None
-          (Target.find_json_string ~key:"nonexistent" json));
-    Alcotest.test_case "find_json_int extracts integers" `Quick (fun () ->
-        let json = {|{"cpus": 4, "memory_mib": 2048}|} in
-        Alcotest.(check (option int)) "cpus"
-          (Some 4) (Target.find_json_int ~key:"cpus" json);
-        Alcotest.(check (option int)) "memory_mib"
-          (Some 2048) (Target.find_json_int ~key:"memory_mib" json);
-        Alcotest.(check (option int)) "missing"
-          None (Target.find_json_int ~key:"nonexistent" json));
     Alcotest.test_case "validate_descriptor_coherence rejects mixed store paths"
       `Quick (fun () ->
         let d : Target.descriptor = {

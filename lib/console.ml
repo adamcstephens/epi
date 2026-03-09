@@ -32,18 +32,6 @@ let rec connect_serial_socket socket endpoint attempts_remaining =
       connect_serial_socket socket endpoint (attempts_remaining - 1)
   | Unix.Unix_error (error, _, _) -> Error (Unix.error_message error)
 
-let contains text snippet =
-  let text_len = String.length text in
-  let snippet_len = String.length snippet in
-  if snippet_len = 0 then true
-  else
-    let rec loop i =
-      if i + snippet_len > text_len then false
-      else if String.sub text i snippet_len = snippet then true
-      else loop (i + 1)
-    in
-    loop 0
-
 let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
     ~instance_name runtime =
   let endpoint = runtime.Instance_store.serial_socket in
@@ -219,7 +207,7 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
               close_socket ();
               Printf.printf "\r\n[console detached]\n%!";
               Ok ()
-          | Failure message when contains message "console timeout reached" ->
+          | Failure message when Util.contains message "console timeout reached" ->
               restore_termios ();
               close_capture_channel capture_channel_opt;
               close_socket ();

@@ -66,9 +66,9 @@ let tests ~bin =
             write_file disk "disk";
             write_file initrd "initrd";
             write_file resolver
-              ("#!/usr/bin/env sh\necho \"kernel=" ^ kernel ^ "\"\necho \"disk="
-             ^ disk ^ "\"\necho \"initrd=" ^ initrd
-             ^ "\"\necho \"cpus=2\"\necho \"memory_mib=1024\"\n");
+              ("#!/usr/bin/env sh\nprintf '{\"kernel\": \"" ^ kernel
+             ^ "\", \"disk\": \"" ^ disk ^ "\", \"initrd\": \"" ^ initrd
+             ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n");
             write_file cloud_hypervisor
               ("#!/usr/bin/env sh\nexec sleep 30\n");
             let genisoimage = Filename.concat dir "genisoimage.sh" in

@@ -23,17 +23,6 @@ let state_dir () =
   in
   make_absolute dir
 
-let ensure_parent_dir path =
-  let dir = Filename.dirname path in
-  let rec make_dir current =
-    if current = "." || current = "/" || current = "" then ()
-    else if Sys.file_exists current then ()
-    else (
-      make_dir (Filename.dirname current);
-      Unix.mkdir current 0o755)
-  in
-  make_dir dir
-
 let instance_dir instance_name = Filename.concat (state_dir ()) instance_name
 let instance_path instance_name filename =
   Filename.concat (instance_dir instance_name) filename
@@ -41,15 +30,7 @@ let instance_path instance_name filename =
 let serial_socket_path instance_name = instance_path instance_name "serial.sock"
 
 let ensure_instance_dir instance_name =
-  let dir = instance_dir instance_name in
-  let rec make_dir current =
-    if current = "." || current = "/" || current = "" then ()
-    else if Sys.file_exists current then ()
-    else (
-      make_dir (Filename.dirname current);
-      Unix.mkdir current 0o755)
-  in
-  make_dir dir
+  Util.ensure_dir (instance_dir instance_name)
 
 let save_target instance_name target =
   ensure_instance_dir instance_name;
@@ -61,9 +42,9 @@ let save_target instance_name target =
 
 let load_target instance_name =
   let path = instance_path instance_name "target" in
-  let content = Target.read_file_if_exists path in
-  let trimmed = String.trim content in
-  if trimmed = "" then None else Some trimmed
+  match Util.read_file path |> Option.map String.trim with
+  | Some s when s <> "" -> Some s
+  | _ -> None
 
 let save_runtime instance_name (rt : runtime) =
   ensure_instance_dir instance_name;
@@ -82,10 +63,11 @@ let save_runtime instance_name (rt : runtime) =
 
 let load_runtime instance_name =
   let path = instance_path instance_name "runtime" in
-  let content = Target.read_file_if_exists path in
-  if String.trim content = "" then None
-  else
-    let pairs = Target.parse_key_value_output content in
+  match Util.read_file path with
+  | None -> None
+  | Some content when String.trim content = "" -> None
+  | Some content ->
+    let pairs = Util.parse_key_value_output content in
     let get key = List.assoc_opt key pairs in
     let get_int key =
       match get key with
@@ -113,12 +95,12 @@ let save_mounts instance_name paths =
 
 let load_mounts instance_name =
   let path = instance_path instance_name "mounts" in
-  let content = Target.read_file_if_exists path in
-  if String.trim content = "" then []
-  else
-    String.split_on_char '\n' content
-    |> List.map String.trim
-    |> List.filter (fun s -> s <> "")
+  match Util.read_file path with
+  | None -> []
+  | Some content ->
+      String.split_on_char '\n' content
+      |> List.map String.trim
+      |> List.filter (fun s -> s <> "")
 
 let set ~instance_name ~target =
   save_target instance_name target;
@@ -169,17 +151,21 @@ let remove instance_name =
   if Sys.file_exists dir then remove_tree dir
 
 let vm_unit_name ~instance_name ~unit_id =
-  let escaped = Process.escape_unit_name instance_name in
-  Printf.sprintf "epi-%s_%s_vm.service" escaped unit_id
+  let ( let* ) = Result.bind in
+  let* escaped = Process.escape_unit_name instance_name in
+  Ok (Printf.sprintf "epi-%s_%s_vm.service" escaped unit_id)
 
 let slice_name ~instance_name ~unit_id =
-  let escaped = Process.escape_unit_name instance_name in
-  Printf.sprintf "epi-%s_%s.slice" escaped unit_id
+  let ( let* ) = Result.bind in
+  let* escaped = Process.escape_unit_name instance_name in
+  Ok (Printf.sprintf "epi-%s_%s.slice" escaped unit_id)
 
 let instance_is_running instance_name =
   match load_runtime instance_name with
-  | Some runtime ->
-      Process.unit_is_active (vm_unit_name ~instance_name ~unit_id:runtime.unit_id)
+  | Some runtime -> (
+      match vm_unit_name ~instance_name ~unit_id:runtime.unit_id with
+      | Ok unit_name -> Process.unit_is_active unit_name
+      | Error _ -> false)
   | None -> false
 
 let find_running_owner_by_disk disk =
@@ -194,6 +180,8 @@ let find_running_owner_by_disk disk =
         match load_runtime name with
         | Some ({ disk = runtime_disk; unit_id; _ } as instance_runtime)
           when String.equal runtime_disk disk
-               && Process.unit_is_active (vm_unit_name ~instance_name:name ~unit_id) ->
+               && (match vm_unit_name ~instance_name:name ~unit_id with
+                   | Ok unit_name -> Process.unit_is_active unit_name
+                   | Error _ -> false) ->
             Some (name, instance_runtime)
         | _ -> None)

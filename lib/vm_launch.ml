@@ -128,8 +128,9 @@ let read_ssh_public_keys () =
           List.filter_map
             (fun name ->
               let path = Filename.concat ssh_dir name in
-              let content = Target.read_file_if_exists path |> String.trim in
-              if content = "" then None else Some content)
+              match Util.read_file path |> Option.map String.trim with
+              | Some s when s <> "" -> Some s
+              | _ -> None)
             pub_files
         in
         if keys = [] then
@@ -274,7 +275,7 @@ let alloc_free_port () =
       | Unix.ADDR_INET (_, port) -> port
       | _ -> failwith "alloc_free_port: unexpected socket address")
 
-let generate_ssh_key ~instance_name =
+let generate_ssh_key ~target ~instance_name =
   let key_path =
     Instance_store.instance_path instance_name "id_ed25519"
   in
@@ -288,21 +289,20 @@ let generate_ssh_key ~instance_name =
       ()
   in
   if result.status <> 0 then
-    failwith
-      (Printf.sprintf "ssh-keygen failed (exit=%d): %s" result.status
-         result.stderr)
+    Error (Vm_launch_failed { target; exit_code = result.status; details = "ssh-keygen failed: " ^ result.stderr })
   else
-    let pub_content = Target.read_file_if_exists pub_path |> String.trim in
-    (key_path, pub_content)
+    let pub_content = Util.read_file pub_path |> Option.value ~default:"" |> String.trim in
+    Ok (key_path, pub_content)
 
 let is_session_unavailable_error stderr =
-  let lowered = Target.lowercase stderr in
-  Target.contains lowered "no such file or directory"
-  && Target.contains lowered "user"
-  || Target.contains lowered "failed to get d-bus connection"
-  || Target.contains lowered "no user session"
+  let lowered = String.lowercase_ascii stderr in
+  Util.contains lowered "no such file or directory"
+  && Util.contains lowered "user"
+  || Util.contains lowered "failed to get d-bus connection"
+  || Util.contains lowered "no user session"
 
 let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target (descriptor : Target.descriptor) =
+  let ( let* ) = Result.bind in
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
     | Some path -> path
@@ -319,12 +319,14 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
   in
   let instance_dir = Instance_store.instance_dir instance_name in
   let ssh_keys = read_ssh_public_keys () in
-  let generated_key =
-    if do_generate_ssh_key then (
-      let key_path, pub_content = generate_ssh_key ~instance_name in
-      Printf.printf "vm: generated SSH key %s\n%!" key_path;
-      Some (key_path, pub_content))
-    else None
+  let* generated_key =
+    if do_generate_ssh_key then
+      match generate_ssh_key ~target ~instance_name with
+      | Ok (key_path, pub_content) ->
+          Printf.printf "vm: generated SSH key %s\n%!" key_path;
+          Ok (Some (key_path, pub_content))
+      | Error _ as error -> error
+    else Ok None
   in
   let ssh_keys =
     match generated_key with
@@ -336,192 +338,158 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
   in
   let host_uid = Unix.getuid () in
   let user_exists = List.mem username descriptor.configured_users in
-  let passt_sock =
-    Filename.concat instance_dir "passt.sock"
-  in
+  let passt_sock = Filename.concat instance_dir "passt.sock" in
   let ssh_port = alloc_free_port () in
-  let non_dir_mount = List.find_opt (fun p -> not (Sys.is_directory p)) mount_paths in
-  if not (check_passt ()) then Error (Passt_missing { target })
-  else if Option.is_some non_dir_mount then
-    Error (Mount_path_not_a_directory { target; path = Option.get non_dir_mount })
-  else if mount_paths <> [] && not (check_virtiofsd ()) then
-    Error (Virtiofsd_missing { target })
+  let* () =
+    if not (check_passt ()) then Error (Passt_missing { target })
+    else Ok ()
+  in
+  let* () =
+    match List.find_opt (fun p -> not (Sys.is_directory p)) mount_paths with
+    | Some path -> Error (Mount_path_not_a_directory { target; path })
+    | None -> Ok ()
+  in
+  let* () =
+    if mount_paths <> [] && not (check_virtiofsd ()) then
+      Error (Virtiofsd_missing { target })
+    else Ok ()
+  in
+  let* seed_iso_path =
+    match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths with
+    | Error Genisoimage_missing ->
+        Error (Seed_iso_generation_failed { target;
+          details = "genisoimage not found on $PATH. Install cdrkit to enable cloud-init seed ISO generation." })
+    | Error (Seed_iso_creation_failed { details }) ->
+        Error (Seed_iso_generation_failed { target; details })
+    | Ok path -> Ok path
+  in
+  let* launch_disk = ensure_writable_disk ~instance_name ~target ~disk_size descriptor in
+  let* () =
+    match Instance_store.find_running_owner_by_disk launch_disk with
+    | Some (owner_instance, { Instance_store.unit_id = owner_unit_id; _ })
+      when not (String.equal owner_instance instance_name) ->
+        Error (Vm_disk_lock_held_by_instance
+          { target; disk = launch_disk; owner_instance; owner_unit_id })
+    | _ -> Ok ()
+  in
+  let unit_id = Process.generate_unit_id () in
+  let* escaped =
+    Process.escape_unit_name instance_name
+    |> Result.map_error (fun msg -> Vm_launch_failed { target; exit_code = 1; details = msg })
+  in
+  let slice = Printf.sprintf "epi-%s_%s.slice" escaped unit_id in
+  if Sys.file_exists passt_sock then Unix.unlink passt_sock;
+  let passt_repair_sock = passt_sock ^ ".repair" in
+  if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
+  let passt_unit = Printf.sprintf "epi-%s_%s_passt" escaped unit_id in
+  let passt_result =
+    Process.run_helper ~unit_name:passt_unit ~slice
+      ~prog:(passt_bin ())
+      ~args:[ "--foreground"; "--vhost-user"; "--socket"; passt_sock;
+              "-t"; Printf.sprintf "%d:22" ssh_port ]
+      ()
+  in
+  let* () =
+    if passt_result.status <> 0 then
+      if is_session_unavailable_error passt_result.stderr then
+        Error (Systemd_session_unavailable { target; details = passt_result.stderr })
+      else
+        Error (Passt_failed { target; details = passt_result.stderr })
+    else if not (wait_for_passt_socket passt_sock 2000) then
+      Error (Passt_failed { target; details = "passt socket did not appear" })
+    else Ok ()
+  in
+  let start_virtiofsd i path =
+    let sock = Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.sock" i) in
+    if Sys.file_exists sock then Unix.unlink sock;
+    let virtiofsd_unit = Printf.sprintf "epi-%s_%s_virtiofsd_%d" escaped unit_id i in
+    let result =
+      Process.run_helper ~unit_name:virtiofsd_unit ~slice
+        ~prog:(virtiofsd_bin ())
+        ~args:[ "--socket-path"; sock; "--shared-dir"; path ]
+        ()
+    in
+    if result.status <> 0 then
+      Error (Virtiofsd_failed { target; details = result.stderr })
+    else if not (wait_for_passt_socket sock 2000) then
+      Error (Virtiofsd_failed { target; details = "virtiofsd socket did not appear" })
+    else Ok sock
+  in
+  let* virtiofsd_sockets =
+    let rec loop acc i = function
+      | [] -> Ok (List.rev acc)
+      | path :: rest ->
+          let* sock = start_virtiofsd i path in
+          loop (sock :: acc) (i + 1) rest
+    in
+    loop [] 0 mount_paths
+  in
+  Instance_store.save_mounts instance_name mount_paths;
+  let disk_arg = "path=" ^ launch_disk in
+  let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
+  let net_arg = "vhost_user=true,socket=" ^ passt_sock ^ ",vhost_mode=client" in
+  let fs_args =
+    match virtiofsd_sockets with
+    | [] -> []
+    | sockets ->
+        "--fs" :: List.mapi (fun i sock ->
+            Printf.sprintf "tag=hostfs-%d,socket=%s" i sock) sockets
+  in
+  let base_args =
+    [ "--kernel"; descriptor.kernel;
+      "--disk"; disk_arg; seed_disk_arg;
+      "--cpus"; cpu_arg;
+      "--memory"; memory_arg;
+      "--serial"; serial_arg;
+      "--console"; "off";
+      "--cmdline"; descriptor.cmdline;
+      "--net"; net_arg ]
+    @ fs_args
+  in
+  let args =
+    match descriptor.initrd with
+    | Some initrd -> base_args @ [ "--initramfs"; initrd ]
+    | None -> base_args
+  in
+  let helper_units =
+    (passt_unit ^ ".service")
+    :: List.mapi (fun i _ ->
+        Printf.sprintf "epi-%s_%s_virtiofsd_%d.service" escaped unit_id i)
+      mount_paths
+  in
+  let exec_stop_posts =
+    List.map (fun u ->
+        Printf.sprintf "%s --user stop %s" Process.systemctl_bin u)
+      helper_units
+  in
+  let vm_unit = Printf.sprintf "epi-%s_%s_vm" escaped unit_id in
+  let vm_result =
+    Process.run_service ~unit_name:vm_unit ~slice
+      ~exec_stop_posts ~prog:cloud_hypervisor_bin ~args ()
+  in
+  if vm_result.status <> 0 then
+    if is_session_unavailable_error vm_result.stderr then
+      Error (Systemd_session_unavailable { target; details = vm_result.stderr })
+    else
+      Error (Vm_launch_failed { target; exit_code = vm_result.status;
+        details = (if vm_result.stderr = "" then "<no stderr>" else vm_result.stderr) })
   else
-  match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths with
-  | Error Genisoimage_missing ->
-      Error
-        (Seed_iso_generation_failed
-           {
-             target;
-             details =
-               "genisoimage not found on $PATH. Install cdrkit to enable \
-                cloud-init seed ISO generation.";
-           })
-  | Error (Seed_iso_creation_failed { details }) ->
-      Error (Seed_iso_generation_failed { target; details })
-  | Ok seed_iso_path ->
-  match ensure_writable_disk ~instance_name ~target ~disk_size descriptor with
-  | Error _ as error -> error
-  | Ok launch_disk -> (
-      (* Check for disk lock conflicts before launching anything *)
-      (match Instance_store.find_running_owner_by_disk launch_disk with
-      | Some (owner_instance, { Instance_store.unit_id = owner_unit_id; _ })
-        when not (String.equal owner_instance instance_name) ->
-          Error (Vm_disk_lock_held_by_instance
-            { target; disk = launch_disk; owner_instance; owner_unit_id })
-      | _ ->
-      let unit_id = Process.generate_unit_id () in
-      let escaped = Process.escape_unit_name instance_name in
-      let slice = Printf.sprintf "epi-%s_%s.slice" escaped unit_id in
-      if Sys.file_exists passt_sock then Unix.unlink passt_sock;
-      let passt_repair_sock = passt_sock ^ ".repair" in
-      if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
-      let passt_unit = Printf.sprintf "epi-%s_%s_passt" escaped unit_id in
-      let passt_result =
-        Process.run_helper ~unit_name:passt_unit ~slice
-          ~prog:(passt_bin ())
-          ~args:[ "--foreground"; "--vhost-user"; "--socket"; passt_sock;
-                  "-t"; Printf.sprintf "%d:22" ssh_port ]
-          ()
-      in
-      if passt_result.status <> 0 then
-        if is_session_unavailable_error passt_result.stderr then
-          Error (Systemd_session_unavailable { target; details = passt_result.stderr })
-        else
-          Error (Passt_failed { target; details = passt_result.stderr })
-      else if not (wait_for_passt_socket passt_sock 2000) then
-        Error (Passt_failed { target; details = "passt socket did not appear" })
-      else
-      let start_virtiofsd i path =
-        let sock = Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.sock" i) in
-        if Sys.file_exists sock then Unix.unlink sock;
-        let virtiofsd_unit = Printf.sprintf "epi-%s_%s_virtiofsd_%d" escaped unit_id i in
-        let result =
-          Process.run_helper ~unit_name:virtiofsd_unit ~slice
-            ~prog:(virtiofsd_bin ())
-            ~args:[ "--socket-path"; sock; "--shared-dir"; path ]
-            ()
-        in
-        if result.status <> 0 then
-          Error (Virtiofsd_failed { target; details = result.stderr })
-        else if not (wait_for_passt_socket sock 2000) then
-          Error (Virtiofsd_failed { target; details = "virtiofsd socket did not appear" })
-        else Ok sock
-      in
-      let virtiofsd_result =
-        let rec loop acc i = function
-          | [] -> Ok (List.rev acc)
-          | path :: rest -> (
-              match start_virtiofsd i path with
-              | Error _ as e -> e
-              | Ok sock -> loop (sock :: acc) (i + 1) rest)
-        in
-        loop [] 0 mount_paths
-      in
-      match virtiofsd_result with
-      | Error _ as error -> error
-      | Ok virtiofsd_sockets ->
-      Instance_store.save_mounts instance_name mount_paths;
-      let disk_arg = "path=" ^ launch_disk in
-      let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
-      let net_arg =
-        "vhost_user=true,socket=" ^ passt_sock ^ ",vhost_mode=client"
-      in
-      let fs_args =
-        match virtiofsd_sockets with
-        | [] -> []
-        | sockets ->
-            let values =
-              List.mapi (fun i sock ->
-                  Printf.sprintf "tag=hostfs-%d,socket=%s" i sock)
-                sockets
-            in
-            "--fs" :: values
-      in
-      let base_args =
-        [
-          "--kernel";
-          descriptor.kernel;
-          "--disk";
-          disk_arg;
-          seed_disk_arg;
-        ]
-        @ [
-          "--cpus";
-          cpu_arg;
-          "--memory";
-          memory_arg;
-          "--serial";
-          serial_arg;
-          "--console";
-          "off";
-          "--cmdline";
-          descriptor.cmdline;
-          "--net";
-          net_arg;
-        ]
-        @ fs_args
-      in
-      let args =
-        match descriptor.initrd with
-        | Some initrd -> base_args @ [ "--initramfs"; initrd ]
-        | None -> base_args
-      in
-      let helper_units =
-        (passt_unit ^ ".service")
-        :: List.mapi (fun i _ ->
-            Printf.sprintf "epi-%s_%s_virtiofsd_%d.service" escaped unit_id i)
-          mount_paths
-      in
-      let exec_stop_posts =
-        List.map (fun u ->
-            Printf.sprintf "%s --user stop %s" Process.systemctl_bin u)
-          helper_units
-      in
-      let vm_unit = Printf.sprintf "epi-%s_%s_vm" escaped unit_id in
-      let vm_result =
-        Process.run_service ~unit_name:vm_unit ~slice
-          ~exec_stop_posts
-          ~prog:cloud_hypervisor_bin ~args ()
-      in
-      if vm_result.status <> 0 then
-        if is_session_unavailable_error vm_result.stderr then
-          Error (Systemd_session_unavailable { target; details = vm_result.stderr })
-        else
-          Error
-            (Vm_launch_failed
-               {
-                 target;
-                 exit_code = vm_result.status;
-                 details = (if vm_result.stderr = "" then "<no stderr>" else vm_result.stderr);
-               })
-      else
-        (* systemd-run returns 0 after creating the unit, but the VM process
-           may exit immediately (e.g. exec failure, lock conflict). Wait
-           briefly for the process to settle, then verify it is still alive. *)
-        let vm_service = vm_unit ^ ".service" in
-        let _ = Unix.select [] [] [] 0.15 in
-        if not (Process.unit_is_active vm_service) then
-          Error
-            (Vm_launch_failed
-               {
-                 target;
-                 exit_code = 1;
-                 details = "VM exited immediately after start";
-               })
-        else
-          Ok
-            {
-              Instance_store.unit_id;
-              serial_socket;
-              disk = launch_disk;
-              ssh_port = Some ssh_port;
-              ssh_key_path;
-            }))
+    (* systemd-run returns 0 after creating the unit, but the VM process
+       may exit immediately (e.g. exec failure, lock conflict). Wait
+       briefly for the process to settle, then verify it is still alive. *)
+    let vm_service = vm_unit ^ ".service" in
+    let _ = Unix.select [] [] [] 0.15 in
+    if not (Process.unit_is_active vm_service) then
+      Error (Vm_launch_failed { target; exit_code = 1;
+        details = "VM exited immediately after start" })
+    else
+      Ok { Instance_store.unit_id; serial_socket; disk = launch_disk;
+           ssh_port = Some ssh_port; ssh_key_path }
 
 let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target =
+  let ( let* ) = Result.bind in
   Printf.printf "vm: resolving target=%s\n%!" target;
-  let descriptor =
+  let* descriptor =
     match Target.resolve_descriptor_cached ~rebuild target with
     | Error { details; exit_code; _ } ->
         Error (Target_resolution_failed { target; details; exit_code })
@@ -532,15 +500,12 @@ let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name 
         Printf.printf "vm: evaluated target, building artifacts\n%!";
         Ok descriptor
   in
-  match descriptor with
-  | Error _ as error -> error
-  | Ok descriptor -> (
-      match Target.validate_descriptor ~target descriptor with
-      | Error details ->
-          Error (Descriptor_validation_failed { target; details })
-      | Ok () ->
-          Printf.printf "vm: starting VM instance=%s\n%!" instance_name;
-          launch_detached ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target descriptor)
+  let* () =
+    Target.validate_descriptor ~target descriptor
+    |> Result.map_error (fun details -> Descriptor_validation_failed { target; details })
+  in
+  Printf.printf "vm: starting VM instance=%s\n%!" instance_name;
+  launch_detached ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target descriptor
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->

@@ -77,17 +77,18 @@ let resolve_instance_target ~command_name instance_name_opt =
            instance_name instance_name)
 
 let instance_is_running ~instance_name runtime =
-  let unit_name =
-    Instance_store.vm_unit_name ~instance_name ~unit_id:runtime.Instance_store.unit_id
-  in
-  Process.unit_is_active unit_name
+  match Instance_store.vm_unit_name ~instance_name ~unit_id:runtime.Instance_store.unit_id with
+  | Ok unit_name -> Process.unit_is_active unit_name
+  | Error _ -> false
 
 let stop_instance ~instance_name runtime =
   let unit_id = runtime.Instance_store.unit_id in
-  let vm_unit = Instance_store.vm_unit_name ~instance_name ~unit_id in
-  ignore (Process.stop_unit vm_unit);
-  let slice = Instance_store.slice_name ~instance_name ~unit_id in
-  Process.stop_unit slice
+  (match Instance_store.vm_unit_name ~instance_name ~unit_id with
+   | Ok vm_unit -> ignore (Process.stop_unit vm_unit)
+   | Error _ -> ());
+  match Instance_store.slice_name ~instance_name ~unit_id with
+  | Ok slice -> Process.stop_unit slice
+  | Error _ -> false
 
 let attach_console_for_running_instance ~instance_name ~options runtime =
   if not (instance_is_running ~instance_name runtime) then (
@@ -103,6 +104,24 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
     with
     | Ok () -> ()
     | Error error -> fail (Console.pp_console_error error)
+
+let provision_and_report ~command_name ~attach_console ~console_options
+    ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target =
+  match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size
+          ~instance_name ~target with
+  | Error error -> fail (Vm_launch.pp_provision_error error)
+  | Ok runtime ->
+      Instance_store.set_provisioned ~instance_name ~target ~runtime;
+      if attach_console then
+        attach_console_for_running_instance ~instance_name
+          ~options:console_options runtime
+      else (
+        Printf.printf "%s: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
+          command_name instance_name target runtime.Instance_store.unit_id
+          runtime.serial_socket;
+        match runtime.Instance_store.ssh_port with
+        | Some port -> Printf.printf "SSH port: %d\n" port
+        | None -> ())
 
 let launch_command =
   Command.make ~summary:"Create or start an instance from a flake target."
@@ -149,6 +168,7 @@ let launch_command =
            "Target size of the writable disk overlay (e.g. 40G, 50G). Only \
             applies when a new overlay is created. Defaults to 40G."
      in
+     let target = Target.to_string target in
      let disk_size = Option.value disk_size ~default:"40G" in
      let console_options = resolve_console_attach_options () in
      let instance_name = resolve_instance_name instance_name in
@@ -165,40 +185,14 @@ let launch_command =
            Printf.printf
              "launch: instance=%s target=%s already-running unit_id=%s serial=%s\n"
              instance_name target runtime.unit_id runtime.serial_socket
-     | Some stale_runtime -> (
+     | Some stale_runtime ->
          ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
-         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target with
-         | Ok runtime ->
-             Instance_store.set_provisioned ~instance_name ~target ~runtime;
-             if attach_console then
-               attach_console_for_running_instance ~instance_name
-                 ~options:console_options runtime
-             else (
-               Printf.printf
-                 "launch: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
-                 instance_name target runtime.Instance_store.unit_id
-                 runtime.serial_socket;
-               match runtime.Instance_store.ssh_port with
-               | Some port -> Printf.printf "SSH port: %d\n" port
-               | None -> ())
-         | Error error -> fail (Vm_launch.pp_provision_error error))
-     | None -> (
-         match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target with
-         | Ok runtime ->
-             Instance_store.set_provisioned ~instance_name ~target ~runtime;
-             if attach_console then
-               attach_console_for_running_instance ~instance_name
-                 ~options:console_options runtime
-             else (
-               Printf.printf
-                 "launch: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
-                 instance_name target runtime.Instance_store.unit_id
-                 runtime.serial_socket;
-               match runtime.Instance_store.ssh_port with
-               | Some port -> Printf.printf "SSH port: %d\n" port
-               | None -> ())
-         | Error error -> fail (Vm_launch.pp_provision_error error)))
+         provision_and_report ~command_name:"launch" ~attach_console ~console_options
+           ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target
+     | None ->
+         provision_and_report ~command_name:"launch" ~attach_console ~console_options
+           ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target)
 
 let lifecycle_command ~name ~summary =
   Command.make ~summary
@@ -379,46 +373,18 @@ let start_command =
          else
            Printf.printf "start: instance=%s already-running unit_id=%s serial=%s\n"
              instance_name runtime.unit_id runtime.serial_socket
-     | Some stale_runtime -> (
+     | Some stale_runtime ->
          ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
-         match
-           Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
-             ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G" ~instance_name ~target
-         with
-         | Ok runtime ->
-             Instance_store.set_provisioned ~instance_name ~target ~runtime;
-             if attach_console then
-               attach_console_for_running_instance ~instance_name
-                 ~options:console_options runtime
-             else (
-               Printf.printf
-                 "start: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
-                 instance_name target runtime.Instance_store.unit_id
-                 runtime.serial_socket;
-               match runtime.Instance_store.ssh_port with
-               | Some port -> Printf.printf "SSH port: %d\n" port
-               | None -> ())
-         | Error error -> fail (Vm_launch.pp_provision_error error))
-     | None -> (
-         match
-           Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
-             ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G" ~instance_name ~target
-         with
-         | Ok runtime ->
-             Instance_store.set_provisioned ~instance_name ~target ~runtime;
-             if attach_console then
-               attach_console_for_running_instance ~instance_name
-                 ~options:console_options runtime
-             else (
-               Printf.printf
-                 "start: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
-                 instance_name target runtime.Instance_store.unit_id
-                 runtime.serial_socket;
-               match runtime.Instance_store.ssh_port with
-               | Some port -> Printf.printf "SSH port: %d\n" port
-               | None -> ())
-         | Error error -> fail (Vm_launch.pp_provision_error error)))
+         provision_and_report ~command_name:"start" ~attach_console ~console_options
+           ~rebuild:false ~generate_ssh_key:false
+           ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G"
+           ~instance_name ~target
+     | None ->
+         provision_and_report ~command_name:"start" ~attach_console ~console_options
+           ~rebuild:false ~generate_ssh_key:false
+           ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G"
+           ~instance_name ~target)
 
 let rm_command =
   Command.make ~summary:"Remove an instance from state and runtime."

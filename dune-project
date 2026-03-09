@@ -18,4 +18,4 @@
 (package
  (name epi)
  (synopsis "A short synopsis")
- (depends cmdlang cmdliner cmdlang-to-cmdliner alcotest))
+ (depends cmdlang cmdliner cmdlang-to-cmdliner yojson alcotest))

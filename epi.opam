@@ -12,6 +12,7 @@ depends: [
   "cmdlang"
   "cmdliner"
   "cmdlang-to-cmdliner"
+  "yojson"
   "alcotest"
   "odoc" {with-doc}
 ]
