@@ -57,43 +57,16 @@ let tests =
             | Error (Vm_launch.Vm_disk_resize_failed _) -> ()
             | Error _ -> Alcotest.fail "expected Vm_disk_resize_failed"
             | Ok () -> Alcotest.fail "expected error when qemu-img absent"));
-    Alcotest.test_case "generate_user_data with no mounts produces no write_files"
-      `Quick (fun () ->
-        let data =
-          Vm_launch.generate_user_data ~username:"alice" ~ssh_keys:[]
-            ~user_exists:false ~host_uid:1000 ~mount_paths:[]
-        in
-        if contains data "write_files" then
-          Alcotest.fail "expected no write_files when mount_paths is empty");
-    Alcotest.test_case "generate_user_data with one mount produces one unit file"
-      `Quick (fun () ->
-        let data =
-          Vm_launch.generate_user_data ~username:"alice" ~ssh_keys:[]
-            ~user_exists:false ~host_uid:1000 ~mount_paths:[ "/home/alice/proj" ]
-        in
-        if not (contains data "write_files") then
-          Alcotest.fail "expected write_files with one mount";
-        if not (contains data "hostfs-0") then
-          Alcotest.fail "expected hostfs-0 tag";
-        if not (contains data "Where=/home/alice/proj") then
-          Alcotest.fail "expected Where=/home/alice/proj";
-        if not (contains data "Type=virtiofs") then
-          Alcotest.fail "expected Type=virtiofs");
-    Alcotest.test_case "generate_user_data with two mounts produces two unit files"
+    Alcotest.test_case "generate_user_data contains no write_files or runcmd"
       `Quick (fun () ->
         let data =
           Vm_launch.generate_user_data ~username:"alice" ~ssh_keys:[]
             ~user_exists:false ~host_uid:1000
-            ~mount_paths:[ "/home/alice/proj"; "/home/alice/secrets" ]
         in
-        if not (contains data "hostfs-0") then
-          Alcotest.fail "expected hostfs-0 tag";
-        if not (contains data "hostfs-1") then
-          Alcotest.fail "expected hostfs-1 tag";
-        if not (contains data "Where=/home/alice/proj") then
-          Alcotest.fail "expected Where=/home/alice/proj";
-        if not (contains data "Where=/home/alice/secrets") then
-          Alcotest.fail "expected Where=/home/alice/secrets");
+        if contains data "write_files" then
+          Alcotest.fail "expected no write_files in user_data";
+        if contains data "runcmd" then
+          Alcotest.fail "expected no runcmd in user_data");
     Alcotest.test_case
       "ensure_writable_disk skips resize when overlay already exists" `Quick
       (fun () ->

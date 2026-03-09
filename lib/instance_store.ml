@@ -112,6 +112,25 @@ let load_runtime instance_name =
         Some { pid; serial_socket; disk; passt_pid; virtiofsd_pids; ssh_port; ssh_key_path }
     | _ -> None
 
+let save_mounts instance_name paths =
+  ensure_instance_dir instance_name;
+  let path = instance_path instance_name "mounts" in
+  let channel = open_out path in
+  List.iter (fun p ->
+      output_string channel p;
+      output_char channel '\n')
+    paths;
+  close_out channel
+
+let load_mounts instance_name =
+  let path = instance_path instance_name "mounts" in
+  let content = Target.read_file_if_exists path in
+  if String.trim content = "" then []
+  else
+    String.split_on_char '\n' content
+    |> List.map String.trim
+    |> List.filter (fun s -> s <> "")
+
 let set ~instance_name ~target =
   save_target instance_name target;
   let runtime_path = instance_path instance_name "runtime" in
