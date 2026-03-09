@@ -123,20 +123,15 @@ let tests ~bin =
                           | Some name -> Filename.concat targets_dir name
                           | None -> fail "expected cache file after first up"
                         in
-                        let cache_content = read_file cache_file in
-                        let corrupted =
-                          let lines = String.split_on_char '\n' cache_content in
-                          List.map
-                            (fun line ->
-                              if
-                                String.length line > 5
-                                && String.sub line 0 5 = "disk="
-                              then "disk=/nonexistent/path"
-                              else line)
-                            lines
-                          |> String.concat "\n"
+                        let json = Yojson.Basic.from_file cache_file in
+                        let corrupted = match json with
+                          | `Assoc fields ->
+                              `Assoc (List.map (fun (k, v) ->
+                                if String.equal k "disk" then (k, `String "/nonexistent/path")
+                                else (k, v)) fields)
+                          | other -> other
                         in
-                        write_file cache_file corrupted;
+                        Yojson.Basic.to_file cache_file corrupted;
                         let result2 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
                             [ "launch"; "cache-miss"; "--target"; ".#dev" ]
