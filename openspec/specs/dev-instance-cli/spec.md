@@ -75,3 +75,46 @@ The CLI SHALL include the forwarded SSH host port in the output of any status or
 #### Scenario: Status omits SSH port for stopped instance
 - **WHEN** a user queries the status of stopped instance `dev-a`
 - **THEN** no SSH port is shown (no runtime metadata available)
+
+### Requirement: ssh command opens an SSH session to a running instance
+The `epi ssh` command SHALL resolve the instance's stored SSH port and exec into `ssh`, replacing the epi process. It SHALL not wrap or proxy the SSH connection — the user's terminal is handed directly to `ssh`.
+
+Connection parameters:
+- Host: `127.0.0.1`
+- Port: the stored `ssh_port` from the instance runtime
+- User: `$USER` from the environment (falls back to `user` if unset)
+- `StrictHostKeyChecking=no` — VMs generate fresh host keys on each provision
+- `UserKnownHostsFile=/dev/null` — prevents stale host key conflicts
+- If `ssh_key_path` is stored in the runtime (from `--generate-ssh-key`), `-i <path>` is added
+
+#### Scenario: ssh opens session to running instance
+- **WHEN** a user runs `epi ssh dev-a` and `dev-a` is running with `ssh_port=54321`
+- **THEN** the CLI execs `ssh -p 54321 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null <user>@127.0.0.1`
+- **AND** epi's process is replaced by the ssh process (no wrapper)
+
+#### Scenario: ssh with generated key passes -i flag
+- **WHEN** `dev-a` was launched with `--generate-ssh-key` and has `ssh_key_path` stored
+- **THEN** the CLI adds `-i <ssh_key_path>` before the host argument
+
+#### Scenario: ssh fails if instance is not running
+- **WHEN** `epi ssh dev-a` is invoked and `dev-a` has no active runtime
+- **THEN** the command exits non-zero
+- **AND** the error states that the instance is not running and suggests `epi start`
+
+#### Scenario: ssh fails if no ssh_port is stored
+- **WHEN** `epi ssh dev-a` is invoked and the runtime has no `ssh_port`
+- **THEN** the command exits non-zero
+- **AND** the error suggests stopping and restarting the instance
+
+### Requirement: logs command streams journald output for the instance
+The `epi logs` command SHALL display logs for the instance's systemd services by running `journalctl --user` for the instance's unit slice. If the instance has no known `unit_id`, the command fails with a clear error.
+
+#### Scenario: logs streams journald output for running instance
+- **WHEN** a user runs `epi logs dev-a` and `dev-a` has a stored `unit_id`
+- **THEN** the CLI runs `journalctl --user -M "" --follow` (or equivalent) for the slice `epi-<escaped>_<unit_id>.slice`
+- **AND** output from all services in the slice (VM, passt, virtiofsd) is shown
+
+#### Scenario: logs fails if instance has no runtime
+- **WHEN** `epi logs dev-a` is invoked and `dev-a` has no stored runtime
+- **THEN** the command exits non-zero
+- **AND** the error states that no runtime is found for the instance
