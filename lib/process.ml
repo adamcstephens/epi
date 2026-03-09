@@ -60,34 +60,30 @@ let setenv_args () =
       | Some _ -> Some ("--setenv=" ^ entry)
       | None -> None)
 
-let run_helper ~unit_name ~slice ~stdout_path ~stderr_path ~prog ~args () =
+let run_helper ~unit_name ~slice ~prog ~args () =
   run ~prog:"systemd-run"
     ~args:
       ([ "--user"; "--collect";
          "--unit=" ^ unit_name;
-         "--slice=" ^ slice;
-         "--property=StandardOutput=file:" ^ stdout_path;
-         "--property=StandardError=file:" ^ stderr_path ]
+         "--slice=" ^ slice ]
        @ setenv_args ()
        @ [ "--" ]
        @ (prog :: args))
     ()
 
-let run_service ~unit_name ~slice ~stdout_path ~stderr_path ~exec_stop_post
-    ~prog ~args () =
+let run_service ~unit_name ~slice ~exec_stop_post ~prog ~args () =
   run ~prog:"systemd-run"
     ~args:
       ([ "--user"; "--collect";
          "--unit=" ^ unit_name;
          "--slice=" ^ slice;
          "--property=Type=exec";
-         "--property=StandardOutput=file:" ^ stdout_path;
-         "--property=StandardError=file:" ^ stderr_path;
          "--property=ExecStopPost=" ^ exec_stop_post ]
        @ setenv_args ()
        @ [ "--" ]
        @ (prog :: args))
     ()
+
 
 let unit_is_active unit_name =
   let result = run ~prog:systemctl_bin ~args:[ "--user"; "is-active"; unit_name ] () in

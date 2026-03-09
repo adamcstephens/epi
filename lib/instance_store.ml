@@ -8,13 +8,20 @@ type runtime = {
   ssh_key_path : string option;
 }
 
+let make_absolute path =
+  if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+  else path
+
 let state_dir () =
-  match Sys.getenv_opt "EPI_STATE_DIR" with
-  | Some dir -> dir
-  | None -> (
-      match Sys.getenv_opt "HOME" with
-      | Some home -> Filename.concat home ".local/state/epi"
-      | None -> ".epi-state")
+  let dir =
+    match Sys.getenv_opt "EPI_STATE_DIR" with
+    | Some dir -> dir
+    | None -> (
+        match Sys.getenv_opt "HOME" with
+        | Some home -> Filename.concat home ".local/state/epi"
+        | None -> ".epi-state")
+  in
+  make_absolute dir
 
 let ensure_parent_dir path =
   let dir = Filename.dirname path in
@@ -32,8 +39,6 @@ let instance_path instance_name filename =
   Filename.concat (instance_dir instance_name) filename
 
 let serial_socket_path instance_name = instance_path instance_name "serial.sock"
-let launch_stdout_path instance_name = instance_path instance_name "stdout.log"
-let launch_stderr_path instance_name = instance_path instance_name "stderr.log"
 
 let ensure_instance_dir instance_name =
   let dir = instance_dir instance_name in

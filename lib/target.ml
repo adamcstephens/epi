@@ -378,6 +378,10 @@ let cache_dir () =
         | Some home -> Filename.concat home ".cache/epi"
         | None -> ".epi/cache")
   in
+  let dir =
+    if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir
+    else dir
+  in
   if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
   dir
 

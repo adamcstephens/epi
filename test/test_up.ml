@@ -201,9 +201,8 @@ let tests ~bin =
                   | Some (Some unit_id, _, _, _, _) -> unit_id
                   | _ -> fail "missing owner runtime metadata"
                 in
-                let failing_env = ("EPI_FORCE_LOCK_FAIL", "1") :: extra_env in
                 let failed =
-                  run_cli_with_env ~bin ~state_dir ~extra_env:failing_env
+                  run_cli_with_env ~bin ~state_dir ~extra_env
                     [ "launch"; "qa-1"; "--target"; ".#qa" ]
                 in
                 assert_failure ~context:"lock failure" failed;
