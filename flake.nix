@@ -35,6 +35,7 @@
               packages = [
                 pkgs.cdrkit
                 pkgs.cloud-hypervisor
+                pkgs.jq
                 pkgs.qemu-utils
                 pkgs.passt
                 pkgs.virtiofsd
