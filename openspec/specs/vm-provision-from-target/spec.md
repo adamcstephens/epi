@@ -78,6 +78,69 @@ When provisioning fails, `epi up` MUST return an error message that identifies t
 - **AND** the error states that the pasta socket did not become ready
 - **AND** cloud-hypervisor is not started
 
+#### Scenario: seed ISO generation fails due to missing genisoimage
+- **WHEN** `genisoimage` is not found on `$PATH` and `EPI_GENISOIMAGE_BIN` is not set
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that `genisoimage` was not found
+- **AND** the error suggests installing `cdrkit` or setting `EPI_GENISOIMAGE_BIN`
+
+#### Scenario: seed ISO generation fails due to genisoimage error
+- **WHEN** `genisoimage` exits non-zero during seed ISO creation
+- **THEN** `epi launch` exits non-zero
+- **AND** the error includes the stderr output from genisoimage
+
+#### Scenario: virtiofsd binary is missing when mounts are requested
+- **WHEN** `--mount` is passed and `virtiofsd` is not found on `$PATH` and `EPI_VIRTIOFSD_BIN` is not set
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that `virtiofsd` was not found
+- **AND** the error suggests installing the `virtiofsd` package or setting `EPI_VIRTIOFSD_BIN`
+
+#### Scenario: virtiofsd fails to start
+- **WHEN** `virtiofsd` starts but exits non-zero
+- **THEN** `epi launch` exits non-zero
+- **AND** the error includes the stderr output from virtiofsd
+
+#### Scenario: virtiofsd socket does not appear
+- **WHEN** virtiofsd is started but its socket does not appear within the timeout
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that the virtiofsd socket did not become ready
+
+#### Scenario: mount path is not a directory
+- **WHEN** a path passed to `--mount` is not a directory (e.g. a regular file or nonexistent path)
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that the path is not a directory
+- **AND** the error notes that virtiofsd only supports directory sharing
+
+#### Scenario: disk overlay resize fails
+- **WHEN** `qemu-img resize` exits non-zero during disk overlay preparation
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that disk resize failed
+- **AND** the error includes the stderr output from qemu-img
+
+#### Scenario: disk overlay copy fails
+- **WHEN** copying the Nix-store disk to the overlay path fails (e.g. permission error, full disk)
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that overlay preparation failed
+- **AND** the error includes the OS error details
+
+#### Scenario: disk is already locked by another running instance
+- **WHEN** `epi launch qa-1 --target .#qa` resolves a disk already held by running instance `dev-a`
+- **THEN** the command exits non-zero before launching any processes
+- **AND** the error names `dev-a` as the current holder of the disk lock
+- **AND** the error includes `dev-a`'s `unit_id`
+- **AND** the error suggests stopping `dev-a` before retrying
+
+#### Scenario: systemd user session is unavailable
+- **WHEN** `systemd-run --user` fails because no user session is active (e.g. running via cron or SSH without lingering)
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that the systemd user session is unavailable
+- **AND** the error suggests running `loginctl enable-linger <user>`
+
+#### Scenario: VM exits immediately after systemd-run returns
+- **WHEN** `systemd-run` returns exit 0 (unit created) but the VM service is no longer active after a brief settle period
+- **THEN** `epi launch` exits non-zero
+- **AND** the error states that the VM exited immediately after start
+
 ### Requirement: Up validates required launch inputs before invoking cloud-hypervisor
 Before launching cloud-hypervisor, the CLI MUST validate that all required launch descriptor fields are present, refer to accessible artifacts, and form a coherent boot tuple.
 
