@@ -77,49 +77,48 @@ let write_state_entry ~state_dir ~instance_name ~target ?unit_id ?serial_socket
     ?disk ?ssh_port ?ssh_key_path () =
   let instance_dir = Filename.concat state_dir instance_name in
   if not (Sys.file_exists instance_dir) then Unix.mkdir instance_dir 0o755;
-  write_file (Filename.concat instance_dir "target") (target ^ "\n");
-  match unit_id with
-  | Some id ->
-      let channel = open_out (Filename.concat instance_dir "runtime") in
-      Printf.fprintf channel "unit_id=%s\n" id;
-      (match serial_socket with
-      | Some s -> Printf.fprintf channel "serial_socket=%s\n" s
-      | None -> ());
-      (match disk with
-      | Some d -> Printf.fprintf channel "disk=%s\n" d
-      | None -> ());
-      (match ssh_port with
-      | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
-      | None -> ());
-      (match ssh_key_path with
-      | Some p -> Printf.fprintf channel "ssh_key_path=%s\n" p
-      | None -> ());
-      close_out channel
-  | None -> ()
+  let fields = [("target", `String target)] in
+  let fields = match unit_id with
+    | Some id ->
+        let rt_fields =
+          [("unit_id", `String id)]
+          @ (match serial_socket with Some s -> [("serial_socket", `String s)] | None -> [])
+          @ (match disk with Some d -> [("disk", `String d)] | None -> [])
+          @ (match ssh_port with Some p -> [("ssh_port", `Int p)] | None -> [])
+          @ (match ssh_key_path with Some p -> [("ssh_key_path", `String p)] | None -> [])
+        in
+        fields @ [("runtime", `Assoc rt_fields)]
+    | None -> fields
+  in
+  let json = `Assoc fields in
+  write_file (Filename.concat instance_dir "state.json")
+    (Yojson.Basic.pretty_to_string json ^ "\n")
 
 let find_state_runtime ~state_dir instance_name =
   let instance_dir = Filename.concat state_dir instance_name in
-  let runtime_path = Filename.concat instance_dir "runtime" in
-  if not (Sys.file_exists runtime_path) then None
+  let state_path = Filename.concat instance_dir "state.json" in
+  if not (Sys.file_exists state_path) then None
   else
-    let content = read_file runtime_path in
-    let pairs =
-      String.split_on_char '\n' content
-      |> List.filter_map (fun line ->
-          match String.split_on_char '=' line with
-          | key :: value_parts when key <> "" ->
-              let value = String.concat "=" value_parts |> String.trim in
-              if value = "" then None else Some (String.trim key, value)
-          | _ -> None)
-    in
-    let get key = List.assoc_opt key pairs in
-    Some (get "unit_id", get "serial_socket", get "disk",
-          get "ssh_port", get "ssh_key_path")
+    let content = read_file state_path in
+    match Yojson.Basic.from_string content with
+    | `Assoc fields -> (
+        match List.assoc_opt "runtime" fields with
+        | Some (`Assoc rt_fields) ->
+            let get key = match List.assoc_opt key rt_fields with
+              | Some (`String s) -> Some s
+              | Some (`Int i) -> Some (string_of_int i)
+              | _ -> None
+            in
+            Some (get "unit_id", get "serial_socket", get "disk",
+                  get "ssh_port", get "ssh_key_path")
+        | _ -> None)
+    | _ -> None
+    | exception Yojson.Json_error _ -> None
 
 let instance_exists ~state_dir instance_name =
   let instance_dir = Filename.concat state_dir instance_name in
   Sys.file_exists instance_dir
-  && Sys.file_exists (Filename.concat instance_dir "target")
+  && Sys.file_exists (Filename.concat instance_dir "state.json")
 
 let assert_missing_state_entry ~context ~state_dir instance_name =
   if instance_exists ~state_dir instance_name then

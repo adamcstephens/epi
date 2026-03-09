@@ -273,24 +273,28 @@ let tests ~bin =
                         in
                         assert_success ~context:"launch for console test" launch_result;
                         (* Overwrite serial_socket to point to our mock server *)
-                        let runtime_path =
+                        let state_path =
                           Filename.concat
                             (Filename.concat state_dir "dev-a")
-                            "runtime"
+                            "state.json"
                         in
-                        let runtime_content = read_file runtime_path in
-                        let updated =
-                          String.split_on_char '\n' runtime_content
-                          |> List.map (fun line ->
-                              if String.length line > 14
-                                 && String.sub line 0 14 = "serial_socket="
-                              then "serial_socket=" ^ serial_socket
-                              else line)
-                          |> String.concat "\n"
+                        let json = Yojson.Basic.from_file state_path in
+                        let updated = match json with
+                          | `Assoc fields ->
+                              let fields = List.map (fun (k, v) ->
+                                if k = "runtime" then
+                                  match v with
+                                  | `Assoc rt ->
+                                      (k, `Assoc (List.map (fun (rk, rv) ->
+                                        if rk = "serial_socket" then (rk, `String serial_socket)
+                                        else (rk, rv)) rt))
+                                  | _ -> (k, v)
+                                else (k, v)) fields
+                              in
+                              `Assoc fields
+                          | other -> other
                         in
-                        let oc = open_out runtime_path in
-                        output_string oc updated;
-                        close_out oc;
+                        Yojson.Basic.to_file state_path updated;
                         let result =
                           run_cli_with_env ~bin ~state_dir ~extra_env
                             [

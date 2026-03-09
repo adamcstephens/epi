@@ -1,24 +1,4 @@
-## Purpose
-Define the on-disk layout, file formats, and instance discovery rules for epi state, enabling any reimplementation to read, write, and discover instances compatibly.
-
-## Requirements
-
-### Requirement: State root is configurable via environment
-The CLI SHALL resolve the state root directory in this order:
-1. `$EPI_STATE_DIR` if set
-2. `$HOME/.local/state/epi/` otherwise
-3. `.epi-state` relative to the current working directory if `HOME` is also unset
-
-All paths derived from the state root are stored and compared as absolute paths. Relative paths provided via environment variables are resolved against the current working directory at startup.
-
-#### Scenario: EPI_STATE_DIR overrides default
-- **WHEN** `EPI_STATE_DIR=/tmp/test-state` is set
-- **THEN** the CLI stores and reads all instance state under `/tmp/test-state/`
-- **AND** the default `~/.local/state/epi/` is not used
-
-#### Scenario: Default path is used when EPI_STATE_DIR is absent
-- **WHEN** `EPI_STATE_DIR` is not set and `HOME=/home/alice`
-- **THEN** the CLI uses `/home/alice/.local/state/epi/` as the state root
+## MODIFIED Requirements
 
 ### Requirement: Each instance occupies a dedicated subdirectory
 The state root contains one subdirectory per instance, named by the instance name. The CLI SHALL create parent directories as needed (mode `0o755`) when storing new state.
@@ -45,7 +25,7 @@ The state root contains one subdirectory per instance, named by the instance nam
 - **AND** it contains valid JSON with a `target` field
 
 ### Requirement: state.json file format
-The `state.json` file is a JSON object containing all instance state. The CLI SHALL use `Yojson.Basic` for reading and writing. The file SHALL be written with a trailing newline.
+The `state.json` file is a JSON object containing all instance state. The CLI SHALL use `Yojson.Safe` for reading and writing. The file SHALL be written with a trailing newline.
 
 Top-level fields:
 
@@ -103,3 +83,17 @@ The `list` command scans the state root for qualifying directories and returns i
 #### Scenario: Empty state root returns empty list
 - **WHEN** the state root directory does not exist or is empty
 - **THEN** `epi list` returns no instances
+
+## REMOVED Requirements
+
+### Requirement: target file format
+**Reason**: Replaced by `target` field in `state.json`.
+**Migration**: Target is now stored as the `target` field in `state.json`.
+
+### Requirement: runtime file format
+**Reason**: Replaced by `runtime` object in `state.json`.
+**Migration**: Runtime fields are now stored in the `runtime` object within `state.json`.
+
+### Requirement: mounts file format
+**Reason**: Replaced by `mounts` array in `state.json`.
+**Migration**: Mounts are now stored as the `mounts` array in `state.json`.
