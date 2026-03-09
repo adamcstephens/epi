@@ -3,15 +3,14 @@ open Test_helpers
 let with_systemd_mock_instance ~state_dir ~instance_name ~serial_socket f =
   let unit_id = Printf.sprintf "test%d" (Unix.getpid ()) in
   let escaped = escape_unit_name instance_name in
-  let vm_unit = Printf.sprintf "epi-%s-%s-vm" escaped unit_id in
-  let slice = Printf.sprintf "epi-%s-%s.slice" escaped unit_id in
+  let vm_unit = Printf.sprintf "epi-%s_%s_vm" escaped unit_id in
+  let slice = Printf.sprintf "epi-%s_%s.slice" escaped unit_id in
   let status, _, stderr = run_process ~prog:"systemd-run"
     ~args:[ "--user"; "--collect";
             "--unit=" ^ vm_unit; "--slice=" ^ slice;
             "--property=Type=exec";
             "--property=StandardOutput=file:/dev/null";
             "--property=StandardError=file:/dev/null";
-            "--property=ExecStopPost=" ^ systemctl_bin ^ " --user stop " ^ slice;
             "--"; "sleep"; "30" ] in
   if status <> 0 then
     fail "failed to create test systemd service: %s" stderr;
