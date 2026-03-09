@@ -170,11 +170,11 @@ let remove instance_name =
 
 let vm_unit_name ~instance_name ~unit_id =
   let escaped = Process.escape_unit_name instance_name in
-  Printf.sprintf "epi-%s-%s-vm.service" escaped unit_id
+  Printf.sprintf "epi-%s_%s_vm.service" escaped unit_id
 
 let slice_name ~instance_name ~unit_id =
   let escaped = Process.escape_unit_name instance_name in
-  Printf.sprintf "epi-%s-%s.slice" escaped unit_id
+  Printf.sprintf "epi-%s_%s.slice" escaped unit_id
 
 let instance_is_running instance_name =
   match load_runtime instance_name with

@@ -372,11 +372,11 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
       | _ ->
       let unit_id = Process.generate_unit_id () in
       let escaped = Process.escape_unit_name instance_name in
-      let slice = Printf.sprintf "epi-%s-%s.slice" escaped unit_id in
+      let slice = Printf.sprintf "epi-%s_%s.slice" escaped unit_id in
       if Sys.file_exists passt_sock then Unix.unlink passt_sock;
       let passt_repair_sock = passt_sock ^ ".repair" in
       if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
-      let passt_unit = Printf.sprintf "epi-%s-%s-passt" escaped unit_id in
+      let passt_unit = Printf.sprintf "epi-%s_%s_passt" escaped unit_id in
       let passt_result =
         Process.run_helper ~unit_name:passt_unit ~slice
           ~prog:(passt_bin ())
@@ -395,7 +395,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
       let start_virtiofsd i path =
         let sock = Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.sock" i) in
         if Sys.file_exists sock then Unix.unlink sock;
-        let virtiofsd_unit = Printf.sprintf "epi-%s-%s-virtiofsd-%d" escaped unit_id i in
+        let virtiofsd_unit = Printf.sprintf "epi-%s_%s_virtiofsd_%d" escaped unit_id i in
         let result =
           Process.run_helper ~unit_name:virtiofsd_unit ~slice
             ~prog:(virtiofsd_bin ())
@@ -467,13 +467,21 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
         | Some initrd -> base_args @ [ "--initramfs"; initrd ]
         | None -> base_args
       in
-      let exec_stop_post =
-        Printf.sprintf "%s --user stop %s" Process.systemctl_bin slice
+      let helper_units =
+        (passt_unit ^ ".service")
+        :: List.mapi (fun i _ ->
+            Printf.sprintf "epi-%s_%s_virtiofsd_%d.service" escaped unit_id i)
+          mount_paths
       in
-      let vm_unit = Printf.sprintf "epi-%s-%s-vm" escaped unit_id in
+      let exec_stop_posts =
+        List.map (fun u ->
+            Printf.sprintf "%s --user stop %s" Process.systemctl_bin u)
+          helper_units
+      in
+      let vm_unit = Printf.sprintf "epi-%s_%s_vm" escaped unit_id in
       let vm_result =
         Process.run_service ~unit_name:vm_unit ~slice
-          ~exec_stop_post
+          ~exec_stop_posts
           ~prog:cloud_hypervisor_bin ~args ()
       in
       if vm_result.status <> 0 then

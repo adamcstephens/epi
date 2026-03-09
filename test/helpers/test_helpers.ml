@@ -193,11 +193,11 @@ let stop_unit unit_name =
 
 let vm_unit_name ~instance_name ~unit_id =
   let escaped = escape_unit_name instance_name in
-  Printf.sprintf "epi-%s-%s-vm.service" escaped unit_id
+  Printf.sprintf "epi-%s_%s_vm.service" escaped unit_id
 
 let slice_name ~instance_name ~unit_id =
   let escaped = escape_unit_name instance_name in
-  Printf.sprintf "epi-%s-%s.slice" escaped unit_id
+  Printf.sprintf "epi-%s_%s.slice" escaped unit_id
 
 let wait_until_path_exists ~path ~attempts =
   let rec loop remaining =

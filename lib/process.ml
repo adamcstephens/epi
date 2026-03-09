@@ -71,14 +71,17 @@ let run_helper ~unit_name ~slice ~prog ~args () =
        @ (prog :: args))
     ()
 
-let run_service ~unit_name ~slice ~exec_stop_post ~prog ~args () =
+let run_service ~unit_name ~slice ~exec_stop_posts ~prog ~args () =
+  let stop_props =
+    List.map (fun cmd -> "--property=ExecStopPost=" ^ cmd) exec_stop_posts
+  in
   run ~prog:"systemd-run"
     ~args:
       ([ "--user"; "--collect";
          "--unit=" ^ unit_name;
          "--slice=" ^ slice;
-         "--property=Type=exec";
-         "--property=ExecStopPost=" ^ exec_stop_post ]
+         "--property=Type=exec" ]
+       @ stop_props
        @ setenv_args ()
        @ [ "--" ]
        @ (prog :: args))

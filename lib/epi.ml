@@ -82,10 +82,11 @@ let instance_is_running ~instance_name runtime =
   in
   Process.unit_is_active unit_name
 
-let stop_instance_slice ~instance_name runtime =
-  let slice =
-    Instance_store.slice_name ~instance_name ~unit_id:runtime.Instance_store.unit_id
-  in
+let stop_instance ~instance_name runtime =
+  let unit_id = runtime.Instance_store.unit_id in
+  let vm_unit = Instance_store.vm_unit_name ~instance_name ~unit_id in
+  ignore (Process.stop_unit vm_unit);
+  let slice = Instance_store.slice_name ~instance_name ~unit_id in
   Process.stop_unit slice
 
 let attach_console_for_running_instance ~instance_name ~options runtime =
@@ -165,7 +166,7 @@ let launch_command =
              "launch: instance=%s target=%s already-running unit_id=%s serial=%s\n"
              instance_name target runtime.unit_id runtime.serial_socket
      | Some stale_runtime -> (
-         ignore (stop_instance_slice ~instance_name stale_runtime);
+         ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
          match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target with
          | Ok runtime ->
@@ -294,7 +295,7 @@ let console_command =
            ~options:console_options runtime)
 
 let terminate_instance_runtime ~instance_name runtime =
-  if stop_instance_slice ~instance_name runtime then Ok ()
+  if stop_instance ~instance_name runtime then Ok ()
   else
     Error
       (Printf.sprintf
@@ -379,7 +380,7 @@ let start_command =
            Printf.printf "start: instance=%s already-running unit_id=%s serial=%s\n"
              instance_name runtime.unit_id runtime.serial_socket
      | Some stale_runtime -> (
-         ignore (stop_instance_slice ~instance_name stale_runtime);
+         ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
          match
            Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
@@ -451,7 +452,7 @@ let rm_command =
                Printf.printf "rm: removed instance=%s\n" instance_name
            | Error message -> fail message)
      | Some stale_runtime ->
-         ignore (stop_instance_slice ~instance_name stale_runtime);
+         ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.remove instance_name;
          Printf.printf "rm: removed instance=%s\n" instance_name
      | None ->
