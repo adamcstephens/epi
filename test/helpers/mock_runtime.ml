@@ -45,6 +45,14 @@ let with_mock_runtime f =
          \  echo \"memory_mib=1024\"\n\
          \  exit 0\n\
           fi\n\
+          if [ \"$EPI_TARGET\" = \".#owner\" ] || [ \"$EPI_TARGET\" = \".#qa\" ]; then\n\
+         \  echo \"kernel=" ^ kernel ^ "\"\n  echo \"disk=" ^ disk
+       ^ "\"\n  echo \"initrd=" ^ initrd
+       ^ "\"\n\
+         \  echo \"cpus=2\"\n\
+         \  echo \"memory_mib=1024\"\n\
+         \  exit 0\n\
+          fi\n\
           if [ \"$EPI_TARGET\" = \".#user-configured\" ]; then\n\
          \  echo \"kernel=" ^ kernel ^ "\"\n  echo \"disk=" ^ disk
        ^ "\"\n  echo \"initrd=" ^ initrd
@@ -54,8 +62,10 @@ let with_mock_runtime f =
          \  echo \"configured_users=root,$USER\"\n\
          \  exit 0\n\
           fi\n\
-          echo \"kernel=" ^ kernel ^ "\"\necho \"disk=" ^ disk
-       ^ "\"\necho \"initrd=" ^ initrd
+          SAFE_TARGET=$(echo \"$EPI_TARGET\" | tr '/:' '__')\n\
+          TARGET_DISK=\"" ^ dir ^ "/disk-${SAFE_TARGET}.img\"\n\
+          cp -n \"" ^ disk ^ "\" \"$TARGET_DISK\" 2>/dev/null || true\n\
+          echo \"kernel=" ^ kernel ^ "\"\necho \"disk=$TARGET_DISK\"\necho \"initrd=" ^ initrd
        ^ "\"\necho \"cpus=2\"\necho \"memory_mib=1536\"\n");
       write_file cloud_hypervisor
         ("#!/usr/bin/env sh\necho \"$*\" >> \"" ^ launch_log
