@@ -126,26 +126,25 @@ let tests ~bin =
                       fail
                         "user-data should not contain uid: for pre-configured \
                          user"))));
-    Alcotest.test_case "up with --mount tracks virtiofsd_pid in state" `Quick
+    Alcotest.test_case "up with --mount stores unit_id in state" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
-                with_temp_dir "epi-virtiofsd-pid-test" (fun mount_dir ->
+                with_temp_dir "epi-virtiofsd-unit-test" (fun mount_dir ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "launch"; "virtiofsd-pid-test"; "--target"; ".#dev";
+                        [ "launch"; "virtiofsd-unit-test"; "--target"; ".#dev";
                           "--mount"; mount_dir ]
                     in
-                    assert_success ~context:"up with --mount virtiofsd pid"
+                    assert_success ~context:"up with --mount unit_id"
                       result;
                     match
-                      find_state_runtime ~state_dir "virtiofsd-pid-test"
+                      find_state_runtime ~state_dir "virtiofsd-unit-test"
                     with
-                    | Some (Some _, _, _, _, _ :: _, _, _) -> ()
+                    | Some (Some _, _, _, _, _) -> ()
                     | _ ->
                         fail
-                          "expected virtiofsd_pids to be stored in runtime \
-                           state"))));
+                          "expected unit_id to be stored in runtime state"))));
     Alcotest.test_case "up with --mount pointing to a file fails with clear error"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->

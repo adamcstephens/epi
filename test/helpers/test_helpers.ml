@@ -73,26 +73,20 @@ let write_file path content =
   output_string channel content;
   close_out channel
 
-let write_state_entry ~state_dir ~instance_name ~target ?pid ?serial_socket
-    ?disk ?passt_pid ?virtiofsd_pid ?ssh_port ?ssh_key_path () =
+let write_state_entry ~state_dir ~instance_name ~target ?unit_id ?serial_socket
+    ?disk ?ssh_port ?ssh_key_path () =
   let instance_dir = Filename.concat state_dir instance_name in
   if not (Sys.file_exists instance_dir) then Unix.mkdir instance_dir 0o755;
   write_file (Filename.concat instance_dir "target") (target ^ "\n");
-  match pid with
-  | Some pid_val ->
+  match unit_id with
+  | Some id ->
       let channel = open_out (Filename.concat instance_dir "runtime") in
-      Printf.fprintf channel "pid=%d\n" pid_val;
+      Printf.fprintf channel "unit_id=%s\n" id;
       (match serial_socket with
       | Some s -> Printf.fprintf channel "serial_socket=%s\n" s
       | None -> ());
       (match disk with
       | Some d -> Printf.fprintf channel "disk=%s\n" d
-      | None -> ());
-      (match passt_pid with
-      | Some p -> Printf.fprintf channel "passt_pid=%d\n" p
-      | None -> ());
-      (match virtiofsd_pid with
-      | Some p -> Printf.fprintf channel "virtiofsd_pid=%d\n" p
       | None -> ());
       (match ssh_port with
       | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
@@ -119,17 +113,8 @@ let find_state_runtime ~state_dir instance_name =
           | _ -> None)
     in
     let get key = List.assoc_opt key pairs in
-    let get_int key =
-      match get key with Some v -> int_of_string_opt v | None -> None
-    in
-    let virtiofsd_pids =
-      match get "virtiofsd_pids" with
-      | Some s -> String.split_on_char ',' s |> List.filter_map int_of_string_opt
-      | None -> (match get_int "virtiofsd_pid" with Some p -> [ p ] | None -> [])
-    in
-    Some (get_int "pid", get "serial_socket", get "disk",
-          get_int "passt_pid", virtiofsd_pids,
-          get_int "ssh_port", get "ssh_key_path")
+    Some (get "unit_id", get "serial_socket", get "disk",
+          get "ssh_port", get "ssh_key_path")
 
 let instance_exists ~state_dir instance_name =
   let instance_dir = Filename.concat state_dir instance_name in
@@ -139,43 +124,6 @@ let instance_exists ~state_dir instance_name =
 let assert_missing_state_entry ~context ~state_dir instance_name =
   if instance_exists ~state_dir instance_name then
     fail "%s: expected instance %S to be removed" context instance_name
-
-let pid_is_alive pid =
-  try
-    Unix.kill pid 0;
-    true
-  with
-  | Unix.Unix_error (Unix.ESRCH, _, _) -> false
-  | Unix.Unix_error (Unix.EPERM, _, _) -> true
-
-let wait_for_pid_to_die ~attempts pid =
-  let rec loop remaining =
-    if not (pid_is_alive pid) then true
-    else if remaining <= 0 then false
-    else
-      let _ = Unix.select [] [] [] 0.05 in
-      loop (remaining - 1)
-  in
-  loop attempts
-
-let terminate_pid pid =
-  (if pid_is_alive pid then
-     try Unix.kill pid Sys.sigterm with Unix.Unix_error _ -> ());
-  try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
-  with Unix.Unix_error (Unix.ECHILD, _, _) -> ()
-
-let cleanup_state_pids ~state_dir =
-  if Sys.file_exists state_dir then
-    Sys.readdir state_dir
-    |> Array.iter (fun name ->
-        let d = Filename.concat state_dir name in
-        if Sys.is_directory d then
-          match find_state_runtime ~state_dir name with
-          | Some (pid, _, _, passt_pid, virtiofsd_pids, _, _) ->
-              (match pid with Some p -> terminate_pid p | None -> ());
-              (match passt_pid with Some p -> terminate_pid p | None -> ());
-              List.iter terminate_pid virtiofsd_pids
-          | None -> ())
 
 let with_temp_dir prefix f =
   let base =
@@ -194,18 +142,62 @@ let with_temp_dir prefix f =
       if Sys.is_directory path then (
         Sys.readdir path
         |> Array.iter (fun name -> remove_tree (Filename.concat path name));
-        Unix.rmdir path)
-      else Sys.remove path
+        (try Unix.rmdir path with Unix.Unix_error (Unix.ENOTEMPTY, _, _) ->
+          (* A background systemd service may have created files after readdir.
+             Re-walk and retry once. *)
+          Sys.readdir path
+          |> Array.iter (fun name -> remove_tree (Filename.concat path name));
+          (try Unix.rmdir path with Unix.Unix_error _ -> ())))
+      else (try Sys.remove path with Sys_error _ -> ())
   in
   Fun.protect ~finally:(fun () -> remove_tree dir) (fun () -> f dir)
 
 let with_state_dir f =
   with_temp_dir "epi-cli-test" (fun dir ->
     Fun.protect
-      ~finally:(fun () -> cleanup_state_pids ~state_dir:dir)
+      ~finally:(fun () -> ())
       (fun () -> f dir))
 
 let make_executable path = Unix.chmod path 0o755
+
+let systemctl_bin = "/run/current-system/sw/bin/systemctl"
+
+let run_process ~prog ~args =
+  let argv = Array.of_list (prog :: args) in
+  let stdout_channel, stdin_channel, stderr_channel =
+    Unix.open_process_args_full prog argv (Unix.environment ())
+  in
+  close_out stdin_channel;
+  let stdout = In_channel.input_all stdout_channel |> String.trim in
+  let stderr = In_channel.input_all stderr_channel |> String.trim in
+  let status =
+    match
+      Unix.close_process_full (stdout_channel, stdin_channel, stderr_channel)
+    with
+    | Unix.WEXITED code -> code
+    | Unix.WSIGNALED signal -> 128 + signal
+    | Unix.WSTOPPED signal -> 128 + signal
+  in
+  (status, stdout, stderr)
+
+let escape_unit_name name =
+  let status, stdout, stderr = run_process ~prog:"systemd-escape" ~args:[ name ] in
+  if status = 0 then stdout
+  else failwith (Printf.sprintf "systemd-escape failed for %S: %s" name stderr)
+
+let stop_unit unit_name =
+  let status, _, _ =
+    run_process ~prog:systemctl_bin ~args:[ "--user"; "stop"; unit_name ]
+  in
+  status = 0
+
+let vm_unit_name ~instance_name ~unit_id =
+  let escaped = escape_unit_name instance_name in
+  Printf.sprintf "epi-%s-%s-vm.service" escaped unit_id
+
+let slice_name ~instance_name ~unit_id =
+  let escaped = escape_unit_name instance_name in
+  Printf.sprintf "epi-%s-%s.slice" escaped unit_id
 
 let wait_until_path_exists ~path ~attempts =
   let rec loop remaining =
@@ -216,6 +208,11 @@ let wait_until_path_exists ~path ~attempts =
       loop (remaining - 1)
   in
   loop attempts
+
+let terminate_pid pid =
+  (try Unix.kill pid Sys.sigterm with Unix.Unix_error _ -> ());
+  try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
+  with Unix.Unix_error (Unix.ECHILD, _, _) -> ()
 
 let with_unix_socket_server ~socket_path ~payload f =
   let run_server () =
@@ -331,10 +328,3 @@ let with_hanging_unix_socket_server ~socket_path ~hold_seconds f =
           try ignore (Unix.waitpid [ Unix.WNOHANG ] pid)
           with Unix.Unix_error (Unix.ECHILD, _, _) -> ())
         f
-
-let with_sleep_process f =
-  match Unix.fork () with
-  | 0 ->
-      Unix.sleep 30;
-      exit 0
-  | pid -> Fun.protect ~finally:(fun () -> terminate_pid pid) (fun () -> f pid)

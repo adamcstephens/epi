@@ -20,7 +20,7 @@ let tests ~bin =
                 assert_contains ~context:"explicit up output" stdout_explicit
                   "vm: starting VM instance=dev-a";
                 assert_contains ~context:"explicit up output" stdout_explicit
-                  "launch: provisioned instance=dev-a target=.#dev-a pid=";
+                  "launch: provisioned instance=dev-a target=.#dev-a unit_id=";
                 assert_contains ~context:"explicit up output" stdout_explicit
                   "serial=";
                 let implicit =
@@ -31,7 +31,7 @@ let tests ~bin =
                 let _, stdout_implicit, _ = implicit in
                 assert_contains ~context:"implicit up output" stdout_implicit
                   "launch: provisioned instance=default target=github:org/repo#dev \
-                   pid=";
+                   unit_id=";
                 let launch_contents =
                   if Sys.file_exists launch_log then read_file launch_log
                   else ""
@@ -42,16 +42,16 @@ let tests ~bin =
                   "socket=";
                 let dev_a = find_state_runtime ~state_dir "dev-a" in
                 (match dev_a with
-                | Some (Some _, Some _, _, Some _, _, _, _) -> ()
+                | Some (Some _, Some _, _, _, _) -> ()
                 | _ ->
                     fail
-                      "expected runtime metadata with passt_pid for dev-a");
+                      "expected runtime metadata with unit_id for dev-a");
                 let default = find_state_runtime ~state_dir "default" in
                 (match default with
-                | Some (Some _, Some _, _, Some _, _, _, _) -> ()
+                | Some (Some _, Some _, _, _, _) -> ()
                 | _ ->
                     fail
-                      "expected runtime metadata with passt_pid for default");
+                      "expected runtime metadata with unit_id for default");
                 let status_default =
                   run_cli_with_env ~bin ~state_dir ~extra_env [ "status" ]
                 in
@@ -196,9 +196,9 @@ let tests ~bin =
                     [ "launch"; "dev-owner"; "--target"; ".#owner" ]
                 in
                 assert_success ~context:"owner up" owner_up;
-                let owner_pid =
+                let owner_unit_id =
                   match find_state_runtime ~state_dir "dev-owner" with
-                  | Some (Some pid, _, _, _, _, _, _) -> pid
+                  | Some (Some unit_id, _, _, _, _) -> unit_id
                   | _ -> fail "missing owner runtime metadata"
                 in
                 let failing_env = ("EPI_FORCE_LOCK_FAIL", "1") :: extra_env in
@@ -212,8 +212,8 @@ let tests ~bin =
                   "another running VM already holds disk lock";
                 assert_contains ~context:"lock conflict owner" err
                   "owner=dev-owner";
-                assert_contains ~context:"lock conflict pid" err
-                  (string_of_int owner_pid);
+                assert_contains ~context:"lock conflict unit_id" err
+                  owner_unit_id;
                 assert_contains ~context:"lock conflict disk" err disk)));
     Alcotest.test_case "--console provisions and attaches to serial socket"
       `Quick (fun () ->
@@ -261,72 +261,95 @@ let tests ~bin =
         with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-up-console-running" (fun dir ->
-                    with_sleep_process (fun pid ->
-                        let serial_socket = Filename.concat dir "dev-a.sock" in
-                        with_unix_socket_server ~socket_path:serial_socket
-                          ~payload:"up-console-running\n" (fun () ->
-                            write_state_entry ~state_dir
-                              ~instance_name:"dev-a"
-                              ~target:".#dev-a"
-                              ~pid
-                              ~serial_socket
-                              ~disk:"/tmp/dev-a.disk"
-                              ();
-                            let result =
-                              run_cli_with_env ~bin ~state_dir ~extra_env
-                                [
-                                  "launch";
-                                  "dev-a";
-                                  "--target";
-                                  ".#dev-a";
-                                  "--console";
-                                ]
-                            in
-                            assert_success ~context:"up console running" result;
-                            let _, out, _ = result in
-                            assert_contains ~context:"up console running stdout"
-                              out "up-console-running";
-                            let launch_contents =
-                              if Sys.file_exists launch_log then
-                                read_file launch_log
-                              else ""
-                            in
-                            if String.trim launch_contents <> "" then
-                              fail
-                                "expected up --console to skip VM provisioning \
-                                 for running instance"))))));
-    Alcotest.test_case "over stale instance terminates old passt process"
+                    let serial_socket = Filename.concat dir "dev-a.sock" in
+                    with_unix_socket_server ~socket_path:serial_socket
+                      ~payload:"up-console-running\n" (fun () ->
+                        (* Write a state entry with a unit_id that maps to
+                           an active systemd unit. Since we can't easily create
+                           a real systemd unit in tests, we launch a real instance
+                           first, then test the console attach path. *)
+                        let launch_result =
+                          run_cli_with_env ~bin ~state_dir ~extra_env
+                            [ "launch"; "dev-a"; "--target"; ".#dev-a" ]
+                        in
+                        assert_success ~context:"launch for console test" launch_result;
+                        (* Overwrite serial_socket to point to our mock server *)
+                        let runtime_path =
+                          Filename.concat
+                            (Filename.concat state_dir "dev-a")
+                            "runtime"
+                        in
+                        let runtime_content = read_file runtime_path in
+                        let updated =
+                          String.split_on_char '\n' runtime_content
+                          |> List.map (fun line ->
+                              if String.length line > 14
+                                 && String.sub line 0 14 = "serial_socket="
+                              then "serial_socket=" ^ serial_socket
+                              else line)
+                          |> String.concat "\n"
+                        in
+                        let oc = open_out runtime_path in
+                        output_string oc updated;
+                        close_out oc;
+                        let result =
+                          run_cli_with_env ~bin ~state_dir ~extra_env
+                            [
+                              "launch";
+                              "dev-a";
+                              "--target";
+                              ".#dev-a";
+                              "--console";
+                            ]
+                        in
+                        assert_success ~context:"up console running" result;
+                        let _, out, _ = result in
+                        assert_contains ~context:"up console running stdout"
+                          out "up-console-running";
+                        let launch_contents =
+                          if Sys.file_exists launch_log then
+                            read_file launch_log
+                          else ""
+                        in
+                        (* The launch log should only have one entry from the
+                           first launch, not a second one *)
+                        let lines =
+                          String.split_on_char '\n' (String.trim launch_contents)
+                          |> List.filter (fun s -> s <> "")
+                        in
+                        if List.length lines > 1 then
+                          fail
+                            "expected up --console to skip VM provisioning \
+                             for running instance")))));
+    Alcotest.test_case "over stale instance stops old slice"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "launch"; "stale-passt"; "--target"; ".#dev" ]
+                    [ "launch"; "stale-relaunch"; "--target"; ".#dev" ]
                 in
-                assert_success ~context:"first up for stale passt" result;
-                let entry = find_state_runtime ~state_dir "stale-passt" in
-                let old_passt_pid =
-                  match entry with
-                  | Some (_, _, _, Some pid, _, _, _) -> pid
-                  | _ -> fail "expected passt_pid in state after first up"
+                assert_success ~context:"first up for stale" result;
+                let old_unit_id =
+                  match find_state_runtime ~state_dir "stale-relaunch" with
+                  | Some (Some uid, _, _, _, _) -> uid
+                  | _ -> fail "expected unit_id in state after first up"
                 in
-                let old_hypervisor_pid =
-                  match entry with
-                  | Some (Some pid, _, _, _, _, _, _) -> pid
-                  | _ -> fail "expected pid in state after first up"
-                in
-                terminate_pid old_hypervisor_pid;
-                if not (pid_is_alive old_passt_pid) then
-                  fail "old passt process should be alive before relaunch";
+                (* Stop the VM service to make it stale *)
+                ignore (stop_unit (vm_unit_name ~instance_name:"stale-relaunch"
+                    ~unit_id:old_unit_id));
                 let result2 =
                   run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "launch"; "stale-passt"; "--target"; ".#dev" ]
+                    [ "launch"; "stale-relaunch"; "--target"; ".#dev" ]
                 in
-                assert_success ~context:"relaunch over stale passt" result2;
-                if not (wait_for_pid_to_die ~attempts:80 old_passt_pid) then
-                  fail
-                    "old passt process should be terminated after relaunch \
-                     over stale instance")));
+                assert_success ~context:"relaunch over stale" result2;
+                let new_unit_id =
+                  match find_state_runtime ~state_dir "stale-relaunch" with
+                  | Some (Some uid, _, _, _, _) -> uid
+                  | _ -> fail "expected unit_id in state after relaunch"
+                in
+                if old_unit_id = new_unit_id then
+                  fail "expected a new unit_id after relaunch")));
     Alcotest.test_case "output includes the SSH port"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->

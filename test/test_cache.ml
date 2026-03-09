@@ -36,6 +36,13 @@ let count_resolver_calls resolver_log =
     |> List.length
   else 0
 
+let stop_instance_by_state ~state_dir instance_name =
+  match find_state_runtime ~state_dir instance_name with
+  | Some (Some unit_id, _, _, _, _) ->
+      ignore (stop_unit (vm_unit_name ~instance_name ~unit_id));
+      ignore (stop_unit (slice_name ~instance_name ~unit_id))
+  | _ -> ()
+
 let tests ~bin =
   [
     Alcotest.test_case "is written after successful provision"
@@ -77,20 +84,7 @@ let tests ~bin =
                             [ "launch"; "cache-hit"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"cache hit first up" result1;
-                        let entry = find_state_runtime ~state_dir "cache-hit" in
-                        let hypervisor_pid =
-                          match entry with
-                          | Some (Some pid, _, _, _, _, _, _) -> pid
-                          | _ -> fail "expected pid after first up"
-                        in
-                        let passt_pid =
-                          match entry with
-                          | Some (_, _, _, Some pid, _, _, _) -> pid
-                          | _ -> fail "expected passt_pid after first up"
-                        in
-                        terminate_pid hypervisor_pid;
-                        terminate_pid passt_pid;
-                        let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
+                        stop_instance_by_state ~state_dir "cache-hit";
                         let result2 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
                             [ "launch"; "cache-hit"; "--target"; ".#dev" ]
@@ -113,20 +107,7 @@ let tests ~bin =
                             [ "launch"; "cache-miss"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"cache miss first up" result1;
-                        let entry = find_state_runtime ~state_dir "cache-miss" in
-                        let hypervisor_pid =
-                          match entry with
-                          | Some (Some pid, _, _, _, _, _, _) -> pid
-                          | _ -> fail "expected pid after first up"
-                        in
-                        let passt_pid =
-                          match entry with
-                          | Some (_, _, _, Some pid, _, _, _) -> pid
-                          | _ -> fail "expected passt_pid after first up"
-                        in
-                        terminate_pid hypervisor_pid;
-                        terminate_pid passt_pid;
-                        let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
+                        stop_instance_by_state ~state_dir "cache-miss";
                         let cache_dir = Filename.concat test_dir "cache" in
                         let targets_dir = Filename.concat cache_dir "targets" in
                         let cache_files = Sys.readdir targets_dir |> Array.to_list in
@@ -179,20 +160,7 @@ let tests ~bin =
                             [ "launch"; "rebuild-test"; "--target"; ".#dev" ]
                         in
                         assert_success ~context:"rebuild first up" result1;
-                        let entry = find_state_runtime ~state_dir "rebuild-test" in
-                        let hypervisor_pid =
-                          match entry with
-                          | Some (Some pid, _, _, _, _, _, _) -> pid
-                          | _ -> fail "expected pid after first up"
-                        in
-                        let passt_pid =
-                          match entry with
-                          | Some (_, _, _, Some pid, _, _, _) -> pid
-                          | _ -> fail "expected passt_pid after first up"
-                        in
-                        terminate_pid hypervisor_pid;
-                        terminate_pid passt_pid;
-                        let _ = wait_for_pid_to_die ~attempts:20 hypervisor_pid in
+                        stop_instance_by_state ~state_dir "rebuild-test";
                         let result2 =
                           run_cli_with_env ~bin ~state_dir ~extra_env
                             [ "launch"; "rebuild-test"; "--target"; ".#dev"; "--rebuild" ]

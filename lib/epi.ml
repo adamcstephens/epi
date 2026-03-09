@@ -53,17 +53,12 @@ let resolve_console_attach_options () =
   in
   { read_stdin; capture_path; timeout_seconds }
 
-let kill_if_alive pid =
-  try Unix.kill pid Sys.sigterm
-  with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
-
 let resolve_instance_name instance_name_opt =
   match instance_name_opt with
   | Some instance_name -> instance_name
   | None -> Instance_store.default_instance_name
 
 let resolve_instance_target ~command_name instance_name_opt =
-  Instance_store.reconcile_runtime ();
   let instance_name = resolve_instance_name instance_name_opt in
   match Instance_store.find instance_name with
   | Some target -> (instance_name, target)
@@ -81,8 +76,20 @@ let resolve_instance_target ~command_name instance_name_opt =
             instances, or create it with `epi launch %s --target <flake#config>`."
            instance_name instance_name)
 
+let instance_is_running ~instance_name runtime =
+  let unit_name =
+    Instance_store.vm_unit_name ~instance_name ~unit_id:runtime.Instance_store.unit_id
+  in
+  Process.unit_is_active unit_name
+
+let stop_instance_slice ~instance_name runtime =
+  let slice =
+    Instance_store.slice_name ~instance_name ~unit_id:runtime.Instance_store.unit_id
+  in
+  Process.stop_unit slice
+
 let attach_console_for_running_instance ~instance_name ~options runtime =
-  if not (Process.pid_is_alive runtime.Instance_store.pid) then (
+  if not (instance_is_running ~instance_name runtime) then (
     Instance_store.clear_runtime instance_name;
     fail
       (Console.pp_console_error
@@ -95,20 +102,6 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
     with
     | Ok () -> ()
     | Error error -> fail (Console.pp_console_error error)
-
-let pid_is_zombie pid =
-  let path = Printf.sprintf "/proc/%d/stat" pid in
-  if not (Sys.file_exists path) then false
-  else
-    let channel = open_in path in
-    Fun.protect
-      ~finally:(fun () -> close_in channel)
-      (fun () ->
-        let line = input_line channel in
-        match String.rindex_opt line ')' with
-        | Some index when index + 2 < String.length line ->
-            line.[index + 2] = 'Z'
-        | _ -> false)
 
 let launch_command =
   Command.make ~summary:"Create or start an instance from a flake target."
@@ -157,26 +150,22 @@ let launch_command =
      in
      let disk_size = Option.value disk_size ~default:"40G" in
      let console_options = resolve_console_attach_options () in
-     Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name in
      match Instance_store.find_runtime instance_name with
-     | Some runtime when Process.pid_is_alive runtime.pid ->
+     | Some runtime when instance_is_running ~instance_name runtime ->
          if attach_console then (
            Printf.printf
-             "launch: instance=%s target=%s already-running pid=%d, attaching \
+             "launch: instance=%s target=%s already-running unit_id=%s, attaching \
               console\n%!"
-             instance_name target runtime.pid;
+             instance_name target runtime.unit_id;
            attach_console_for_running_instance ~instance_name
              ~options:console_options runtime)
          else
            Printf.printf
-             "launch: instance=%s target=%s already-running pid=%d serial=%s\n"
-             instance_name target runtime.pid runtime.serial_socket
+             "launch: instance=%s target=%s already-running unit_id=%s serial=%s\n"
+             instance_name target runtime.unit_id runtime.serial_socket
      | Some stale_runtime -> (
-         (match stale_runtime.Instance_store.passt_pid with
-         | Some passt_pid -> kill_if_alive passt_pid
-         | None -> ());
-         List.iter kill_if_alive stale_runtime.Instance_store.virtiofsd_pids;
+         ignore (stop_instance_slice ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
          match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target with
          | Ok runtime ->
@@ -186,8 +175,8 @@ let launch_command =
                  ~options:console_options runtime
              else (
                Printf.printf
-                 "launch: provisioned instance=%s target=%s pid=%d serial=%s\n"
-                 instance_name target runtime.Instance_store.pid
+                 "launch: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
+                 instance_name target runtime.Instance_store.unit_id
                  runtime.serial_socket;
                match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
@@ -202,8 +191,8 @@ let launch_command =
                  ~options:console_options runtime
              else (
                Printf.printf
-                 "launch: provisioned instance=%s target=%s pid=%d serial=%s\n"
-                 instance_name target runtime.Instance_store.pid
+                 "launch: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
+                 instance_name target runtime.Instance_store.unit_id
                  runtime.serial_socket;
                match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
@@ -238,14 +227,13 @@ let ssh_command =
      let+ instance_name_opt =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
      in
-     Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name_opt in
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
            (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
               instance_name)
-     | Some runtime when not (Process.pid_is_alive runtime.pid) ->
+     | Some runtime when not (instance_is_running ~instance_name runtime) ->
          fail
            (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
               instance_name)
@@ -294,7 +282,6 @@ let console_command =
      let+ instance_name_opt =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
      in
-     Instance_store.reconcile_runtime ();
      let console_options = resolve_console_attach_options () in
      let instance_name = resolve_instance_name instance_name_opt in
      match Instance_store.find_runtime instance_name with
@@ -307,31 +294,12 @@ let console_command =
            ~options:console_options runtime)
 
 let terminate_instance_runtime ~instance_name runtime =
-  let pid = runtime.Instance_store.pid in
-  try
-    Unix.kill pid Sys.sigterm;
-    let rec wait_until_stopped attempts_remaining =
-      if (not (Process.pid_is_alive pid)) || pid_is_zombie pid then Ok ()
-      else if attempts_remaining <= 0 then
-        Error
-          (Printf.sprintf
-             "failed to terminate instance '%s' (pid=%d): process is still \
-              running"
-             instance_name pid)
-      else
-        let _ = Unix.select [] [] [] 0.1 in
-        wait_until_stopped (attempts_remaining - 1)
-    in
-    let result = wait_until_stopped 50 in
-    (match runtime.Instance_store.passt_pid with
-    | Some passt_pid -> kill_if_alive passt_pid
-    | None -> ());
-    List.iter kill_if_alive runtime.Instance_store.virtiofsd_pids;
-    result
-  with Unix.Unix_error (error, _, _) ->
+  if stop_instance_slice ~instance_name runtime then Ok ()
+  else
     Error
-      (Printf.sprintf "failed to terminate instance '%s' (pid=%d): %s"
-         instance_name pid (Unix.error_message error))
+      (Printf.sprintf
+         "failed to terminate instance '%s' (unit_id=%s): systemctl stop failed"
+         instance_name runtime.Instance_store.unit_id)
 
 let stop_command =
   Command.make ~summary:"Stop an instance."
@@ -342,14 +310,13 @@ let stop_command =
      let+ instance_name_opt =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
      in
-     Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name_opt in
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
            (Printf.sprintf
               "Instance '%s' is not running. Nothing to stop." instance_name)
-     | Some runtime when not (Process.pid_is_alive runtime.pid) ->
+     | Some runtime when not (instance_is_running ~instance_name runtime) ->
          Instance_store.clear_runtime instance_name;
          Printf.printf
            "stop: instance=%s was already stopped (stale runtime cleared)\n"
@@ -381,7 +348,6 @@ let start_command =
            "Attach to the instance serial console immediately after starting."
      in
      let console_options = resolve_console_attach_options () in
-     Instance_store.reconcile_runtime ();
      let instance_name = resolve_instance_name instance_name_opt in
      let target =
        match Instance_store.find instance_name with
@@ -402,21 +368,18 @@ let start_command =
                 instance_name instance_name)
      in
      match Instance_store.find_runtime instance_name with
-     | Some runtime when Process.pid_is_alive runtime.pid ->
+     | Some runtime when instance_is_running ~instance_name runtime ->
          if attach_console then (
            Printf.printf
-             "start: instance=%s already-running pid=%d, attaching console\n%!"
-             instance_name runtime.pid;
+             "start: instance=%s already-running unit_id=%s, attaching console\n%!"
+             instance_name runtime.unit_id;
            attach_console_for_running_instance ~instance_name
              ~options:console_options runtime)
          else
-           Printf.printf "start: instance=%s already-running pid=%d serial=%s\n"
-             instance_name runtime.pid runtime.serial_socket
+           Printf.printf "start: instance=%s already-running unit_id=%s serial=%s\n"
+             instance_name runtime.unit_id runtime.serial_socket
      | Some stale_runtime -> (
-         (match stale_runtime.Instance_store.passt_pid with
-         | Some passt_pid -> kill_if_alive passt_pid
-         | None -> ());
-         List.iter kill_if_alive stale_runtime.Instance_store.virtiofsd_pids;
+         ignore (stop_instance_slice ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
          match
            Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
@@ -429,8 +392,8 @@ let start_command =
                  ~options:console_options runtime
              else (
                Printf.printf
-                 "start: provisioned instance=%s target=%s pid=%d serial=%s\n"
-                 instance_name target runtime.Instance_store.pid
+                 "start: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
+                 instance_name target runtime.Instance_store.unit_id
                  runtime.serial_socket;
                match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
@@ -448,8 +411,8 @@ let start_command =
                  ~options:console_options runtime
              else (
                Printf.printf
-                 "start: provisioned instance=%s target=%s pid=%d serial=%s\n"
-                 instance_name target runtime.Instance_store.pid
+                 "start: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
+                 instance_name target runtime.Instance_store.unit_id
                  runtime.serial_socket;
                match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
@@ -474,13 +437,13 @@ let rm_command =
        resolve_instance_target ~command_name:"rm" instance_name_opt
      in
      match Instance_store.find_runtime instance_name with
-     | Some runtime when Process.pid_is_alive runtime.pid -> (
+     | Some runtime when instance_is_running ~instance_name runtime -> (
          if not force then
            fail
              (Printf.sprintf
-                "Instance '%s' is running (pid=%d). Stop it first or use `epi \
+                "Instance '%s' is running (unit_id=%s). Stop it first or use `epi \
                  rm --force %s`."
-                instance_name runtime.pid instance_name)
+                instance_name runtime.unit_id instance_name)
          else
            match terminate_instance_runtime ~instance_name runtime with
            | Ok () ->
@@ -488,9 +451,7 @@ let rm_command =
                Printf.printf "rm: removed instance=%s\n" instance_name
            | Error message -> fail message)
      | Some stale_runtime ->
-         (match stale_runtime.Instance_store.passt_pid with
-         | Some passt_pid -> kill_if_alive passt_pid
-         | None -> ());
+         ignore (stop_instance_slice ~instance_name stale_runtime);
          Instance_store.remove instance_name;
          Printf.printf "rm: removed instance=%s\n" instance_name
      | None ->
@@ -501,7 +462,6 @@ let list_command =
   Command.make ~summary:"List known instances and their targets."
     (let open Command.Std in
      let+ () = Arg.return () in
-     Instance_store.reconcile_runtime ();
      match Instance_store.list () with
      | [] -> print_endline "No instances found."
      | instances ->
@@ -546,7 +506,7 @@ let cmd =
            in
            Printf.printf "status: instance=%s target=%s\n" instance_name target;
            match Instance_store.find_runtime instance_name with
-           | Some runtime when Process.pid_is_alive runtime.pid ->
+           | Some runtime when instance_is_running ~instance_name runtime ->
                (match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
                | None -> ())
