@@ -17,4 +17,5 @@ let () =
       ("stop", Test_down.tests ~bin);
       ("mount", Test_mount.tests ~bin);
       ("misc", Test_misc.tests ~bin);
+      ("exec", Test_exec.tests ~bin);
     ]

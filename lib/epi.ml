@@ -268,6 +268,75 @@ let ssh_command =
              in
              Unix.execvp "ssh" args))
 
+let exec_command =
+  Command.make ~summary:"Execute a command in an instance."
+    ~readme:(fun () ->
+      "Run a command inside a running instance via SSH.\n\
+       If INSTANCE is omitted, `default` is used.\n\n\
+       Examples:\n\
+      \  epi exec -- ls /tmp\n\
+      \  epi exec dev-a -- uname -a")
+    (let open Command.Std in
+     let+ args =
+       Arg.pos_all Param.string ~docv:"[INSTANCE] -- COMMAND [ARGS...]"
+         ~doc:
+           "Optional instance name, then `--`, then the command to execute."
+     in
+     let instance_name, cmd_args =
+       match args with
+       | [] -> fail "exec requires a command. Usage: epi exec [INSTANCE] -- COMMAND [ARGS...]"
+       | first :: rest -> (
+           match Instance_store.find first with
+           | Some _ when rest <> [] -> (first, rest)
+           | Some _ -> fail "exec requires a command. Usage: epi exec [INSTANCE] -- COMMAND [ARGS...]"
+           | None -> (Instance_store.default_instance_name, args))
+     in
+     match Instance_store.find_runtime instance_name with
+     | None ->
+         fail
+           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
+              instance_name)
+     | Some runtime when not (instance_is_running ~instance_name runtime) ->
+         fail
+           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
+              instance_name)
+     | Some runtime -> (
+         match runtime.Instance_store.ssh_port with
+         | None ->
+             fail
+               (Printf.sprintf
+                  "Instance '%s' has no SSH port. Try stopping and restarting it."
+                  instance_name)
+         | Some port ->
+             let username =
+               match Sys.getenv_opt "USER" with
+               | Some u -> u
+               | None -> "user"
+             in
+             let port_str = string_of_int port in
+             let target = username ^ "@127.0.0.1" in
+             let key_args =
+               match runtime.Instance_store.ssh_key_path with
+               | Some path -> [| "-i"; path |]
+               | None -> [||]
+             in
+             let args =
+               Array.concat
+                 [
+                   [| "ssh"; "-T"; "-p"; port_str |];
+                   key_args;
+                   [|
+                     "-o";
+                     "StrictHostKeyChecking=no";
+                     "-o";
+                     "UserKnownHostsFile=/dev/null";
+                     target;
+                   |];
+                   Array.of_list cmd_args;
+                 ]
+             in
+             Unix.execvp "ssh" args))
+
 let console_command =
   Command.make ~summary:"Attach to an instance serial console."
     ~readme:(fun () ->
@@ -481,6 +550,7 @@ let cmd =
       ("rm", rm_command);
       ("console", console_command);
       ("ssh", ssh_command);
+      ("exec", exec_command);
       ("logs", lifecycle_command ~name:"logs" ~summary:"Show instance logs.");
       ("list", list_command);
       ("ls", list_command);
