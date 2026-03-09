@@ -1,0 +1,16 @@
+{
+  "enabledPlugins": {},
+  "plansDirectory": "./.claude/plans",
+  "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/worktree-create.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
