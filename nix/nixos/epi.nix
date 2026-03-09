@@ -133,6 +133,10 @@ in
 
     networking.useDHCP = true;
 
+    nix.settings = {
+      extra-experimental-features = "nix-command flakes";
+    };
+
     systemd.generators.epi-mounts = lib.getExe mountGenerator;
 
     services.cloud-init.enable = true;
