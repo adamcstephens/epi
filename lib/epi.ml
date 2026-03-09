@@ -591,3 +591,7 @@ let cmd =
       ("list", list_command);
       ("ls", list_command);
     ]
+
+module Instance_store = Instance_store
+module Vm_launch = Vm_launch
+module Process = Process

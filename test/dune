@@ -2,4 +2,5 @@
  (name test_epi)
  (libraries alcotest epi_test_helpers unix yojson)
  (deps %{bin:epi})
- (action (run %{test} %{bin:epi})))
+ (action
+  (run %{test} %{bin:epi} --quick-tests)))

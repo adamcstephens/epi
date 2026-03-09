@@ -4,7 +4,11 @@ let () =
       failwith "Expected path to epi binary as argv[1]"
     else Sys.argv.(1)
   in
-  Alcotest.run ~argv:[| Sys.argv.(0) |] "epi"
+  let alcotest_argv =
+    Array.append [| Sys.argv.(0) |]
+      (Array.sub Sys.argv 2 (Array.length Sys.argv - 2))
+  in
+  Alcotest.run ~argv:alcotest_argv "epi"
     [
       ("launch", Test_up.tests ~bin);
       ("console", Test_console.tests ~bin);
@@ -18,4 +22,6 @@ let () =
       ("mount", Test_mount.tests ~bin);
       ("misc", Test_misc.tests ~bin);
       ("exec", Test_exec.tests ~bin);
+      ("e2e-lifecycle", Test_lifecycle_e2e.tests ~bin);
+      ("e2e-mount", Test_mount_e2e.tests ~bin);
     ]
