@@ -160,7 +160,7 @@ let read_ssh_public_keys () =
             "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
         keys
 
-let generate_user_data ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths =
+let generate_user_data ~username ~ssh_keys ~user_exists ~host_uid =
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#cloud-config\ndisable_root: false\nusers:\n";
   Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
@@ -177,40 +177,6 @@ let generate_user_data ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths =
         (fun key ->
           Buffer.add_string buf (Printf.sprintf "      - %s\n" key))
         keys);
-  (match mount_paths with
-  | [] -> ()
-  | paths ->
-      let unit_name_of path =
-        let stripped =
-          if String.length path > 0 && path.[0] = '/' then
-            String.sub path 1 (String.length path - 1)
-          else path
-        in
-        String.map (fun c -> if c = '/' then '-' else c) stripped ^ ".mount"
-      in
-      Buffer.add_string buf "write_files:\n";
-      List.iteri (fun i path ->
-          let tag = Printf.sprintf "hostfs-%d" i in
-          let unit_name = unit_name_of path in
-          Buffer.add_string buf
-            (Printf.sprintf "  - path: /run/systemd/system/%s\n" unit_name);
-          Buffer.add_string buf "    content: |\n";
-          Buffer.add_string buf "      [Unit]\n";
-          Buffer.add_string buf "      Description=Mount virtiofs host filesystem\n";
-          Buffer.add_string buf "      [Mount]\n";
-          Buffer.add_string buf (Printf.sprintf "      What=%s\n" tag);
-          Buffer.add_string buf (Printf.sprintf "      Where=%s\n" path);
-          Buffer.add_string buf "      Type=virtiofs\n";
-          Buffer.add_string buf "      [Install]\n";
-          Buffer.add_string buf "      WantedBy=multi-user.target\n")
-        paths;
-      Buffer.add_string buf "runcmd:\n";
-      List.iter (fun path ->
-          let unit_name = unit_name_of path in
-          Buffer.add_string buf (Printf.sprintf "  - mkdir -p %s\n" path);
-          Buffer.add_string buf "  - systemctl daemon-reload\n";
-          Buffer.add_string buf (Printf.sprintf "  - systemctl start %s\n" unit_name))
-        paths);
   Buffer.contents buf
 
 let generate_meta_data ~instance_name =
@@ -284,7 +250,7 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
        Unix.mkdir staging_dir 0o755);
     let user_data_path = Filename.concat staging_dir "user-data" in
     let meta_data_path = Filename.concat staging_dir "meta-data" in
-    let user_data = generate_user_data ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths in
+    let user_data = generate_user_data ~username ~ssh_keys ~user_exists ~host_uid in
     let meta_data = generate_meta_data ~instance_name in
     let write path content =
       let channel = open_out path in
@@ -293,19 +259,23 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
     in
     write user_data_path user_data;
     write meta_data_path meta_data;
+    let epi_mounts_path =
+      match mount_paths with
+      | [] -> None
+      | paths ->
+          let p = Filename.concat staging_dir "epi-mounts" in
+          write p (String.concat "\n" paths ^ "\n");
+          Some p
+    in
+    let iso_files =
+      [ user_data_path; meta_data_path ]
+      @ Option.to_list epi_mounts_path
+    in
     let result =
       Process.run ~prog:(genisoimage_bin ())
         ~args:
-          [
-            "-output";
-            iso_path;
-            "-volid";
-            "cidata";
-            "-joliet";
-            "-rock";
-            user_data_path;
-            meta_data_path;
-          ]
+          ([ "-output"; iso_path; "-volid"; "cidata"; "-joliet"; "-rock" ]
+           @ iso_files)
         ()
     in
     if result.status <> 0 then
@@ -476,6 +446,7 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
       match virtiofsd_result with
       | Error _ as error -> error
       | Ok virtiofsd_entries ->
+      Instance_store.save_mounts instance_name mount_paths;
       let virtiofsd_pids = List.map fst virtiofsd_entries in
       let disk_arg = "path=" ^ launch_disk in
       let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in

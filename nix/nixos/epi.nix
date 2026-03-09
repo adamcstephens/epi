@@ -6,6 +6,54 @@
 }:
 let
   cfg = config.epi;
+  mountGenerator = pkgs.writeShellApplication {
+    name = "epi-mounts-generator";
+
+    bashOptions = [
+      "errexit"
+      "pipefail"
+    ];
+
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.util-linux
+    ];
+
+    text = ''
+      OUTPUT_DIR="/run/systemd/system"
+      CIDATA=$(blkid -L cidata 2>/dev/null) || exit 0
+
+      [ -b "$CIDATA" ] || exit 0
+
+      TMPDIR=$(mktemp -d)
+      trap 'umount "$TMPDIR" 2>/dev/null || true; rmdir "$TMPDIR" 2>/dev/null || true' EXIT
+
+      mount -o ro "$CIDATA" "$TMPDIR" || exit 0
+
+      EPI_MOUNTS="$TMPDIR/epi-mounts"
+      [ -f "$EPI_MOUNTS" ] || exit 0
+
+      mkdir -p "$OUTPUT_DIR/multi-user.target.wants"
+
+      i=0
+      while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        unit_name="''${path#/}"
+        unit_name="''${unit_name//\//-}.mount"
+        cat > "$OUTPUT_DIR/$unit_name" <<UNIT
+      [Unit]
+      Description=Mount virtiofs host filesystem $path
+
+      [Mount]
+      What=hostfs-$i
+      Where=$path
+      Type=virtiofs
+      UNIT
+        ln -sf "../$unit_name" "$OUTPUT_DIR/multi-user.target.wants/$unit_name"
+        i=$((i + 1))
+      done < "$EPI_MOUNTS"
+    '';
+  };
 in
 {
   options.epi = {
@@ -84,6 +132,8 @@ in
     ];
 
     networking.useDHCP = true;
+
+    systemd.generators.epi-mounts = lib.getExe mountGenerator;
 
     services.cloud-init.enable = true;
 

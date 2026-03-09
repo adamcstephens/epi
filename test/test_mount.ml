@@ -23,7 +23,7 @@ let tests ~bin =
                     assert_contains ~context:"hostfs tag in --fs arg"
                       launch_contents "hostfs"))));
     Alcotest.test_case
-      "up with --mount writes mounts directive in cloud-init user-data" `Quick
+      "up with --mount writes epi-mounts file in seed ISO staging" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -34,6 +34,18 @@ let tests ~bin =
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up with --mount userdata" result;
+                    let epi_mounts_path =
+                      Filename.concat
+                        (Filename.concat
+                          (Filename.concat state_dir "mount-userdata-test")
+                          "cidata")
+                        "epi-mounts"
+                    in
+                    if not (Sys.file_exists epi_mounts_path) then
+                      fail "expected epi-mounts file in cidata staging dir";
+                    let epi_mounts = read_file epi_mounts_path in
+                    assert_contains ~context:"mount path in epi-mounts"
+                      epi_mounts mount_dir;
                     let user_data_path =
                       Filename.concat
                         (Filename.concat
@@ -42,16 +54,10 @@ let tests ~bin =
                         "user-data"
                     in
                     let user_data = read_file user_data_path in
-                    assert_contains ~context:"write_files directive present"
-                      user_data "write_files:";
-                    assert_contains ~context:"systemd mount unit type" user_data
-                      "Type=virtiofs";
-                    assert_contains ~context:"systemd mount unit where" user_data
-                      (Printf.sprintf "Where=%s" mount_dir);
-                    assert_contains ~context:"runcmd starts unit" user_data
-                      "systemctl start";
-                    assert_contains ~context:"mount path matches host path"
-                      user_data mount_dir))));
+                    if contains user_data "write_files:" then
+                      fail "user-data must not contain write_files:";
+                    if contains user_data "runcmd" then
+                      fail "user-data must not contain runcmd"))));
     Alcotest.test_case "up without --mount does not write runcmd mount" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->

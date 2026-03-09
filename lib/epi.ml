@@ -420,7 +420,7 @@ let start_command =
          Instance_store.clear_runtime instance_name;
          match
            Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
-             ~mount_paths:[] ~disk_size:"40G" ~instance_name ~target
+             ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G" ~instance_name ~target
          with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
@@ -439,7 +439,7 @@ let start_command =
      | None -> (
          match
            Vm_launch.provision ~rebuild:false ~generate_ssh_key:false
-             ~mount_paths:[] ~disk_size:"40G" ~instance_name ~target
+             ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G" ~instance_name ~target
          with
          | Ok runtime ->
              Instance_store.set_provisioned ~instance_name ~target ~runtime;
