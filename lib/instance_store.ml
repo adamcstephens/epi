@@ -32,80 +32,100 @@ let serial_socket_path instance_name = instance_path instance_name "serial.sock"
 let ensure_instance_dir instance_name =
   Util.ensure_dir (instance_dir instance_name)
 
-let save_target instance_name target =
-  ensure_instance_dir instance_name;
-  let path = instance_path instance_name "target" in
-  let channel = open_out path in
-  output_string channel target;
-  output_char channel '\n';
-  close_out channel
+let state_json_path instance_name = instance_path instance_name "state.json"
 
-let load_target instance_name =
-  let path = instance_path instance_name "target" in
-  match Util.read_file path |> Option.map String.trim with
-  | Some s when s <> "" -> Some s
+let runtime_to_json (rt : runtime) =
+  let fields =
+    [ ("unit_id", `String rt.unit_id);
+      ("serial_socket", `String rt.serial_socket);
+      ("disk", `String rt.disk) ]
+    @ (match rt.ssh_port with Some p -> [("ssh_port", `Int p)] | None -> [])
+    @ (match rt.ssh_key_path with Some p -> [("ssh_key_path", `String p)] | None -> [])
+  in
+  `Assoc fields
+
+let runtime_of_json json =
+  let open Yojson.Basic.Util in
+  let unit_id = json |> member "unit_id" |> to_string_option in
+  match unit_id with
+  | Some unit_id when unit_id <> "" ->
+      Some {
+        unit_id;
+        serial_socket = json |> member "serial_socket" |> to_string_option |> Option.value ~default:"";
+        disk = json |> member "disk" |> to_string_option |> Option.value ~default:"";
+        ssh_port = json |> member "ssh_port" |> to_int_option;
+        ssh_key_path = json |> member "ssh_key_path" |> to_string_option;
+      }
   | _ -> None
 
-let save_runtime instance_name (rt : runtime) =
-  ensure_instance_dir instance_name;
-  let path = instance_path instance_name "runtime" in
-  let channel = open_out path in
-  Printf.fprintf channel "unit_id=%s\n" rt.unit_id;
-  Printf.fprintf channel "serial_socket=%s\n" rt.serial_socket;
-  Printf.fprintf channel "disk=%s\n" rt.disk;
-  (match rt.ssh_port with
-  | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
-  | None -> ());
-  (match rt.ssh_key_path with
-  | Some p -> Printf.fprintf channel "ssh_key_path=%s\n" p
-  | None -> ());
-  close_out channel
-
-let load_runtime instance_name =
-  let path = instance_path instance_name "runtime" in
+let load_state_json instance_name =
+  let path = state_json_path instance_name in
   match Util.read_file path with
   | None -> None
-  | Some content when String.trim content = "" -> None
-  | Some content ->
-    let pairs = Util.parse_key_value_output content in
-    let get key = List.assoc_opt key pairs in
-    let get_int key =
-      match get key with
-      | Some v -> int_of_string_opt v
-      | None -> None
-    in
-    match get "unit_id" with
-    | Some unit_id when unit_id <> "" ->
-        let serial_socket = Option.value ~default:"" (get "serial_socket") in
-        let disk = Option.value ~default:"" (get "disk") in
-        let ssh_port = get_int "ssh_port" in
-        let ssh_key_path = get "ssh_key_path" in
-        Some { unit_id; serial_socket; disk; ssh_port; ssh_key_path }
-    | _ -> None
+  | Some content -> (
+      match Yojson.Basic.from_string content with
+      | json -> Some json
+      | exception Yojson.Json_error _ -> None)
 
-let save_mounts instance_name paths =
+let save_state_json instance_name json =
   ensure_instance_dir instance_name;
-  let path = instance_path instance_name "mounts" in
+  let path = state_json_path instance_name in
+  let content = Yojson.Basic.pretty_to_string json ^ "\n" in
   let channel = open_out path in
-  List.iter (fun p ->
-      output_string channel p;
-      output_char channel '\n')
-    paths;
+  output_string channel content;
   close_out channel
 
+let save_target instance_name target =
+  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let fields = match base with `Assoc fs -> fs | _ -> [] in
+  let fields = List.filter (fun (k, _) -> k <> "target") fields in
+  save_state_json instance_name (`Assoc (("target", `String target) :: fields))
+
+let load_target instance_name =
+  match load_state_json instance_name with
+  | Some json -> (
+      let open Yojson.Basic.Util in
+      match json |> member "target" |> to_string_option with
+      | Some s when s <> "" -> Some s
+      | _ -> None)
+  | None -> None
+
+let save_runtime instance_name (rt : runtime) =
+  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let fields = match base with `Assoc fs -> fs | _ -> [] in
+  let fields = List.filter (fun (k, _) -> k <> "runtime") fields in
+  save_state_json instance_name (`Assoc (fields @ [("runtime", runtime_to_json rt)]))
+
+let load_runtime instance_name =
+  match load_state_json instance_name with
+  | Some json -> (
+      let open Yojson.Basic.Util in
+      match json |> member "runtime" with
+      | `Null -> None
+      | rt -> runtime_of_json rt)
+  | None -> None
+
+let save_mounts instance_name paths =
+  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let fields = match base with `Assoc fs -> fs | _ -> [] in
+  let fields = List.filter (fun (k, _) -> k <> "mounts") fields in
+  let mounts = `List (List.map (fun p -> `String p) paths) in
+  save_state_json instance_name (`Assoc (fields @ [("mounts", mounts)]))
+
 let load_mounts instance_name =
-  let path = instance_path instance_name "mounts" in
-  match Util.read_file path with
+  match load_state_json instance_name with
+  | Some json -> (
+      let open Yojson.Basic.Util in
+      match json |> member "mounts" with
+      | `Null -> []
+      | mounts -> mounts |> to_list |> List.filter_map to_string_option)
   | None -> []
-  | Some content ->
-      String.split_on_char '\n' content
-      |> List.map String.trim
-      |> List.filter (fun s -> s <> "")
 
 let set ~instance_name ~target =
-  save_target instance_name target;
-  let runtime_path = instance_path instance_name "runtime" in
-  if Sys.file_exists runtime_path then Sys.remove runtime_path
+  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let fields = match base with `Assoc fs -> fs | _ -> [] in
+  let fields = List.filter (fun (k, _) -> k <> "target" && k <> "runtime") fields in
+  save_state_json instance_name (`Assoc (("target", `String target) :: fields))
 
 let set_provisioned ~instance_name ~target ~runtime =
   save_target instance_name target;
@@ -124,7 +144,7 @@ let list () =
     |> List.filter (fun name ->
         let d = Filename.concat dir name in
         Sys.is_directory d
-        && Sys.file_exists (Filename.concat d "target"))
+        && Sys.file_exists (Filename.concat d "state.json"))
     |> List.filter_map (fun name ->
         match load_target name with
         | Some target -> Some (name, target)
@@ -132,8 +152,11 @@ let list () =
     |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
 let clear_runtime instance_name =
-  let path = instance_path instance_name "runtime" in
-  if Sys.file_exists path then Sys.remove path
+  match load_state_json instance_name with
+  | Some (`Assoc fields) ->
+      let fields = List.filter (fun (k, _) -> k <> "runtime") fields in
+      save_state_json instance_name (`Assoc fields)
+  | _ -> ()
 
 let remove_tree path =
   let rec walk p =

@@ -25,29 +25,6 @@ let tests =
         | Ok t ->
             Alcotest.(check string) "round-trip" target (Target.to_string t)
         | Error (`Msg e) -> Alcotest.fail e);
-    Alcotest.test_case "parse_key_value_output parses basic pairs" `Quick
-      (fun () ->
-        let pairs = Util.parse_key_value_output "kernel=/path\ndisk=/disk\n" in
-        Alcotest.(check (option string)) "kernel"
-          (Some "/path") (List.assoc_opt "kernel" pairs);
-        Alcotest.(check (option string)) "disk"
-          (Some "/disk") (List.assoc_opt "disk" pairs));
-    Alcotest.test_case "parse_key_value_output handles multi-equals values"
-      `Quick (fun () ->
-        let pairs = Util.parse_key_value_output "cmdline=a=b=c\n" in
-        Alcotest.(check (option string)) "cmdline"
-          (Some "a=b=c") (List.assoc_opt "cmdline" pairs));
-    Alcotest.test_case "parse_key_value_output skips empty values" `Quick
-      (fun () ->
-        let pairs = Util.parse_key_value_output "empty=\nvalid=yes\n" in
-        Alcotest.(check (option string)) "empty"
-          None (List.assoc_opt "empty" pairs);
-        Alcotest.(check (option string)) "valid"
-          (Some "yes") (List.assoc_opt "valid" pairs));
-    Alcotest.test_case "parse_key_value_output skips blank lines" `Quick
-      (fun () ->
-        let pairs = Util.parse_key_value_output "\n\nkey=val\n\n" in
-        Alcotest.(check int) "count" 1 (List.length pairs));
     Alcotest.test_case "is_nix_store_path detects store paths" `Quick (fun () ->
         Alcotest.(check bool) "store path" true
           (Target.is_nix_store_path "/nix/store/abc-pkg/vmlinuz");

@@ -24,12 +24,3 @@ let contains text snippet =
     in
     loop 0
 
-let parse_key_value_output text =
-  let add_pair acc line =
-    match String.split_on_char '=' line with
-    | key :: value_parts when key <> "" ->
-        let value = String.concat "=" value_parts |> String.trim in
-        if value = "" then acc else (String.trim key, value) :: acc
-    | _ -> acc
-  in
-  text |> String.split_on_char '\n' |> List.fold_left add_pair [] |> List.rev
