@@ -53,6 +53,32 @@ let resolve_console_attach_options () =
   in
   { read_stdin; capture_path; timeout_seconds }
 
+let resolve_no_wait no_wait_flag =
+  if no_wait_flag then true
+  else
+    match Sys.getenv_opt "EPI_NO_WAIT" with
+    | Some s -> (
+        match parse_env_boolean s with
+        | Some v -> v
+        | None ->
+            fail (Printf.sprintf "Invalid EPI_NO_WAIT=%S. Use true/false." s))
+    | None -> false
+
+let resolve_wait_timeout wait_timeout_opt =
+  match wait_timeout_opt with
+  | Some t -> t
+  | None ->
+      match Sys.getenv_opt "EPI_WAIT_TIMEOUT_SECONDS" with
+      | Some s -> (
+          match int_of_string_opt (String.trim s) with
+          | Some t when t > 0 -> t
+          | _ ->
+              fail
+                (Printf.sprintf
+                   "Invalid EPI_WAIT_TIMEOUT_SECONDS=%S. Expected a positive integer."
+                   s))
+      | None -> 120
+
 let resolve_instance_name instance_name_opt =
   match instance_name_opt with
   | Some instance_name -> instance_name
@@ -106,12 +132,22 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
     | Error error -> fail (Console.pp_console_error error)
 
 let provision_and_report ~command_name ~attach_console ~console_options
-    ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target =
-  match Vm_launch.provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size
+    ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target =
+  match Vm_launch.provision ~rebuild ~mount_paths ~disk_size
           ~instance_name ~target with
   | Error error -> fail (Vm_launch.pp_provision_error error)
   | Ok runtime ->
       Instance_store.set_provisioned ~instance_name ~target ~runtime;
+      if not no_wait then (
+        match runtime.Instance_store.ssh_port with
+        | Some ssh_port ->
+            Printf.printf "vm: waiting for SSH (timeout %ds)...\n%!" wait_timeout;
+            (match Vm_launch.wait_for_ssh ~ssh_port
+                     ~ssh_key_path:runtime.Instance_store.ssh_key_path
+                     ~timeout_seconds:wait_timeout with
+            | Ok () -> Printf.printf "vm: SSH ready\n%!"
+            | Error error -> fail (Vm_launch.pp_provision_error error))
+        | None -> ());
       if attach_console then
         attach_console_for_running_instance ~instance_name
           ~options:console_options runtime
@@ -150,11 +186,6 @@ let launch_command =
          ~doc:
            "Force re-evaluation and rebuild of the target, bypassing any \
             cached descriptor."
-     and+ generate_ssh_key =
-       Arg.flag [ "generate-ssh-key" ]
-         ~doc:
-           "Generate an ed25519 keypair for this instance and include it in \
-            cloud-init authorized_keys."
      and+ mount_paths =
        Arg.named_multi [ "mount" ] Param.string
          ~docv:"PATH"
@@ -167,10 +198,23 @@ let launch_command =
          ~doc:
            "Target size of the writable disk overlay (e.g. 40G, 50G). Only \
             applies when a new overlay is created. Defaults to 40G."
+     and+ no_wait =
+       Arg.flag [ "no-wait" ]
+         ~doc:
+           "Return immediately after the VM process starts without waiting \
+            for SSH connectivity."
+     and+ wait_timeout =
+       Arg.named_opt [ "wait-timeout" ] Param.int
+         ~docv:"SECONDS"
+         ~doc:
+           "Maximum seconds to wait for SSH connectivity (default 120). \
+            Overrides EPI_WAIT_TIMEOUT_SECONDS."
      in
      let target = Target.to_string target in
      let disk_size = Option.value disk_size ~default:"40G" in
      let console_options = resolve_console_attach_options () in
+     let no_wait = resolve_no_wait no_wait in
+     let wait_timeout = resolve_wait_timeout wait_timeout in
      let instance_name = resolve_instance_name instance_name in
      match Instance_store.find_runtime instance_name with
      | Some runtime when instance_is_running ~instance_name runtime ->
@@ -189,10 +233,10 @@ let launch_command =
          ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
          provision_and_report ~command_name:"launch" ~attach_console ~console_options
-           ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target
+           ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target
      | None ->
          provision_and_report ~command_name:"launch" ~attach_console ~console_options
-           ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target)
+           ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target)
 
 let lifecycle_command ~name ~summary =
   Command.make ~summary
@@ -247,24 +291,12 @@ let ssh_command =
              in
              let port_str = string_of_int port in
              let target = username ^ "@127.0.0.1" in
-             let key_args =
-               match runtime.Instance_store.ssh_key_path with
-               | Some path -> [| "-i"; path |]
-               | None -> [||]
-             in
              let args =
-               Array.concat
-                 [
-                   [| "ssh"; "-p"; port_str |];
-                   key_args;
-                   [|
-                     "-o";
-                     "StrictHostKeyChecking=no";
-                     "-o";
-                     "UserKnownHostsFile=/dev/null";
-                     target;
-                   |];
-                 ]
+               [| "ssh"; "-p"; port_str;
+                  "-i"; runtime.Instance_store.ssh_key_path;
+                  "-o"; "StrictHostKeyChecking=no";
+                  "-o"; "UserKnownHostsFile=/dev/null";
+                  target |]
              in
              Unix.execvp "ssh" args))
 
@@ -315,23 +347,14 @@ let exec_command =
              in
              let port_str = string_of_int port in
              let target = username ^ "@127.0.0.1" in
-             let key_args =
-               match runtime.Instance_store.ssh_key_path with
-               | Some path -> [| "-i"; path |]
-               | None -> [||]
-             in
              let args =
                Array.concat
                  [
-                   [| "ssh"; "-T"; "-p"; port_str |];
-                   key_args;
-                   [|
-                     "-o";
-                     "StrictHostKeyChecking=no";
-                     "-o";
-                     "UserKnownHostsFile=/dev/null";
-                     target;
-                   |];
+                   [| "ssh"; "-T"; "-p"; port_str;
+                      "-i"; runtime.Instance_store.ssh_key_path;
+                      "-o"; "StrictHostKeyChecking=no";
+                      "-o"; "UserKnownHostsFile=/dev/null";
+                      target |];
                    Array.of_list cmd_args;
                  ]
              in
@@ -410,8 +433,21 @@ let start_command =
        Arg.flag [ "console" ]
          ~doc:
            "Attach to the instance serial console immediately after starting."
+     and+ no_wait =
+       Arg.flag [ "no-wait" ]
+         ~doc:
+           "Return immediately after the VM process starts without waiting \
+            for SSH connectivity."
+     and+ wait_timeout =
+       Arg.named_opt [ "wait-timeout" ] Param.int
+         ~docv:"SECONDS"
+         ~doc:
+           "Maximum seconds to wait for SSH connectivity (default 120). \
+            Overrides EPI_WAIT_TIMEOUT_SECONDS."
      in
      let console_options = resolve_console_attach_options () in
+     let no_wait = resolve_no_wait no_wait in
+     let wait_timeout = resolve_wait_timeout wait_timeout in
      let instance_name = resolve_instance_name instance_name_opt in
      let target =
        match Instance_store.find instance_name with
@@ -446,12 +482,12 @@ let start_command =
          ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
          provision_and_report ~command_name:"start" ~attach_console ~console_options
-           ~rebuild:false ~generate_ssh_key:false
+           ~rebuild:false ~no_wait ~wait_timeout
            ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G"
            ~instance_name ~target
      | None ->
          provision_and_report ~command_name:"start" ~attach_console ~console_options
-           ~rebuild:false ~generate_ssh_key:false
+           ~rebuild:false ~no_wait ~wait_timeout
            ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G"
            ~instance_name ~target)
 

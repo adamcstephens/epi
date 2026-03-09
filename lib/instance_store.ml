@@ -5,7 +5,7 @@ type runtime = {
   serial_socket : string;
   disk : string;
   ssh_port : int option;
-  ssh_key_path : string option;
+  ssh_key_path : string;
 }
 
 let make_absolute path =
@@ -40,21 +40,22 @@ let runtime_to_json (rt : runtime) =
       ("serial_socket", `String rt.serial_socket);
       ("disk", `String rt.disk) ]
     @ (match rt.ssh_port with Some p -> [("ssh_port", `Int p)] | None -> [])
-    @ (match rt.ssh_key_path with Some p -> [("ssh_key_path", `String p)] | None -> [])
+    @ [("ssh_key_path", `String rt.ssh_key_path)]
   in
   `Assoc fields
 
 let runtime_of_json json =
   let open Yojson.Basic.Util in
   let unit_id = json |> member "unit_id" |> to_string_option in
-  match unit_id with
-  | Some unit_id when unit_id <> "" ->
+  let ssh_key_path = json |> member "ssh_key_path" |> to_string_option in
+  match (unit_id, ssh_key_path) with
+  | Some unit_id, Some ssh_key_path when unit_id <> "" && ssh_key_path <> "" ->
       Some {
         unit_id;
         serial_socket = json |> member "serial_socket" |> to_string_option |> Option.value ~default:"";
         disk = json |> member "disk" |> to_string_option |> Option.value ~default:"";
         ssh_port = json |> member "ssh_port" |> to_int_option;
-        ssh_key_path = json |> member "ssh_key_path" |> to_string_option;
+        ssh_key_path;
       }
   | _ -> None
 

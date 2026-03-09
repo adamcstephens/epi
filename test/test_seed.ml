@@ -104,10 +104,9 @@ let tests ~bin =
                     if not (Sys.file_exists user_data_path) then
                       fail "user-data file was not created";
                     let user_data = read_file user_data_path in
-                    if contains user_data "ssh_authorized_keys" then
-                      fail
-                        "ssh_authorized_keys should be omitted when no keys \
-                         found"))));
+                    assert_contains
+                      ~context:"generated key still present"
+                      user_data "ssh_authorized_keys:"))));
     Alcotest.test_case "missing genisoimage produces a clear error"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->

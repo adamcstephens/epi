@@ -122,6 +122,7 @@ let with_mock_runtime f =
           ("EPI_VIRTIOFSD_BIN", virtiofsd);
           ("EPI_MOCK_VM_SLEEP", "30");
           ("EPI_CACHE_DIR", cache_dir);
+          ("EPI_NO_WAIT", "1");
         ]
       in
       f ~extra_env ~launch_log ~disk)
