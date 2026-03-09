@@ -1,5 +1,4 @@
 type result = { status : int; stdout : string; stderr : string }
-type detached_result = { pid : int }
 
 let run ?(env = Unix.environment ()) ~prog ~args () =
   let argv = Array.of_list (prog :: args) in
@@ -34,42 +33,66 @@ let ensure_parent_dir path =
   in
   make_dir dir
 
-let run_detached ?(env = Unix.environment ()) ~prog ~args ~stdout_path
-    ~stderr_path () =
-  ensure_parent_dir stdout_path;
-  ensure_parent_dir stderr_path;
-  let argv = Array.of_list (prog :: args) in
-  let stdin_fd = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
-  let stdout_fd =
-    Unix.openfile stdout_path
-      [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ]
-      0o644
-  in
-  let stderr_fd =
-    Unix.openfile stderr_path
-      [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ]
-      0o644
-  in
-  let pid = Unix.fork () in
-  if pid = 0 then (
-    ignore (Unix.setsid ());
-    Unix.dup2 stdin_fd Unix.stdin;
-    Unix.dup2 stdout_fd Unix.stdout;
-    Unix.dup2 stderr_fd Unix.stderr;
-    Unix.close stdin_fd;
-    Unix.close stdout_fd;
-    Unix.close stderr_fd;
-    (try Unix.execvpe prog argv env with _ -> exit 127))
-  else (
-    Unix.close stdin_fd;
-    Unix.close stdout_fd;
-    Unix.close stderr_fd;
-    { pid })
+let escape_unit_name name =
+  let result = run ~prog:"systemd-escape" ~args:[ name ] () in
+  if result.status = 0 then result.stdout
+  else failwith (Printf.sprintf "systemd-escape failed for %S: %s" name result.stderr)
 
-let pid_is_alive pid =
-  try
-    Unix.kill pid 0;
-    true
-  with
-  | Unix.Unix_error (Unix.ESRCH, _, _) -> false
-  | Unix.Unix_error (Unix.EPERM, _, _) -> true
+let generate_unit_id () =
+  let buf = Buffer.create 16 in
+  let ic = open_in "/dev/urandom" in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () ->
+      for _ = 1 to 4 do
+        let byte = input_byte ic in
+        Buffer.add_string buf (Printf.sprintf "%02x" byte)
+      done);
+  Buffer.contents buf
+
+let systemctl_bin = "/run/current-system/sw/bin/systemctl"
+
+let setenv_args () =
+  Unix.environment ()
+  |> Array.to_list
+  |> List.filter_map (fun entry ->
+      match String.index_opt entry '=' with
+      | Some _ -> Some ("--setenv=" ^ entry)
+      | None -> None)
+
+let run_helper ~unit_name ~slice ~stdout_path ~stderr_path ~prog ~args () =
+  run ~prog:"systemd-run"
+    ~args:
+      ([ "--user"; "--collect";
+         "--unit=" ^ unit_name;
+         "--slice=" ^ slice;
+         "--property=StandardOutput=file:" ^ stdout_path;
+         "--property=StandardError=file:" ^ stderr_path ]
+       @ setenv_args ()
+       @ [ "--" ]
+       @ (prog :: args))
+    ()
+
+let run_service ~unit_name ~slice ~stdout_path ~stderr_path ~exec_stop_post
+    ~prog ~args () =
+  run ~prog:"systemd-run"
+    ~args:
+      ([ "--user"; "--collect";
+         "--unit=" ^ unit_name;
+         "--slice=" ^ slice;
+         "--property=Type=exec";
+         "--property=StandardOutput=file:" ^ stdout_path;
+         "--property=StandardError=file:" ^ stderr_path;
+         "--property=ExecStopPost=" ^ exec_stop_post ]
+       @ setenv_args ()
+       @ [ "--" ]
+       @ (prog :: args))
+    ()
+
+let unit_is_active unit_name =
+  let result = run ~prog:systemctl_bin ~args:[ "--user"; "is-active"; unit_name ] () in
+  result.status = 0
+
+let stop_unit unit_name =
+  let result = run ~prog:systemctl_bin ~args:[ "--user"; "stop"; unit_name ] () in
+  result.status = 0

@@ -26,12 +26,11 @@ let tests ~bin =
                 assert_success ~context:"tsv roundtrip up" result;
                 let entry = find_state_runtime ~state_dir "tsv-roundtrip" in
                 match entry with
-                | Some (_, _, _, _, _, Some port, _) when port > 0 && port <= 65535
-                  ->
-                    ()
-                | Some (_, _, _, _, _, None, _) ->
+                | Some (_, _, _, Some port_str, _) ->
+                    let port = int_of_string port_str in
+                    if port < 1 || port > 65535 then
+                      fail "ssh_port out of range: %d" port
+                | Some (_, _, _, None, _) ->
                     fail "expected ssh_port to be set after up"
-                | Some (_, _, _, _, _, Some port, _) ->
-                    fail "ssh_port out of range: %d" port
                 | None -> fail "expected state entry for tsv-roundtrip")));
   ]

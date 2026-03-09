@@ -1,11 +1,9 @@
 let default_instance_name = "default"
 
 type runtime = {
-  pid : int;
+  unit_id : string;
   serial_socket : string;
   disk : string;
-  passt_pid : int option;
-  virtiofsd_pids : int list;
   ssh_port : int option;
   ssh_key_path : string option;
 }
@@ -66,17 +64,9 @@ let save_runtime instance_name (rt : runtime) =
   ensure_instance_dir instance_name;
   let path = instance_path instance_name "runtime" in
   let channel = open_out path in
-  Printf.fprintf channel "pid=%d\n" rt.pid;
+  Printf.fprintf channel "unit_id=%s\n" rt.unit_id;
   Printf.fprintf channel "serial_socket=%s\n" rt.serial_socket;
   Printf.fprintf channel "disk=%s\n" rt.disk;
-  (match rt.passt_pid with
-  | Some p -> Printf.fprintf channel "passt_pid=%d\n" p
-  | None -> ());
-  (match rt.virtiofsd_pids with
-  | [] -> ()
-  | pids ->
-      Printf.fprintf channel "virtiofsd_pids=%s\n"
-        (String.concat "," (List.map string_of_int pids)));
   (match rt.ssh_port with
   | Some p -> Printf.fprintf channel "ssh_port=%d\n" p
   | None -> ());
@@ -97,19 +87,13 @@ let load_runtime instance_name =
       | Some v -> int_of_string_opt v
       | None -> None
     in
-    match get_int "pid" with
-    | Some pid when pid > 0 ->
+    match get "unit_id" with
+    | Some unit_id when unit_id <> "" ->
         let serial_socket = Option.value ~default:"" (get "serial_socket") in
         let disk = Option.value ~default:"" (get "disk") in
-        let passt_pid = get_int "passt_pid" in
-        let virtiofsd_pids =
-          match get "virtiofsd_pids" with
-          | Some s -> String.split_on_char ',' s |> List.filter_map int_of_string_opt
-          | None -> (match get_int "virtiofsd_pid" with Some p -> [ p ] | None -> [])
-        in
         let ssh_port = get_int "ssh_port" in
         let ssh_key_path = get "ssh_key_path" in
-        Some { pid; serial_socket; disk; passt_pid; virtiofsd_pids; ssh_port; ssh_key_path }
+        Some { unit_id; serial_socket; disk; ssh_port; ssh_key_path }
     | _ -> None
 
 let save_mounts instance_name paths =
@@ -179,6 +163,20 @@ let remove instance_name =
   let dir = instance_dir instance_name in
   if Sys.file_exists dir then remove_tree dir
 
+let vm_unit_name ~instance_name ~unit_id =
+  let escaped = Process.escape_unit_name instance_name in
+  Printf.sprintf "epi-%s-%s-vm.service" escaped unit_id
+
+let slice_name ~instance_name ~unit_id =
+  let escaped = Process.escape_unit_name instance_name in
+  Printf.sprintf "epi-%s-%s.slice" escaped unit_id
+
+let instance_is_running instance_name =
+  match load_runtime instance_name with
+  | Some runtime ->
+      Process.unit_is_active (vm_unit_name ~instance_name ~unit_id:runtime.unit_id)
+  | None -> false
+
 let find_running_owner_by_disk disk =
   let dir = state_dir () in
   if not (Sys.file_exists dir) then None
@@ -189,29 +187,8 @@ let find_running_owner_by_disk disk =
         Sys.is_directory (Filename.concat dir name))
     |> List.find_map (fun name ->
         match load_runtime name with
-        | Some ({ pid; disk = runtime_disk; _ } as instance_runtime)
-          when String.equal runtime_disk disk && Process.pid_is_alive pid ->
+        | Some ({ disk = runtime_disk; unit_id; _ } as instance_runtime)
+          when String.equal runtime_disk disk
+               && Process.unit_is_active (vm_unit_name ~instance_name:name ~unit_id) ->
             Some (name, instance_runtime)
         | _ -> None)
-
-let kill_if_alive pid =
-  try Unix.kill pid Sys.sigterm with Unix.Unix_error (Unix.ESRCH, _, _) -> ()
-
-let reconcile_runtime () =
-  let dir = state_dir () in
-  if not (Sys.file_exists dir) then ()
-  else
-    Sys.readdir dir
-    |> Array.iter (fun name ->
-        let d = Filename.concat dir name in
-        if Sys.is_directory d then
-          match load_runtime name with
-          | Some { pid; serial_socket; passt_pid; virtiofsd_pids; _ }
-            when not (Process.pid_is_alive pid) ->
-              (match passt_pid with
-              | Some passt_pid -> kill_if_alive passt_pid
-              | None -> ());
-              List.iter kill_if_alive virtiofsd_pids;
-              if Sys.file_exists serial_socket then Unix.unlink serial_socket;
-              clear_runtime name
-          | _ -> ())

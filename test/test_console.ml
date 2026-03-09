@@ -1,5 +1,26 @@
 open Test_helpers
 
+let with_systemd_mock_instance ~state_dir ~instance_name ~serial_socket f =
+  let unit_id = Printf.sprintf "test%d" (Unix.getpid ()) in
+  let escaped = escape_unit_name instance_name in
+  let vm_unit = Printf.sprintf "epi-%s-%s-vm" escaped unit_id in
+  let slice = Printf.sprintf "epi-%s-%s.slice" escaped unit_id in
+  let status, _, stderr = run_process ~prog:"systemd-run"
+    ~args:[ "--user"; "--collect";
+            "--unit=" ^ vm_unit; "--slice=" ^ slice;
+            "--property=Type=exec";
+            "--property=StandardOutput=file:/dev/null";
+            "--property=StandardError=file:/dev/null";
+            "--property=ExecStopPost=" ^ systemctl_bin ^ " --user stop " ^ slice;
+            "--"; "sleep"; "30" ] in
+  if status <> 0 then
+    fail "failed to create test systemd service: %s" stderr;
+  write_state_entry ~state_dir ~instance_name ~target:".#test"
+    ~unit_id ~serial_socket ~disk:"/tmp/test.disk" ();
+  Fun.protect
+    ~finally:(fun () -> ignore (stop_unit slice))
+    (fun () -> f ())
+
 let tests ~bin =
   [
     Alcotest.test_case "reports not-running instances with guidance"
@@ -18,13 +39,11 @@ let tests ~bin =
       `Quick (fun () ->
         with_state_dir (fun state_dir ->
             with_temp_dir "epi-console-running" (fun dir ->
-                with_sleep_process (fun pid ->
-                    let serial_socket = Filename.concat dir "dev-a.sock" in
-                    with_unix_socket_server ~socket_path:serial_socket
-                      ~payload:"console-connected\n" (fun () ->
-                        write_state_entry ~state_dir ~instance_name:"dev-a"
-                          ~target:".#dev-a" ~pid ~serial_socket
-                          ~disk:"/tmp/dev-a.disk" ();
+                let serial_socket = Filename.concat dir "dev-a.sock" in
+                with_unix_socket_server ~socket_path:serial_socket
+                  ~payload:"console-connected\n" (fun () ->
+                    with_systemd_mock_instance ~state_dir
+                      ~instance_name:"dev-a" ~serial_socket (fun () ->
                         let result =
                           run_cli ~bin ~state_dir [ "console"; "dev-a" ]
                         in
@@ -36,14 +55,12 @@ let tests ~bin =
       `Quick (fun () ->
         with_state_dir (fun state_dir ->
             with_temp_dir "epi-console-capture" (fun dir ->
-                with_sleep_process (fun pid ->
-                    let serial_socket = Filename.concat dir "dev-a.sock" in
-                    let capture_path = Filename.concat dir "capture.log" in
-                    with_unix_socket_server ~socket_path:serial_socket
-                      ~payload:"capture-connected\n" (fun () ->
-                        write_state_entry ~state_dir ~instance_name:"dev-a"
-                          ~target:".#dev-a" ~pid ~serial_socket
-                          ~disk:"/tmp/dev-a.disk" ();
+                let serial_socket = Filename.concat dir "dev-a.sock" in
+                let capture_path = Filename.concat dir "capture.log" in
+                with_unix_socket_server ~socket_path:serial_socket
+                  ~payload:"capture-connected\n" (fun () ->
+                    with_systemd_mock_instance ~state_dir
+                      ~instance_name:"dev-a" ~serial_socket (fun () ->
                         let result =
                           run_cli_with_env ~bin ~state_dir
                             ~extra_env:
@@ -62,11 +79,8 @@ let tests ~bin =
     Alcotest.test_case "reports unavailable serial endpoint for running instance"
       `Quick (fun () ->
         with_state_dir (fun state_dir ->
-            with_sleep_process (fun pid ->
-                write_state_entry ~state_dir ~instance_name:"dev-a"
-                  ~target:".#dev-a" ~pid
-                  ~serial_socket:"/tmp/epi-nonexistent.sock"
-                  ~disk:"/tmp/disk.img" ();
+            with_systemd_mock_instance ~state_dir ~instance_name:"dev-a"
+              ~serial_socket:"/tmp/epi-nonexistent.sock" (fun () ->
                 let result = run_cli ~bin ~state_dir [ "console"; "dev-a" ] in
                 assert_failure ~context:"console unavailable endpoint" result;
                 let _, _, err = result in
@@ -78,13 +92,11 @@ let tests ~bin =
       `Quick (fun () ->
         with_state_dir (fun state_dir ->
             with_temp_dir "epi-console-timeout" (fun dir ->
-                with_sleep_process (fun pid ->
-                    let serial_socket = Filename.concat dir "dev-a.sock" in
-                    with_hanging_unix_socket_server ~socket_path:serial_socket
-                      ~hold_seconds:0.5 (fun () ->
-                        write_state_entry ~state_dir ~instance_name:"dev-a"
-                          ~target:".#dev-a" ~pid ~serial_socket
-                          ~disk:"/tmp/dev-a.disk" ();
+                let serial_socket = Filename.concat dir "dev-a.sock" in
+                with_hanging_unix_socket_server ~socket_path:serial_socket
+                  ~hold_seconds:0.5 (fun () ->
+                    with_systemd_mock_instance ~state_dir
+                      ~instance_name:"dev-a" ~serial_socket (fun () ->
                         let result =
                           run_cli_with_env ~bin ~state_dir
                             ~extra_env:

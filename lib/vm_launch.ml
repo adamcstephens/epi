@@ -10,7 +10,7 @@ type provision_error =
       target : string;
       disk : string;
       owner_instance : string;
-      owner_pid : int;
+      owner_unit_id : string;
     }
   | Vm_disk_lock_held_unknown of { target : string; disk : string }
   | Vm_exited_immediately of { target : string; details : string }
@@ -22,6 +22,7 @@ type provision_error =
   | Virtiofsd_failed of { target : string; details : string }
   | Mount_path_not_a_directory of { target : string; path : string }
   | Vm_disk_resize_failed of { target : string; details : string }
+  | Systemd_session_unavailable of { target : string; details : string }
 
 let lock_conflict stderr =
   let lowered = Target.lowercase stderr in
@@ -35,9 +36,9 @@ let classify_launch_failure ~target ~descriptor ~status ~stderr =
     match Instance_store.find_running_owner_by_disk descriptor.Target.disk with
     | Some
         ( owner_instance,
-          { Instance_store.pid = owner_pid; _ } ) ->
+          { Instance_store.unit_id = owner_unit_id; _ } ) ->
         Vm_disk_lock_held_by_instance
-          { target; disk = descriptor.Target.disk; owner_instance; owner_pid }
+          { target; disk = descriptor.Target.disk; owner_instance; owner_unit_id }
     | None -> Vm_disk_lock_held_unknown { target; disk = descriptor.Target.disk }
   else
     Vm_launch_failed
@@ -318,6 +319,13 @@ let generate_ssh_key ~instance_name =
     let pub_content = Target.read_file_if_exists pub_path |> String.trim in
     (key_path, pub_content)
 
+let is_session_unavailable_error stderr =
+  let lowered = Target.lowercase stderr in
+  Target.contains lowered "no such file or directory"
+  && Target.contains lowered "user"
+  || Target.contains lowered "failed to get d-bus connection"
+  || Target.contains lowered "no user session"
+
 let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target (descriptor : Target.descriptor) =
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
@@ -381,6 +389,9 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
   match ensure_writable_disk ~instance_name ~target ~disk_size descriptor with
   | Error _ as error -> error
   | Ok launch_disk -> (
+      let unit_id = Process.generate_unit_id () in
+      let escaped = Process.escape_unit_name instance_name in
+      let slice = Printf.sprintf "epi-%s-%s.slice" escaped unit_id in
       if Sys.file_exists passt_sock then Unix.unlink passt_sock;
       let passt_repair_sock = passt_sock ^ ".repair" in
       if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
@@ -390,15 +401,21 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
       let passt_stderr_log =
         Filename.concat instance_dir "passt.stderr.log"
       in
-      let passt_proc =
-        Process.run_detached ~prog:(passt_bin ())
+      let passt_unit = Printf.sprintf "epi-%s-%s-passt" escaped unit_id in
+      let passt_result =
+        Process.run_helper ~unit_name:passt_unit ~slice
+          ~stdout_path:passt_stdout_log ~stderr_path:passt_stderr_log
+          ~prog:(passt_bin ())
           ~args:[ "--foreground"; "--vhost-user"; "--socket"; passt_sock;
                   "-t"; Printf.sprintf "%d:22" ssh_port ]
-          ~stdout_path:passt_stdout_log
-          ~stderr_path:passt_stderr_log
           ()
       in
-      if not (wait_for_passt_socket passt_sock 2000) then
+      if passt_result.status <> 0 then
+        if is_session_unavailable_error passt_result.stderr then
+          Error (Systemd_session_unavailable { target; details = passt_result.stderr })
+        else
+          Error (Passt_failed { target; details = passt_result.stderr })
+      else if not (wait_for_passt_socket passt_sock 2000) then
         let stdout = Target.read_file_if_exists passt_stdout_log |> String.trim in
         let stderr = Target.read_file_if_exists passt_stderr_log |> String.trim in
         let details =
@@ -407,7 +424,6 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
           | "", s | s, "" -> s
           | out, err -> out ^ "\n" ^ err
         in
-        let _ = Unix.waitpid [ Unix.WNOHANG ] passt_proc.pid in
         Error (Passt_failed { target; details })
       else
       let start_virtiofsd i path =
@@ -415,12 +431,17 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
         if Sys.file_exists sock then Unix.unlink sock;
         let stdout_log = Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.stdout.log" i) in
         let stderr_log = Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.stderr.log" i) in
-        let proc =
-          Process.run_detached ~prog:(virtiofsd_bin ())
+        let virtiofsd_unit = Printf.sprintf "epi-%s-%s-virtiofsd-%d" escaped unit_id i in
+        let result =
+          Process.run_helper ~unit_name:virtiofsd_unit ~slice
+            ~stdout_path:stdout_log ~stderr_path:stderr_log
+            ~prog:(virtiofsd_bin ())
             ~args:[ "--socket-path"; sock; "--shared-dir"; path ]
-            ~stdout_path:stdout_log ~stderr_path:stderr_log ()
+            ()
         in
-        if not (wait_for_passt_socket sock 2000) then
+        if result.status <> 0 then
+          Error (Virtiofsd_failed { target; details = result.stderr })
+        else if not (wait_for_passt_socket sock 2000) then
           let stdout = Target.read_file_if_exists stdout_log |> String.trim in
           let stderr = Target.read_file_if_exists stderr_log |> String.trim in
           let details =
@@ -429,9 +450,8 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
             | "", s | s, "" -> s
             | out, err -> out ^ "\n" ^ err
           in
-          let _ = Unix.waitpid [ Unix.WNOHANG ] proc.pid in
           Error (Virtiofsd_failed { target; details })
-        else Ok (proc.pid, sock)
+        else Ok sock
       in
       let virtiofsd_result =
         let rec loop acc i = function
@@ -439,28 +459,27 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
           | path :: rest -> (
               match start_virtiofsd i path with
               | Error _ as e -> e
-              | Ok entry -> loop (entry :: acc) (i + 1) rest)
+              | Ok sock -> loop (sock :: acc) (i + 1) rest)
         in
         loop [] 0 mount_paths
       in
       match virtiofsd_result with
       | Error _ as error -> error
-      | Ok virtiofsd_entries ->
+      | Ok virtiofsd_sockets ->
       Instance_store.save_mounts instance_name mount_paths;
-      let virtiofsd_pids = List.map fst virtiofsd_entries in
       let disk_arg = "path=" ^ launch_disk in
       let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
       let net_arg =
         "vhost_user=true,socket=" ^ passt_sock ^ ",vhost_mode=client"
       in
       let fs_args =
-        match virtiofsd_entries with
+        match virtiofsd_sockets with
         | [] -> []
-        | entries ->
+        | sockets ->
             let values =
-              List.mapi (fun i (_, sock) ->
+              List.mapi (fun i sock ->
                   Printf.sprintf "tag=hostfs-%d,socket=%s" i sock)
-                entries
+                sockets
             in
             "--fs" :: values
       in
@@ -493,47 +512,58 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
         | Some initrd -> base_args @ [ "--initramfs"; initrd ]
         | None -> base_args
       in
-      let detached =
-        Process.run_detached ~prog:cloud_hypervisor_bin ~args
-          ~stdout_path:launch_stdout ~stderr_path:launch_stderr ()
+      let exec_stop_post =
+        Printf.sprintf "%s --user stop %s" Process.systemctl_bin slice
       in
-      let _ = Unix.select [] [] [] 0.1 in
-      let waited_pid, status = Unix.waitpid [ Unix.WNOHANG ] detached.pid in
-      if waited_pid = 0 then
-        Ok
-          {
-            Instance_store.pid = detached.pid;
-            serial_socket;
-            disk = launch_disk;
-            passt_pid = Some passt_proc.pid;
-            virtiofsd_pids;
-            ssh_port = Some ssh_port;
-            ssh_key_path;
-          }
-      else
-        let stderr = Target.read_file_if_exists launch_stderr |> String.trim in
-        match status with
-        | Unix.WEXITED code ->
+      let vm_unit = Printf.sprintf "epi-%s-%s-vm" escaped unit_id in
+      let vm_result =
+        Process.run_service ~unit_name:vm_unit ~slice
+          ~stdout_path:launch_stdout ~stderr_path:launch_stderr
+          ~exec_stop_post
+          ~prog:cloud_hypervisor_bin ~args ()
+      in
+      if vm_result.status <> 0 then
+        if is_session_unavailable_error vm_result.stderr then
+          Error (Systemd_session_unavailable { target; details = vm_result.stderr })
+        else
+          let stderr = Target.read_file_if_exists launch_stderr |> String.trim in
+          if lock_conflict stderr then
+            Error (classify_launch_failure ~target ~descriptor ~status:vm_result.status ~stderr)
+          else
             Error
-              (classify_launch_failure ~target ~descriptor ~status:code ~stderr)
-        | Unix.WSIGNALED signal ->
-            Error
-              (Vm_exited_immediately
+              (Vm_launch_failed
                  {
                    target;
-                   details =
-                     Printf.sprintf "cloud-hypervisor terminated by signal %d"
-                       signal;
+                   exit_code = vm_result.status;
+                   details = (if vm_result.stderr = "" then "<no stderr>" else vm_result.stderr);
                  })
-        | Unix.WSTOPPED signal ->
+      else
+        (* systemd-run returns 0 after creating the unit, but the VM process
+           may exit immediately (e.g. exec failure, lock conflict). Wait
+           briefly for the process to settle, then verify it is still alive. *)
+        let vm_service = vm_unit ^ ".service" in
+        let _ = Unix.select [] [] [] 0.15 in
+        if not (Process.unit_is_active vm_service) then
+          let stderr = Target.read_file_if_exists launch_stderr |> String.trim in
+          if lock_conflict stderr then
+            Error (classify_launch_failure ~target ~descriptor ~status:1 ~stderr)
+          else
             Error
-              (Vm_exited_immediately
+              (Vm_launch_failed
                  {
                    target;
-                   details =
-                     Printf.sprintf "cloud-hypervisor stopped (signal %d)"
-                       signal;
-                 }))
+                   exit_code = 1;
+                   details = (if stderr = "" then "VM exited immediately after start" else stderr);
+                 })
+        else
+          Ok
+            {
+              Instance_store.unit_id;
+              serial_socket;
+              disk = launch_disk;
+              ssh_port = Some ssh_port;
+              ssh_key_path;
+            })
 
 let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target =
   Printf.printf "vm: resolving target=%s\n%!" target;
@@ -569,11 +599,11 @@ let pp_provision_error = function
   | Vm_launch_failed { target; exit_code; details } ->
       Printf.sprintf "VM launch failed for %s (exit=%d): %s" target exit_code
         details
-  | Vm_disk_lock_held_by_instance { target; disk; owner_instance; owner_pid } ->
+  | Vm_disk_lock_held_by_instance { target; disk; owner_instance; owner_unit_id } ->
       Printf.sprintf
         "VM launch failed for %s: another running VM already holds disk lock \
-         %s (owner=%s pid=%d). Stop that instance and retry."
-        target disk owner_instance owner_pid
+         %s (owner=%s unit_id=%s). Stop that instance and retry."
+        target disk owner_instance owner_unit_id
   | Vm_disk_lock_held_unknown { target; disk } ->
       Printf.sprintf
         "VM launch failed for %s: disk image is already locked by another \
@@ -616,3 +646,9 @@ let pp_provision_error = function
   | Vm_disk_resize_failed { target; details } ->
       Printf.sprintf
         "VM launch failed for %s: disk resize failed: %s" target details
+  | Systemd_session_unavailable { target; details } ->
+      Printf.sprintf
+        "VM launch failed for %s: systemd user session unavailable: %s\n\
+         Ensure your user session is active. You may need to run: loginctl enable-linger %s"
+        target details
+        (match Sys.getenv_opt "USER" with Some u -> u | None -> "$USER")
