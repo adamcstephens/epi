@@ -1,8 +1,6 @@
 ## Purpose
 Define the CLI surface for managing development VM instances, including creation, lifecycle operations, and instance inventory.
-
 ## Requirements
-
 ### Requirement: Launch command creates or starts an instance from a target
 The CLI SHALL provide a `launch` command that accepts an optional positional instance name and a required `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use `default` as the instance name.
 
@@ -30,14 +28,18 @@ The CLI SHALL treat `--target` as a single string value in `<flake-ref>#<config-
 - **AND** the error states that both flake reference and config name are required
 
 ### Requirement: Lifecycle commands operate on instance identity
-The CLI SHALL treat lifecycle commands as operating on instance identity, not on target identity. The commands `stop`, `start`, `rebuild`, `ssh`, and `logs` SHALL accept an optional positional instance name and MUST default to `default` when omitted.
+The CLI SHALL treat lifecycle commands as operating on instance identity, not on target identity. The commands `down`, `rebuild`, `ssh`, `exec`, and `logs` SHALL accept an optional positional instance name and MUST default to `default` when omitted.
 
 #### Scenario: Explicit lifecycle target
-- **WHEN** a user runs `epi stop dev-a`
+- **WHEN** a user runs `epi down dev-a`
 - **THEN** the CLI selects instance `dev-a` for shutdown
 
 #### Scenario: Implicit default lifecycle target
 - **WHEN** a user runs `epi ssh`
+- **THEN** the CLI selects instance `default`
+
+#### Scenario: Exec uses default instance
+- **WHEN** a user runs `epi exec -- hostname`
 - **THEN** the CLI selects instance `default`
 
 ### Requirement: Missing default instance returns clear guidance
@@ -118,3 +120,4 @@ The `epi logs` command SHALL display logs for the instance's systemd services by
 - **WHEN** `epi logs dev-a` is invoked and `dev-a` has no stored runtime
 - **THEN** the command exits non-zero
 - **AND** the error states that no runtime is found for the instance
+
