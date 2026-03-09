@@ -43,7 +43,7 @@ let tests =
                 serial_socket = "/tmp/test.sock";
                 disk = "/tmp/test.img";
                 ssh_port = Some 2222;
-                ssh_key_path = Some "/tmp/test_key";
+                ssh_key_path = "/tmp/test_key";
               }
             in
             Instance_store.set_provisioned ~instance_name:"roundtrip"
@@ -56,8 +56,8 @@ let tests =
                 Alcotest.(check string) "disk" "/tmp/test.img" r.disk;
                 Alcotest.(check (option int)) "ssh_port" (Some 2222)
                   r.ssh_port;
-                Alcotest.(check (option string)) "ssh_key_path"
-                  (Some "/tmp/test_key") r.ssh_key_path
+                Alcotest.(check string) "ssh_key_path"
+                  "/tmp/test_key" r.ssh_key_path
             | None -> Alcotest.fail "expected runtime to be found"));
     Alcotest.test_case "save and load target round-trips" `Quick (fun () ->
         with_state_dir (fun _dir ->
@@ -88,7 +88,7 @@ let tests =
                 serial_socket = "/tmp/s.sock";
                 disk = "/tmp/d.img";
                 ssh_port = None;
-                ssh_key_path = None;
+                ssh_key_path = "/tmp/clear_key";
               }
             in
             Instance_store.set_provisioned ~instance_name:"clear-rt"
@@ -107,7 +107,7 @@ let tests =
             match Instance_store.find "remove-me" with
             | None -> ()
             | Some _ -> Alcotest.fail "expected entry to be removed"));
-    Alcotest.test_case "runtime with optional fields as None round-trips"
+    Alcotest.test_case "runtime with ssh_port as None round-trips"
       `Quick (fun () ->
         with_state_dir (fun _dir ->
             let runtime : Instance_store.runtime =
@@ -116,7 +116,7 @@ let tests =
                 serial_socket = "/tmp/s.sock";
                 disk = "/tmp/d.img";
                 ssh_port = None;
-                ssh_key_path = None;
+                ssh_key_path = "/tmp/none_key";
               }
             in
             Instance_store.set_provisioned ~instance_name:"none-opts"
@@ -124,7 +124,25 @@ let tests =
             match Instance_store.find_runtime "none-opts" with
             | Some r ->
                 Alcotest.(check (option int)) "ssh_port" None r.ssh_port;
-                Alcotest.(check (option string)) "ssh_key_path" None
+                Alcotest.(check string) "ssh_key_path" "/tmp/none_key"
                   r.ssh_key_path
             | None -> Alcotest.fail "expected runtime to be found"));
+    Alcotest.test_case "runtime without ssh_key_path returns None (stale)"
+      `Quick (fun () ->
+        with_state_dir (fun dir ->
+            let instance_dir = Filename.concat dir "stale-key" in
+            Unix.mkdir instance_dir 0o755;
+            let target_path = Filename.concat instance_dir "target" in
+            let oc = open_out target_path in
+            output_string oc ".#test\n";
+            close_out oc;
+            let runtime_path = Filename.concat instance_dir "runtime" in
+            let oc = open_out runtime_path in
+            Printf.fprintf oc "unit_id=stale0001\n";
+            Printf.fprintf oc "serial_socket=/tmp/s.sock\n";
+            Printf.fprintf oc "disk=/tmp/d.img\n";
+            close_out oc;
+            match Instance_store.find_runtime "stale-key" with
+            | None -> ()
+            | Some _ -> Alcotest.fail "expected stale runtime without ssh_key_path to return None"));
   ]

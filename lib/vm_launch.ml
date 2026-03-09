@@ -22,6 +22,7 @@ type provision_error =
   | Mount_path_not_a_directory of { target : string; path : string }
   | Vm_disk_resize_failed of { target : string; details : string }
   | Systemd_session_unavailable of { target : string; details : string }
+  | Ssh_wait_timeout of { timeout_seconds : int }
 
 
 let qemu_img_bin () =
@@ -301,7 +302,7 @@ let is_session_unavailable_error stderr =
   || Util.contains lowered "failed to get d-bus connection"
   || Util.contains lowered "no user session"
 
-let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target (descriptor : Target.descriptor) =
+let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor : Target.descriptor) =
   let ( let* ) = Result.bind in
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
@@ -319,23 +320,11 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
   in
   let instance_dir = Instance_store.instance_dir instance_name in
   let ssh_keys = read_ssh_public_keys () in
-  let* generated_key =
-    if do_generate_ssh_key then
-      match generate_ssh_key ~target ~instance_name with
-      | Ok (key_path, pub_content) ->
-          Printf.printf "vm: generated SSH key %s\n%!" key_path;
-          Ok (Some (key_path, pub_content))
-      | Error _ as error -> error
-    else Ok None
+  let* (ssh_key_path, pub_content) =
+    generate_ssh_key ~target ~instance_name
   in
-  let ssh_keys =
-    match generated_key with
-    | Some (_, pub_content) -> ssh_keys @ [ pub_content ]
-    | None -> ssh_keys
-  in
-  let ssh_key_path =
-    match generated_key with Some (path, _) -> Some path | None -> None
-  in
+  Printf.printf "vm: generated SSH key %s\n%!" ssh_key_path;
+  let ssh_keys = ssh_keys @ [ pub_content ] in
   let host_uid = Unix.getuid () in
   let user_exists = List.mem username descriptor.configured_users in
   let passt_sock = Filename.concat instance_dir "passt.sock" in
@@ -486,7 +475,36 @@ let launch_detached ~generate_ssh_key:do_generate_ssh_key ~mount_paths ~disk_siz
       Ok { Instance_store.unit_id; serial_socket; disk = launch_disk;
            ssh_port = Some ssh_port; ssh_key_path }
 
-let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target =
+let wait_for_ssh ~ssh_port ~ssh_key_path ~timeout_seconds =
+  let username =
+    match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
+  in
+  let port_str = string_of_int ssh_port in
+  let target = username ^ "@127.0.0.1" in
+  let deadline = Unix.gettimeofday () +. float_of_int timeout_seconds in
+  let rec loop () =
+    let result =
+      Process.run ~prog:"ssh"
+        ~args:[
+          "-p"; port_str;
+          "-i"; ssh_key_path;
+          "-o"; "ConnectTimeout=5";
+          "-o"; "StrictHostKeyChecking=no";
+          "-o"; "UserKnownHostsFile=/dev/null";
+          "-o"; "BatchMode=yes";
+          target; "true"
+        ] ()
+    in
+    if result.status = 0 then Ok ()
+    else if Unix.gettimeofday () >= deadline then
+      Error (Ssh_wait_timeout { timeout_seconds })
+    else (
+      let _ = Unix.select [] [] [] 2.0 in
+      loop ())
+  in
+  loop ()
+
+let provision ~rebuild ~mount_paths ~disk_size ~instance_name ~target =
   let ( let* ) = Result.bind in
   Printf.printf "vm: resolving target=%s\n%!" target;
   let* descriptor =
@@ -505,7 +523,7 @@ let provision ~rebuild ~generate_ssh_key ~mount_paths ~disk_size ~instance_name 
     |> Result.map_error (fun details -> Descriptor_validation_failed { target; details })
   in
   Printf.printf "vm: starting VM instance=%s\n%!" instance_name;
-  launch_detached ~generate_ssh_key ~mount_paths ~disk_size ~instance_name ~target descriptor
+  launch_detached ~mount_paths ~disk_size ~instance_name ~target descriptor
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->
@@ -566,3 +584,8 @@ let pp_provision_error = function
          Ensure your user session is active. You may need to run: loginctl enable-linger %s"
         target details
         (match Sys.getenv_opt "USER" with Some u -> u | None -> "$USER")
+  | Ssh_wait_timeout { timeout_seconds } ->
+      Printf.sprintf
+        "SSH wait timed out after %d seconds. The VM is running but SSH is not reachable.\n\
+         Try connecting manually or increase the timeout with --wait-timeout or EPI_WAIT_TIMEOUT_SECONDS."
+        timeout_seconds

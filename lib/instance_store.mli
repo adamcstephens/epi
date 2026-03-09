@@ -3,7 +3,7 @@ type runtime = {
   serial_socket : string;
   disk : string;
   ssh_port : int option;
-  ssh_key_path : string option;
+  ssh_key_path : string;
 }
 
 val default_instance_name : string

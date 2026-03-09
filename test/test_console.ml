@@ -15,7 +15,8 @@ let with_systemd_mock_instance ~state_dir ~instance_name ~serial_socket f =
   if status <> 0 then
     fail "failed to create test systemd service: %s" stderr;
   write_state_entry ~state_dir ~instance_name ~target:".#test"
-    ~unit_id ~serial_socket ~disk:"/tmp/test.disk" ();
+    ~unit_id ~serial_socket ~disk:"/tmp/test.disk"
+    ~ssh_key_path:"/tmp/test_key" ();
   Fun.protect
     ~finally:(fun () -> ignore (stop_unit slice))
     (fun () -> f ())

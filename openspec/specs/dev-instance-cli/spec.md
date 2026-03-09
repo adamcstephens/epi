@@ -2,7 +2,7 @@
 Define the CLI surface for managing development VM instances, including creation, lifecycle operations, and instance inventory.
 ## Requirements
 ### Requirement: Launch command creates or starts an instance from a target
-The CLI SHALL provide a `launch` command that accepts an optional positional instance name and a required `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use `default` as the instance name.
+The CLI SHALL provide a `launch` command that accepts an optional positional instance name and a required `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use `default` as the instance name. The command SHALL accept `--no-wait` to skip SSH polling and `--wait-timeout` to configure the SSH wait duration.
 
 #### Scenario: Explicit instance name provided
 - **WHEN** a user runs `epi launch dev-a --target .#dev-a`
@@ -13,6 +13,15 @@ The CLI SHALL provide a `launch` command that accepts an optional positional ins
 - **WHEN** a user runs `epi launch --target github:org/repo#dev`
 - **THEN** the CLI resolves instance name `default`
 - **AND** the CLI resolves target `github:org/repo#dev`
+
+#### Scenario: --no-wait flag skips SSH polling
+- **WHEN** a user runs `epi launch dev-a --target .#dev-a --no-wait`
+- **THEN** the command returns after the VM process is verified running
+- **AND** no SSH polling is performed
+
+#### Scenario: --wait-timeout configures wait duration
+- **WHEN** a user runs `epi launch --target .#dev-a --wait-timeout 60`
+- **THEN** the SSH polling phase uses a 60-second timeout instead of the default
 
 ### Requirement: Target value follows flake#config syntax
 The CLI SHALL treat `--target` as a single string value in `<flake-ref>#<config-name>` form and MUST reject malformed values with actionable errors.
@@ -87,16 +96,12 @@ Connection parameters:
 - User: `$USER` from the environment (falls back to `user` if unset)
 - `StrictHostKeyChecking=no` — VMs generate fresh host keys on each provision
 - `UserKnownHostsFile=/dev/null` — prevents stale host key conflicts
-- If `ssh_key_path` is stored in the runtime (from `--generate-ssh-key`), `-i <path>` is added
+- `-i <ssh_key_path>` — always uses the generated instance key
 
 #### Scenario: ssh opens session to running instance
 - **WHEN** a user runs `epi ssh dev-a` and `dev-a` is running with `ssh_port=54321`
-- **THEN** the CLI execs `ssh -p 54321 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null <user>@127.0.0.1`
+- **THEN** the CLI execs `ssh -p 54321 -i <ssh_key_path> -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null <user>@127.0.0.1`
 - **AND** epi's process is replaced by the ssh process (no wrapper)
-
-#### Scenario: ssh with generated key passes -i flag
-- **WHEN** `dev-a` was launched with `--generate-ssh-key` and has `ssh_key_path` stored
-- **THEN** the CLI adds `-i <ssh_key_path>` before the host argument
 
 #### Scenario: ssh fails if instance is not running
 - **WHEN** `epi ssh dev-a` is invoked and `dev-a` has no active runtime

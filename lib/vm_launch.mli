@@ -22,14 +22,20 @@ type provision_error =
   | Mount_path_not_a_directory of { target : string; path : string }
   | Vm_disk_resize_failed of { target : string; details : string }
   | Systemd_session_unavailable of { target : string; details : string }
+  | Ssh_wait_timeout of { timeout_seconds : int }
 
 val provision :
   rebuild:bool ->
-  generate_ssh_key:bool ->
   mount_paths:string list ->
   disk_size:string ->
   instance_name:string ->
   target:string ->
   (Instance_store.runtime, provision_error) result
+
+val wait_for_ssh :
+  ssh_port:int ->
+  ssh_key_path:string ->
+  timeout_seconds:int ->
+  (unit, provision_error) result
 
 val pp_provision_error : provision_error -> string
