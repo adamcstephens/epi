@@ -12,7 +12,7 @@ let tests ~bin:_ =
       in
       Fun.protect ~finally:cleanup (fun () ->
         let runtime =
-          E2e_helpers.provision_and_wait ~instance_name ~target ~mount_paths:[]
+          E2e_helpers.provision_and_wait ~instance_name ~target ~mount_paths:[] ()
         in
         latest_runtime := Some runtime;
 

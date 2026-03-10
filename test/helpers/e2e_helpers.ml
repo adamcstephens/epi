@@ -9,9 +9,9 @@ let with_cleanup ~instance_name runtime f =
       Epi.Instance_store.remove instance_name)
     (fun () -> f ())
 
-let provision_and_wait ~instance_name ~target ~mount_paths =
+let provision_and_wait ?(rebuild = false) ~instance_name ~target ~mount_paths () =
   match
-    Epi.Vm_launch.provision ~rebuild:false ~mount_paths ~disk_size:"40G"
+    Epi.Vm_launch.provision ~rebuild ~mount_paths ~disk_size:"40G"
       ~instance_name ~target
   with
   | Error err ->
@@ -67,4 +67,4 @@ let restart_instance ~instance_name ~target runtime =
   ignore (Epi.stop_instance ~instance_name runtime);
   Epi.Instance_store.clear_runtime instance_name;
   let mount_paths = Epi.Instance_store.load_mounts instance_name in
-  provision_and_wait ~instance_name ~target ~mount_paths
+  provision_and_wait ~instance_name ~target ~mount_paths ()

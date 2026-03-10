@@ -3,9 +3,12 @@
 - Avoid singular functions with one or fewer lines.
 - Explicit namespace references are preferred
 - Use red/green TDD
-- Run quick tests (`dune test`) during development, but before completing a task run e2e tests (`dune exec test/test_epi.exe -- dummy -e`) to ensure nothing is broken
+- Run quick tests (`dune test`) during development, but before completing a task run e2e tests (`dune exec test/test_epi.exe -- _build/default/bin/epi.exe -e`) to ensure nothing is broken
+- Run individual test groups with `dune exec test/test_epi.exe -- _build/default/bin/epi.exe -e test <group>` (e.g. `test launch`, `test e2e-lifecycle`), unit tests with `dune exec test/unit/test_unit.exe -- test <group>`, and list available groups with `dune exec test/test_epi.exe -- _build/default/bin/epi.exe list`
 - When possible, manually test by yourself, e.g. `dune exec epi -- list`
 - When running commands that take a nix target, quote them to avoid prompting. e.g. `.#manual-test` -> `'.#manual-test'`
+- ocaml dependencies are available in `_build`. Read code from there instead of using ocamlfind, reading outside the working directory or accessing the web.
+- Never pull ocaml project deps from nixpkgs, only use dune pkg
 
 ## Testing CLI help output
 - Use `--help=plain` to get non-interactive help output (avoids pager/man): `dune exec --root . epi -- launch --help=plain`
@@ -26,6 +29,7 @@
 - Worktrees are created at `.claude/worktrees/<name>/` (nested inside the project root)
 - Worktrees must be created from HEAD if there's a .jj directory in the main project
 - A branch must be created on initialization
+- Working with `dune` in a worktree requires passing `--root .`. e.g. `dune build --root .` or `dune pkg lock --root .`
 - Initialize the worktree by running `dune build --root .`
 - Always build, explore, and run commands in the worktree directory — never in the parent project root
 - When searching/reading files, use the worktree path, not the parent repo path

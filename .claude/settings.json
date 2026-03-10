@@ -1,6 +1,9 @@
 {
   "enabledPlugins": {},
   "plansDirectory": "./.claude/plans",
+  "permissions": {
+    "allow": ["Bash(openspec:*)", "Bash(dune:*)"]
+  },
   "hooks": {
     "WorktreeCreate": [
       {

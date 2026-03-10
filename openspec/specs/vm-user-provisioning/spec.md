@@ -1,5 +1,5 @@
 ## Purpose
-Define how epi provisions a user account in the VM that matches the host user, using cloud-init NoCloud seed ISOs generated at launch time.
+Define how epi provisions a user account in the VM that matches the host user, using epidata seed ISOs generated at launch time.
 
 ## Requirements
 
@@ -8,40 +8,25 @@ The system SHALL create a user account in the VM whose username matches the host
 
 #### Scenario: User account exists after VM boot
 - **WHEN** a user runs `epi up` with a valid target
-- **THEN** the VM boots and cloud-init creates a user account whose name matches the host `$USER`
+- **THEN** the VM boots and epi-init creates a user account whose name matches the host `$USER`
 - **AND** the account has a home directory at `/home/<username>`
 - **AND** the account is a member of the `wheel` group
 
-### Requirement: epi generates a cloud-init NoCloud seed ISO
-The system SHALL generate a cloud-init NoCloud seed ISO at provision time containing `user-data` and `meta-data` derived from the host environment.
+### Requirement: epi generates a seed ISO
+The system SHALL generate a seed ISO at provision time containing a single `epi.json` file derived from the host environment. The ISO SHALL use the volume label `epidata`.
 
 #### Scenario: Seed ISO created during provisioning
 - **WHEN** `epi up` provisions a new instance
-- **THEN** epi creates a `user-data` file with the host username, `wheel` group, passwordless sudo, and SSH public keys
-- **AND** epi creates a `meta-data` file with the instance name as `instance-id` and `local-hostname`
-- **AND** epi invokes `genisoimage` to produce an ISO labeled `cidata` from these files
-- **AND** the seed ISO is written to the runtime directory as `<instance>.cidata.iso`
+- **THEN** epi creates an `epi.json` file with hostname, user data (name, uid, SSH keys), and mount paths
+- **AND** epi invokes `genisoimage` to produce an ISO labeled `epidata` containing `epi.json`
+- **AND** the seed ISO is written to the instance directory
 
 #### Scenario: Seed ISO attached to cloud-hypervisor
 - **WHEN** cloud-hypervisor is launched for the instance
 - **THEN** the seed ISO is attached as an additional `--disk` argument (read-only)
-- **AND** cloud-init inside the VM detects the NoCloud datasource and reads the seed
-
-### Requirement: Host SSH public keys included in seed
-The system SHALL read the host user's SSH public keys from `~/.ssh/*.pub` and include them in the cloud-init `user-data` for key-based SSH access.
-
-#### Scenario: Public keys collected and included
-- **WHEN** `epi up` provisions an instance and the host user has files matching `~/.ssh/*.pub`
-- **THEN** the contents of those files are included in `user-data` under `ssh_authorized_keys`
-
-#### Scenario: No SSH keys available
-- **WHEN** the host user has no SSH public keys in `~/.ssh/`
-- **THEN** the VM still boots and cloud-init still creates the user
-- **AND** epi logs a warning that no SSH keys were found
-- **AND** the `ssh_authorized_keys` field is omitted from `user-data`
 
 ### Requirement: Passwordless sudo for matching user
-The cloud-init `user-data` SHALL configure the matching user with passwordless sudo access.
+The NixOS guest configuration SHALL set `security.sudo.wheelNeedsPassword = false` so that wheel group members have passwordless sudo.
 
 #### Scenario: User runs sudo without password
 - **WHEN** the matching user runs a command with `sudo` in the VM
@@ -51,7 +36,7 @@ The cloud-init `user-data` SHALL configure the matching user with passwordless s
 The matching user SHALL be able to log in on the serial console without friction.
 
 #### Scenario: Console login after boot
-- **WHEN** a user attaches to the VM serial console after cloud-init has run
+- **WHEN** a user attaches to the VM serial console after epi-init has run
 - **THEN** the user can log in as the matching user
 - **AND** no password is required (empty password or auto-login)
 
@@ -62,53 +47,47 @@ The system SHALL verify that `genisoimage` is available before attempting to cre
 - **WHEN** `epi up` attempts to generate a seed ISO and `genisoimage` is not found on `$PATH`
 - **THEN** provisioning fails with an error message indicating that `genisoimage` (from `cdrkit`) is required
 
-### Requirement: cloud-init user-data YAML structure
-The `user-data` file in the seed ISO SHALL use the `#cloud-config` format. The exact structure:
+### Requirement: epi.json structure
+The `epi.json` file in the seed ISO SHALL use JSON format with the following structure:
 
-```yaml
-#cloud-config
-disable_root: false
-users:
-  - name: <username>
-    uid: <host_uid>
-    groups: wheel
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /run/current-system/sw/bin/bash
-    ssh_authorized_keys:
-      - <key-line-1>
-      - <key-line-2>
+```json
+{
+  "hostname": "<instance-name>",
+  "user": {
+    "name": "<username>",
+    "uid": <host_uid>,
+    "ssh_authorized_keys": ["<key1>", "<key2>"]
+  },
+  "mounts": ["/path1", "/path2"]
+}
 ```
 
 Field rules:
-- `disable_root: false` is always emitted
-- `name` is always emitted (the matching username)
-- `uid`, `groups`, `sudo`, `shell` are emitted only when the username is **not** listed in the target's `configured_users` (i.e. not already provisioned by NixOS config)
-- `ssh_authorized_keys` is emitted only when at least one public key was found; omitted entirely when no keys are available
-- Each SSH key is the full contents of one `~/.ssh/*.pub` file; if `--generate-ssh-key` was used, the generated public key is appended after the user's keys
+- `hostname` is always emitted (the instance name)
+- `user.name` is always emitted (the matching username)
+- `user.uid` is emitted only when the username is **not** listed in the target's `configured_users`
+- `user.ssh_authorized_keys` is emitted only when at least one public key was found; omitted when no keys are available
+- `mounts` is emitted only when `--mount` was used; omitted when no mounts specified
+- Each SSH key is the full contents of one `~/.ssh/*.pub` file; if `--generate-ssh-key` was used, the generated public key is appended
 
-#### Scenario: New user gets uid, groups, and sudo
+#### Scenario: New user gets uid
 - **WHEN** the matched username is not in `configured_users`
-- **THEN** `user-data` includes `uid`, `groups: wheel`, `sudo: ALL=(ALL) NOPASSWD:ALL`, and `shell`
+- **THEN** `epi.json` includes `user.uid` set to the host user's UID
 
-#### Scenario: Existing NixOS user gets only ssh_authorized_keys
+#### Scenario: Existing NixOS user gets only name and keys
 - **WHEN** the matched username is already in `configured_users`
-- **THEN** `user-data` omits `uid`, `groups`, `sudo`, and `shell`
-- **AND** only `name` and (if keys exist) `ssh_authorized_keys` are emitted
+- **THEN** `epi.json` contains `user.name` and `user.ssh_authorized_keys` (if keys exist)
+- **AND** `user.uid` is omitted
 
-### Requirement: cloud-init meta-data YAML structure
-The `meta-data` file in the seed ISO SHALL use this structure:
-
-```yaml
-instance-id: <instance-name>-<unix-timestamp>
-local-hostname: <instance-name>
-```
-
-Where `<unix-timestamp>` is the integer Unix time at seed ISO generation. The `instance-id` must be unique per boot to ensure cloud-init re-runs on reuse of the same ISO across different boots. `local-hostname` sets the guest hostname to the instance name.
-
-### Requirement: Seed ISO is labeled cidata and uses Joliet+Rock Ridge
+### Requirement: Seed ISO is labeled epidata and uses Joliet+Rock Ridge
 The seed ISO SHALL be created with:
-- Volume label: `cidata` (required for the NoCloud datasource)
+- Volume label: `epidata`
 - Joliet extensions enabled (`-joliet`)
 - Rock Ridge extensions enabled (`-rock`)
 
-The ISO is written to `<instance-dir>/cidata.iso` and passed to cloud-hypervisor as a read-only disk attachment.
+The ISO is written to `<instance-dir>/epidata.iso` and passed to cloud-hypervisor as a read-only disk attachment.
+
+#### Scenario: ISO created with epidata label
+- **WHEN** epi creates the seed ISO
+- **THEN** the ISO volume label is `epidata`
+- **AND** the ISO file is named `epidata.iso`

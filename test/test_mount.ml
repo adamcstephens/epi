@@ -23,7 +23,7 @@ let tests ~bin =
                     assert_contains ~context:"hostfs tag in --fs arg"
                       launch_contents "hostfs"))));
     Alcotest.test_case
-      "up with --mount writes epi-mounts file in seed ISO staging" `Quick
+      "up with --mount includes mount paths in epi.json" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -34,31 +34,19 @@ let tests ~bin =
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up with --mount userdata" result;
-                    let epi_mounts_path =
+                    let epi_json_path =
                       Filename.concat
                         (Filename.concat
                           (Filename.concat state_dir "mount-userdata-test")
-                          "cidata")
-                        "epi-mounts"
+                          "epidata")
+                        "epi.json"
                     in
-                    if not (Sys.file_exists epi_mounts_path) then
-                      fail "expected epi-mounts file in cidata staging dir";
-                    let epi_mounts = read_file epi_mounts_path in
-                    assert_contains ~context:"mount path in epi-mounts"
-                      epi_mounts mount_dir;
-                    let user_data_path =
-                      Filename.concat
-                        (Filename.concat
-                          (Filename.concat state_dir "mount-userdata-test")
-                          "cidata")
-                        "user-data"
-                    in
-                    let user_data = read_file user_data_path in
-                    if contains user_data "write_files:" then
-                      fail "user-data must not contain write_files:";
-                    if contains user_data "runcmd" then
-                      fail "user-data must not contain runcmd"))));
-    Alcotest.test_case "up without --mount does not write runcmd mount" `Quick
+                    if not (Sys.file_exists epi_json_path) then
+                      fail "expected epi.json in epidata staging dir";
+                    let content = read_file epi_json_path in
+                    assert_contains ~context:"mount path in epi.json"
+                      content mount_dir))));
+    Alcotest.test_case "up without --mount omits mounts from epi.json" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -67,20 +55,19 @@ let tests ~bin =
                     [ "launch"; "no-mount-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"up without --mount" result;
-                let user_data_path =
+                let epi_json_path =
                   Filename.concat
                     (Filename.concat
                       (Filename.concat state_dir "no-mount-test")
-                      "cidata")
-                    "user-data"
+                      "epidata")
+                    "epi.json"
                 in
-                let user_data = read_file user_data_path in
-                if contains user_data "write_files:" then
+                let content = read_file epi_json_path in
+                if contains content "\"mounts\"" then
                   fail
-                    "user-data should not contain write_files: when --mount \
-                     not used")));
+                    "epi.json should not contain mounts when --mount not used")));
     Alcotest.test_case
-      "up with --mount and unconfigured user includes uid in cloud-init" `Quick
+      "up with --mount and unconfigured user includes uid in epi.json" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -91,16 +78,16 @@ let tests ~bin =
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up --mount uid" result;
-                    let user_data_path =
+                    let epi_json_path =
                       Filename.concat
                         (Filename.concat
                           (Filename.concat state_dir "mount-uid-test")
-                          "cidata")
-                        "user-data"
+                          "epidata")
+                        "epi.json"
                     in
-                    let user_data = read_file user_data_path in
-                    assert_contains ~context:"uid present in user-data"
-                      user_data "uid:"))));
+                    let content = read_file epi_json_path in
+                    assert_contains ~context:"uid present in epi.json"
+                      content "\"uid\""))));
     Alcotest.test_case
       "up with --mount and pre-configured user does not include uid" `Quick
       (fun () ->
@@ -114,18 +101,17 @@ let tests ~bin =
                           "--mount"; mount_dir ]
                     in
                     assert_success ~context:"up --mount configured user" result;
-                    let user_data_path =
+                    let epi_json_path =
                       Filename.concat
                         (Filename.concat
                           (Filename.concat state_dir "mount-no-uid-test")
-                          "cidata")
-                        "user-data"
+                          "epidata")
+                        "epi.json"
                     in
-                    let user_data = read_file user_data_path in
-                    if contains user_data "uid:" then
+                    let content = read_file epi_json_path in
+                    if contains content "\"uid\"" then
                       fail
-                        "user-data should not contain uid: for pre-configured \
-                         user"))));
+                        "epi.json should not contain uid for pre-configured user"))));
     Alcotest.test_case "up with --mount stores unit_id in state" `Quick
       (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->

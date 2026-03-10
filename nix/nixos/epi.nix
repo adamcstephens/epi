@@ -6,8 +6,8 @@
 }:
 let
   cfg = config.epi;
-  mountGenerator = pkgs.writeShellApplication {
-    name = "epi-mounts-generator";
+  epiInit = pkgs.writeShellApplication {
+    name = "epi-init";
 
     bashOptions = [
       "errexit"
@@ -17,41 +17,58 @@ let
     runtimeInputs = [
       pkgs.coreutils
       pkgs.util-linux
+      pkgs.jq
+      pkgs.shadow
+      pkgs.hostname-debian
     ];
 
     text = ''
-      OUTPUT_DIR="/run/systemd/system"
-      CIDATA=$(blkid -L cidata 2>/dev/null) || exit 0
-
-      [ -b "$CIDATA" ] || exit 0
+      EPIDATA=$(blkid -L epidata 2>/dev/null) || exit 0
+      [ -b "$EPIDATA" ] || exit 0
 
       TMPDIR=$(mktemp -d)
       trap 'umount "$TMPDIR" 2>/dev/null || true; rmdir "$TMPDIR" 2>/dev/null || true' EXIT
 
-      mount -o ro "$CIDATA" "$TMPDIR" || exit 0
+      mount -o ro "$EPIDATA" "$TMPDIR" || exit 0
 
-      EPI_MOUNTS="$TMPDIR/epi-mounts"
-      [ -f "$EPI_MOUNTS" ] || exit 0
+      EPI_JSON="$TMPDIR/epi.json"
+      [ -f "$EPI_JSON" ] || exit 0
 
-      mkdir -p "$OUTPUT_DIR/multi-user.target.wants"
+      # Read fields from epi.json
+      HOSTNAME=$(jq -r '.hostname' "$EPI_JSON")
+      USERNAME=$(jq -r '.user.name' "$EPI_JSON")
+      UID_VAL=$(jq -r '.user.uid // empty' "$EPI_JSON")
 
-      i=0
-      while IFS= read -r path || [ -n "$path" ]; do
-        [ -n "$path" ] || continue
-        unit_name="''${path#/}"
-        unit_name="''${unit_name//\//-}.mount"
-        cat > "$OUTPUT_DIR/$unit_name" <<UNIT
-      [Unit]
-      Description=Mount virtiofs host filesystem $path
+      # Set hostname (runtime only, filesystem is read-only)
+      hostname "$HOSTNAME"
 
-      [Mount]
-      What=hostfs-$i
-      Where=$path
-      Type=virtiofs
-      UNIT
-        ln -sf "../$unit_name" "$OUTPUT_DIR/multi-user.target.wants/$unit_name"
-        i=$((i + 1))
-      done < "$EPI_MOUNTS"
+      # Create user if not exists
+      if ! id "$USERNAME" &>/dev/null; then
+        USERADD_ARGS=(-m -G wheel -s /run/current-system/sw/bin/bash)
+        if [ -n "$UID_VAL" ]; then
+          USERADD_ARGS+=(-u "$UID_VAL")
+        fi
+        useradd "''${USERADD_ARGS[@]}" "$USERNAME"
+      fi
+
+      # SSH authorized keys
+      KEY_COUNT=$(jq -r '.user.ssh_authorized_keys // [] | length' "$EPI_JSON")
+      if [ "$KEY_COUNT" -gt 0 ]; then
+        mkdir -p /etc/ssh/authorized_keys.d
+        jq -r '.user.ssh_authorized_keys[]' "$EPI_JSON" > "/etc/ssh/authorized_keys.d/$USERNAME"
+        chmod 644 "/etc/ssh/authorized_keys.d/$USERNAME"
+      fi
+
+      # Virtiofs mounts
+      MOUNT_COUNT=$(jq -r '.mounts // [] | length' "$EPI_JSON")
+      for i in $(seq 0 $((MOUNT_COUNT - 1))); do
+        MOUNT_PATH=$(jq -r ".mounts[$i]" "$EPI_JSON")
+        mkdir -p "$MOUNT_PATH"
+        mount -t virtiofs "hostfs-$i" "$MOUNT_PATH"
+        chown "$USERNAME:" "$MOUNT_PATH"
+      done
+
+      chown -R "$USERNAME:" "~$USERNAME"
     '';
   };
 in
@@ -111,7 +128,7 @@ in
       configuredUsers = builtins.attrNames config.users.users;
     };
 
-    networking.hostName = lib.mkForce "";
+    environment.systemPackages = [ pkgs.jq ];
 
     fileSystems."/" = {
       device = "/dev/disk/by-label/nixos";
@@ -137,9 +154,22 @@ in
       extra-experimental-features = "nix-command flakes";
     };
 
-    systemd.generators.epi-mounts = lib.getExe mountGenerator;
+    systemd.services.epi-init = {
+      description = "epi guest initialization";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = lib.getExe epiInit;
+      };
+      after = [ "local-fs.target" ];
+      before = [
+        "multi-user.target"
+        "sshd.service"
+      ];
+      wantedBy = [ "multi-user.target" ];
+    };
 
-    services.cloud-init.enable = true;
+    security.sudo.wheelNeedsPassword = false;
 
     services.openssh = {
       enable = true;
