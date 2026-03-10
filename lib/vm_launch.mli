@@ -24,6 +24,30 @@ type provision_error =
   | Systemd_session_unavailable of { target : string; details : string }
   | Ssh_wait_timeout of { timeout_seconds : int }
 
+val generate_epi_json :
+  instance_name:string ->
+  username:string ->
+  ssh_keys:string list ->
+  user_exists:bool ->
+  host_uid:int ->
+  mount_paths:string list ->
+  string
+
+val read_ssh_public_keys : unit -> string list
+val alloc_free_port : unit -> int
+
+val ensure_writable_disk :
+  instance_name:string ->
+  target:string ->
+  disk_size:string ->
+  Target.descriptor ->
+  (string, provision_error) result
+
+val generate_ssh_key :
+  target:string ->
+  instance_name:string ->
+  (string * string, provision_error) result
+
 val provision :
   rebuild:bool ->
   mount_paths:string list ->

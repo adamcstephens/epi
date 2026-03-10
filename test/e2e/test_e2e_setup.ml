@@ -1,4 +1,4 @@
-let tests ~bin:_ =
+let tests =
   [
     Alcotest.test_case "rebuild e2e target" `Slow (fun () ->
       let instance_name = E2e_helpers.unique_name "e2e-setup" in

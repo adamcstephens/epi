@@ -31,4 +31,6 @@ val is_nix_store_path : string -> bool
 val descriptor_paths : descriptor -> string list
 val split_target : string -> (string * string) option
 val store_root_of_path : string -> string option
+val descriptor_paths_exist : descriptor -> bool
+val cache_dir : unit -> string
 val validate_descriptor_coherence : descriptor -> (unit, string) result
