@@ -139,28 +139,22 @@ let read_ssh_public_keys () =
             "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
         keys
 
-let generate_user_data ~username ~ssh_keys ~user_exists ~host_uid =
-  let buf = Buffer.create 256 in
-  Buffer.add_string buf "#cloud-config\ndisable_root: false\nusers:\n";
-  Buffer.add_string buf (Printf.sprintf "  - name: %s\n" username);
-  if not user_exists then (
-    Buffer.add_string buf (Printf.sprintf "    uid: %d\n" host_uid);
-    Buffer.add_string buf "    groups: wheel\n";
-    Buffer.add_string buf "    sudo: ALL=(ALL) NOPASSWD:ALL\n";
-    Buffer.add_string buf "    shell: /run/current-system/sw/bin/bash\n");
-  (match ssh_keys with
-  | [] -> ()
-  | keys ->
-      Buffer.add_string buf "    ssh_authorized_keys:\n";
-      List.iter
-        (fun key ->
-          Buffer.add_string buf (Printf.sprintf "      - %s\n" key))
-        keys);
-  Buffer.contents buf
-
-let generate_meta_data ~instance_name =
-  let id = Printf.sprintf "%s-%d" instance_name (int_of_float (Unix.time ())) in
-  Printf.sprintf "instance-id: %s\nlocal-hostname: %s\n" id instance_name
+let generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths =
+  let user_fields =
+    [ ("name", `String username) ]
+    @ (if user_exists then [] else [ ("uid", `Int host_uid) ])
+    @ (match ssh_keys with
+       | [] -> []
+       | keys -> [ ("ssh_authorized_keys", `List (List.map (fun k -> `String k) keys)) ])
+  in
+  let fields =
+    [ ("hostname", `String instance_name);
+      ("user", `Assoc user_fields) ]
+    @ (match mount_paths with
+       | [] -> []
+       | paths -> [ ("mounts", `List (List.map (fun p -> `String p) paths)) ])
+  in
+  Yojson.Basic.pretty_to_string (`Assoc fields)
 
 type seed_iso_error =
   | Genisoimage_missing
@@ -220,41 +214,26 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
   if not (check_genisoimage ()) then Error Genisoimage_missing
   else
     let iso_path =
-      Filename.concat instance_dir "cidata.iso"
+      Filename.concat instance_dir "epidata.iso"
     in
     let staging_dir =
-      Filename.concat instance_dir "cidata"
+      Filename.concat instance_dir "epidata"
     in
     (if not (Sys.file_exists staging_dir) then
        Unix.mkdir staging_dir 0o755);
-    let user_data_path = Filename.concat staging_dir "user-data" in
-    let meta_data_path = Filename.concat staging_dir "meta-data" in
-    let user_data = generate_user_data ~username ~ssh_keys ~user_exists ~host_uid in
-    let meta_data = generate_meta_data ~instance_name in
+    let epi_json_path = Filename.concat staging_dir "epi.json" in
+    let epi_json = generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths in
     let write path content =
       let channel = open_out path in
       output_string channel content;
       close_out channel
     in
-    write user_data_path user_data;
-    write meta_data_path meta_data;
-    let epi_mounts_path =
-      match mount_paths with
-      | [] -> None
-      | paths ->
-          let p = Filename.concat staging_dir "epi-mounts" in
-          write p (String.concat "\n" paths ^ "\n");
-          Some p
-    in
-    let iso_files =
-      [ user_data_path; meta_data_path ]
-      @ Option.to_list epi_mounts_path
-    in
+    write epi_json_path epi_json;
     let result =
       Process.run ~prog:(genisoimage_bin ())
         ~args:
-          ([ "-output"; iso_path; "-volid"; "cidata"; "-joliet"; "-rock" ]
-           @ iso_files)
+          [ "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
+            epi_json_path ]
         ()
     in
     if result.status <> 0 then

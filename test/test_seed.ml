@@ -1,9 +1,46 @@
 open Test_helpers
 open Mock_runtime
 
+let read_epi_json ~state_dir instance_name =
+  let path =
+    Filename.concat
+      (Filename.concat
+         (Filename.concat state_dir instance_name)
+         "epidata")
+      "epi.json"
+  in
+  if not (Sys.file_exists path) then
+    fail "epi.json was not created at %s" path;
+  let content = read_file path in
+  match Yojson.Basic.from_string content with
+  | json -> json
+  | exception Yojson.Json_error msg ->
+      fail "epi.json is not valid JSON: %s" msg
+
+let get_string key json =
+  match json with
+  | `Assoc fields -> (
+      match List.assoc_opt key fields with
+      | Some (`String s) -> s
+      | _ -> fail "expected string field %S in epi.json" key)
+  | _ -> fail "expected JSON object"
+
+let get_assoc key json =
+  match json with
+  | `Assoc fields -> (
+      match List.assoc_opt key fields with
+      | Some (`Assoc _ as obj) -> obj
+      | _ -> fail "expected object field %S in epi.json" key)
+  | _ -> fail "expected JSON object"
+
+let has_field key json =
+  match json with
+  | `Assoc fields -> List.assoc_opt key fields <> None
+  | _ -> false
+
 let tests ~bin =
   [
-    Alcotest.test_case "creates valid user-data and meta-data with correct content"
+    Alcotest.test_case "creates valid epi.json with hostname and user data"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -12,38 +49,15 @@ let tests ~bin =
                     [ "launch"; "seed-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"seed iso up" result;
-                let cidata_dir =
-                  Filename.concat (Filename.concat state_dir "seed-test") "cidata"
-                in
-                let user_data_path =
-                  Filename.concat cidata_dir "user-data"
-                in
-                let meta_data_path =
-                  Filename.concat cidata_dir "meta-data"
-                in
-                if not (Sys.file_exists user_data_path) then
-                  fail "user-data file was not created";
-                if not (Sys.file_exists meta_data_path) then
-                  fail "meta-data file was not created";
-                let user_data = read_file user_data_path in
-                let meta_data = read_file meta_data_path in
-                assert_contains ~context:"user-data cloud-config header"
-                  user_data "#cloud-config";
-                assert_contains ~context:"user-data users section" user_data
-                  "users:";
-                assert_contains ~context:"user-data wheel group" user_data
-                  "groups: wheel";
-                assert_contains ~context:"user-data sudo" user_data
-                  "sudo: ALL=(ALL) NOPASSWD:ALL";
-                assert_contains ~context:"user-data shell" user_data
-                  "shell: /run/current-system/sw/bin/bash";
-                assert_contains ~context:"user-data disable_root" user_data
-                  "disable_root: false";
-                assert_contains ~context:"meta-data instance-id" meta_data
-                  "instance-id: seed-test";
-                assert_contains ~context:"meta-data local-hostname" meta_data
-                  "local-hostname: seed-test")));
-    Alcotest.test_case "SSH keys are read from ~/.ssh/*.pub and included in user-data"
+                let json = read_epi_json ~state_dir "seed-test" in
+                let hostname = get_string "hostname" json in
+                if hostname <> "seed-test" then
+                  fail "expected hostname 'seed-test', got %S" hostname;
+                let user = get_assoc "user" json in
+                let _name = get_string "name" user in
+                if not (has_field "uid" user) then
+                  fail "expected uid field for unconfigured user")));
+    Alcotest.test_case "SSH keys are included in epi.json user.ssh_authorized_keys"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -62,22 +76,21 @@ let tests ~bin =
                         [ "launch"; "ssh-key-test"; "--target"; ".#dev" ]
                     in
                     assert_success ~context:"ssh key up" result;
-                    let user_data_path =
-                      Filename.concat
+                    let json = read_epi_json ~state_dir "ssh-key-test" in
+                    let user = get_assoc "user" json in
+                    if not (has_field "ssh_authorized_keys" user) then
+                      fail "expected ssh_authorized_keys in epi.json";
+                    let content = read_file
+                      (Filename.concat
                         (Filename.concat
                            (Filename.concat state_dir "ssh-key-test")
-                           "cidata")
-                        "user-data"
+                           "epidata")
+                        "epi.json")
                     in
-                    if not (Sys.file_exists user_data_path) then
-                      fail "user-data file was not created";
-                    let user_data = read_file user_data_path in
-                    assert_contains ~context:"user-data ssh_authorized_keys"
-                      user_data "ssh_authorized_keys:";
-                    assert_contains ~context:"user-data ed25519 key" user_data
-                      "ssh-ed25519 AAAAC3test testkey@host";
-                    assert_contains ~context:"user-data rsa key" user_data
-                      "ssh-rsa AAAAB3test testkey2@host"))));
+                    assert_contains ~context:"ed25519 key in epi.json"
+                      content "ssh-ed25519 AAAAC3test testkey@host";
+                    assert_contains ~context:"rsa key in epi.json"
+                      content "ssh-rsa AAAAB3test testkey2@host"))));
     Alcotest.test_case "missing SSH keys produce a warning but don't fail provisioning"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
@@ -94,19 +107,11 @@ let tests ~bin =
                     let _, _, stderr = result in
                     assert_contains ~context:"no ssh keys warning" stderr
                       "no SSH public keys found";
-                    let user_data_path =
-                      Filename.concat
-                        (Filename.concat
-                           (Filename.concat state_dir "no-ssh-test")
-                           "cidata")
-                        "user-data"
-                    in
-                    if not (Sys.file_exists user_data_path) then
-                      fail "user-data file was not created";
-                    let user_data = read_file user_data_path in
-                    assert_contains
-                      ~context:"generated key still present"
-                      user_data "ssh_authorized_keys:"))));
+                    let json = read_epi_json ~state_dir "no-ssh-test" in
+                    let user = get_assoc "user" json in
+                    (* generated key should still be present *)
+                    if not (has_field "ssh_authorized_keys" user) then
+                      fail "expected generated key in ssh_authorized_keys"))));
     Alcotest.test_case "missing genisoimage produces a clear error"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
@@ -142,11 +147,11 @@ let tests ~bin =
                   else ""
                 in
                 assert_contains ~context:"seed iso disk arg" launch_contents
-                  "cidata.iso,readonly=on";
+                  "epidata.iso,readonly=on";
                 assert_contains ~context:"passt net arg" launch_contents
                   "--net vhost_user=true,socket=")));
     Alcotest.test_case
-      "configured user produces cloud-init with only SSH keys, no groups/sudo/shell"
+      "configured user produces epi.json without uid/groups/sudo"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -162,32 +167,12 @@ let tests ~bin =
                         [ "launch"; "configured-test"; "--target"; ".#user-configured" ]
                     in
                     assert_success ~context:"configured user up" result;
-                    let user_data_path =
-                      Filename.concat
-                        (Filename.concat
-                           (Filename.concat state_dir "configured-test")
-                           "cidata")
-                        "user-data"
-                    in
-                    if not (Sys.file_exists user_data_path) then
-                      fail "user-data file was not created";
-                    let user_data = read_file user_data_path in
-                    assert_contains ~context:"configured user ssh keys"
-                      user_data "ssh_authorized_keys:";
-                    assert_contains ~context:"configured user ssh key value"
-                      user_data "ssh-ed25519 AAAAC3test testkey@host";
-                    if contains user_data "groups: wheel" then
-                      fail
-                        "configured user cloud-init should not contain 'groups: \
-                         wheel'";
-                    if contains user_data "sudo:" then
-                      fail
-                        "configured user cloud-init should not contain 'sudo:'";
-                    if contains user_data "shell:" then
-                      fail
-                        "configured user cloud-init should not contain 'shell:'"))));
+                    let json = read_epi_json ~state_dir "configured-test" in
+                    let user = get_assoc "user" json in
+                    if has_field "uid" user then
+                      fail "configured user epi.json should not contain uid"))));
     Alcotest.test_case
-      "unconfigured user produces full cloud-init with groups/sudo/shell"
+      "unconfigured user produces epi.json with uid"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
@@ -196,20 +181,8 @@ let tests ~bin =
                     [ "launch"; "unconfigured-test"; "--target"; ".#dev" ]
                 in
                 assert_success ~context:"unconfigured user up" result;
-                let user_data_path =
-                  Filename.concat
-                    (Filename.concat
-                       (Filename.concat state_dir "unconfigured-test")
-                       "cidata")
-                    "user-data"
-                in
-                if not (Sys.file_exists user_data_path) then
-                  fail "user-data file was not created";
-                let user_data = read_file user_data_path in
-                assert_contains ~context:"unconfigured user groups" user_data
-                  "groups: wheel";
-                assert_contains ~context:"unconfigured user sudo" user_data
-                  "sudo: ALL=(ALL) NOPASSWD:ALL";
-                assert_contains ~context:"unconfigured user shell" user_data
-                  "shell: /run/current-system/sw/bin/bash")));
+                let json = read_epi_json ~state_dir "unconfigured-test" in
+                let user = get_assoc "user" json in
+                if not (has_field "uid" user) then
+                  fail "unconfigured user epi.json should contain uid")));
   ]
