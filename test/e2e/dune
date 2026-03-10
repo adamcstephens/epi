@@ -1,0 +1,5 @@
+(test
+ (name test_e2e)
+ (libraries alcotest epi epi_test_helpers unix yojson)
+ (action
+  (run %{test} --quick-tests)))

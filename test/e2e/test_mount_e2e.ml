@@ -1,7 +1,4 @@
-(* Disabled: mount generator bug — systemd unit has "bad-setting",
-   mount point not auto-created in guest.
-
-let tests ~bin:_ =
+let tests =
   [
     Alcotest.test_case "mounted file is readable in guest" `Slow (fun () ->
       let instance_name = E2e_helpers.unique_name "e2e-mount" in
@@ -11,7 +8,7 @@ let tests ~bin:_ =
         Test_helpers.write_file marker_path "e2e-mount-test-content";
         let runtime =
           E2e_helpers.provision_and_wait ~instance_name ~target
-            ~mount_paths:[ mount_dir ]
+            ~mount_paths:[ mount_dir ] ()
         in
         E2e_helpers.with_cleanup ~instance_name runtime (fun () ->
           let guest_marker = Filename.concat mount_dir "marker.txt" in
@@ -37,7 +34,7 @@ let tests ~bin:_ =
         Fun.protect ~finally:cleanup (fun () ->
           let runtime =
             E2e_helpers.provision_and_wait ~instance_name ~target
-              ~mount_paths:[ mount_dir ]
+              ~mount_paths:[ mount_dir ] ()
           in
           latest_runtime := Some runtime;
 
@@ -58,6 +55,3 @@ let tests ~bin:_ =
           Alcotest.(check string) "marker after restart"
             "persist-test-content" (String.trim out2))));
   ]
-*)
-
-let tests ~bin:_ = []

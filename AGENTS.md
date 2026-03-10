@@ -3,8 +3,12 @@
 - Avoid singular functions with one or fewer lines.
 - Explicit namespace references are preferred
 - Use red/green TDD
-- Run quick tests (`dune test`) during development, but before completing a task run e2e tests (`dune exec test/test_epi.exe -- _build/default/bin/epi.exe -e`) to ensure nothing is broken
-- Run individual test groups with `dune exec test/test_epi.exe -- _build/default/bin/epi.exe -e test <group>` (e.g. `test launch`, `test e2e-lifecycle`), unit tests with `dune exec test/unit/test_unit.exe -- test <group>`, and list available groups with `dune exec test/test_epi.exe -- _build/default/bin/epi.exe list`
+- Run quick tests (`dune test`) during development — this runs both unit tests and CLI integration tests concurrently
+- Run unit tests only: `dune exec test/unit/test_unit.exe`
+- Run CLI integration tests only: `dune exec test/test_epi.exe -- _build/default/bin/epi.exe --quick-tests`
+- Run individual test groups: unit tests with `dune exec test/unit/test_unit.exe -- test <group>` (e.g. `test epi_json`, `test cache`, `test provision`), CLI tests with `dune exec test/test_epi.exe -- _build/default/bin/epi.exe test <group>` (e.g. `test launch`, `test seed`)
+- List available groups: `dune exec test/unit/test_unit.exe -- list` or `dune exec test/test_epi.exe -- _build/default/bin/epi.exe list`
+- Run e2e tests (requires real VM): `dune exec test/e2e/test_e2e.exe -- -e`
 - When possible, manually test by yourself, e.g. `dune exec epi -- list`
 - When running commands that take a nix target, quote them to avoid prompting. e.g. `.#manual-test` -> `'.#manual-test'`
 - ocaml dependencies are available in `_build`. Read code from there instead of using ocamlfind, reading outside the working directory or accessing the web.

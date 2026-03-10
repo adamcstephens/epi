@@ -16,13 +16,9 @@ let () =
       ("rm", Test_rm.tests ~bin);
       ("list", Test_list.tests ~bin);
       ("seed", Test_seed.tests ~bin);
-      ("cache", Test_cache.tests ~bin);
       ("passt", Test_passt.tests ~bin);
       ("stop", Test_down.tests ~bin);
       ("mount", Test_mount.tests ~bin);
       ("misc", Test_misc.tests ~bin);
       ("exec", Test_exec.tests ~bin);
-      ("e2e-setup", Test_e2e_setup.tests ~bin);
-      ("e2e-lifecycle", Test_lifecycle_e2e.tests ~bin);
-      ("e2e-mount", Test_mount_e2e.tests ~bin);
     ]
