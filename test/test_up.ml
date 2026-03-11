@@ -5,7 +5,7 @@ let tests ~bin =
   [
     Alcotest.test_case "provisions explicit and implicit default instances"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let explicit =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -63,7 +63,7 @@ let tests ~bin =
                   "Status:   running")));
     Alcotest.test_case "emits stage progress messages during provisioning"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -98,7 +98,7 @@ let tests ~bin =
               "both flake reference and config name are required"));
     Alcotest.test_case "does not persist instance when provisioning fails"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let failing_env = ("EPI_FORCE_LAUNCH_FAIL", "1") :: extra_env in
                 let failed =
@@ -118,7 +118,7 @@ let tests ~bin =
                   fail "instance was unexpectedly persisted after launch failure")));
     Alcotest.test_case "reports target resolution failures with target context"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -132,7 +132,7 @@ let tests ~bin =
                   ".#nixosConfigurations.fail-resolve")));
     Alcotest.test_case "validates launch inputs before VM launch"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -152,7 +152,7 @@ let tests ~bin =
                   fail "cloud-hypervisor was invoked despite missing launch input")));
     Alcotest.test_case "rejects mixed mutable disk and target-built boot artifacts"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let failed =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -176,7 +176,7 @@ let tests ~bin =
                      failure")));
     Alcotest.test_case "uses target-provided cmdline when available"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let launched =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -191,7 +191,7 @@ let tests ~bin =
                   launch_contents "root=/dev/vda1")));
     Alcotest.test_case "reports disk lock conflicts with tracked owner metadata"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk ->
             with_state_dir (fun state_dir ->
                 let owner_up =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -218,7 +218,7 @@ let tests ~bin =
                 assert_contains ~context:"lock conflict disk" err disk)));
     Alcotest.test_case "--console provisions and attaches to serial socket"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let wait_for_launch () =
                   let rec loop remaining =
@@ -259,7 +259,7 @@ let tests ~bin =
                       launch_contents "--serial"))));
     Alcotest.test_case "--console attaches to already running instance"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-up-console-running" (fun dir ->
                     let serial_socket = Filename.concat dir "dev-a.sock" in
@@ -328,7 +328,7 @@ let tests ~bin =
                              for running instance")))));
     Alcotest.test_case "over stale instance stops old slice"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -357,7 +357,7 @@ let tests ~bin =
                   fail "expected a new unit_id after relaunch")));
     Alcotest.test_case "output includes the SSH port"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env

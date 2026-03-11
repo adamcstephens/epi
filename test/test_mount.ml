@@ -5,7 +5,7 @@ let tests ~bin =
   [
     Alcotest.test_case "up with --mount passes --fs to cloud-hypervisor" `Quick
       (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-mount-test" (fun mount_dir ->
                     let result =
@@ -24,7 +24,7 @@ let tests ~bin =
                       launch_contents "hostfs"))));
     Alcotest.test_case "up with --mount stores unit_id in state" `Quick
       (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-virtiofsd-unit-test" (fun mount_dir ->
                     let result =
@@ -43,7 +43,7 @@ let tests ~bin =
                           "expected unit_id to be stored in runtime state"))));
     Alcotest.test_case "up with --mount pointing to a file fails with clear error"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-mount-file-test" (fun tmp_dir ->
                     let file_path = Filename.concat tmp_dir "myfile.txt" in

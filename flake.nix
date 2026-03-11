@@ -30,7 +30,17 @@
             ];
           };
 
-};
+          overlay-test = nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            modules = [
+              ./nix/nixos/epi.nix
+              {
+                epi.enable = true;
+                epi.overlayStore.enable = true;
+              }
+            ];
+          };
+        };
 
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
 

@@ -5,7 +5,7 @@ let tests ~bin =
   [
     Alcotest.test_case "EPI_PASST_BIN overrides passt binary path"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_temp_dir "epi-passt-override" (fun custom_dir ->
                 with_state_dir (fun state_dir ->
                     let custom_passt =
@@ -36,7 +36,7 @@ let tests ~bin =
                     assert_success ~context:"custom passt bin up" result))));
     Alcotest.test_case "missing passt binary produces a clear error"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let extra_env =
                   List.filter

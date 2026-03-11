@@ -11,6 +11,7 @@ type descriptor = {
   cpus : int;
   memory_mib : int;
   configured_users : string list;
+  overlay_store : bool;
 }
 
 type resolution_error = {

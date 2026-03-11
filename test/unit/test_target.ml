@@ -168,13 +168,15 @@ let tests =
         Alcotest.(check string) "cmdline" Target.default_cmdline d.cmdline;
         Alcotest.(check int) "cpus" 1 d.cpus;
         Alcotest.(check int) "memory_mib" 1024 d.memory_mib;
-        Alcotest.(check (list string)) "configured_users" [] d.configured_users);
+        Alcotest.(check (list string)) "configured_users" [] d.configured_users;
+        Alcotest.(check bool) "overlay_store" false d.overlay_store);
     Alcotest.test_case "descriptor_of_json parses all fields" `Quick (fun () ->
         let json = Yojson.Basic.from_string
           {|{"kernel": "/k", "disk": "/d", "initrd": "/i",
              "cmdline": "console=ttyS0 root=/dev/vda1",
              "cpus": 4, "memory_mib": 2048,
-             "configuredUsers": ["root", "admin"]}|}
+             "configuredUsers": ["root", "admin"],
+             "overlayStore": true}|}
         in
         let d = Target.descriptor_of_json json in
         Alcotest.(check string) "kernel" "/k" d.kernel;
@@ -184,7 +186,25 @@ let tests =
         Alcotest.(check int) "cpus" 4 d.cpus;
         Alcotest.(check int) "memory_mib" 2048 d.memory_mib;
         Alcotest.(check (list string)) "configured_users"
-          ["root"; "admin"] d.configured_users);
+          ["root"; "admin"] d.configured_users;
+        Alcotest.(check bool) "overlay_store" true d.overlay_store);
+    Alcotest.test_case "descriptor_of_json defaults overlay_store to false" `Quick
+      (fun () ->
+        let json = Yojson.Basic.from_string
+          {|{"kernel": "/k", "disk": "/d", "overlayStore": false}|}
+        in
+        let d = Target.descriptor_of_json json in
+        Alcotest.(check bool) "overlay_store" false d.overlay_store);
+    Alcotest.test_case "descriptor_to_json round-trips overlay_store" `Quick
+      (fun () ->
+        let d : Target.descriptor = {
+          kernel = "/k"; disk = "/d"; initrd = None;
+          cmdline = Target.default_cmdline; cpus = 1; memory_mib = 1024;
+          configured_users = []; overlay_store = true;
+        } in
+        let json = Target.descriptor_to_json d in
+        let d2 = Target.descriptor_of_json json in
+        Alcotest.(check bool) "round-trip overlay_store" true d2.overlay_store);
     Alcotest.test_case "validate_descriptor_coherence rejects mixed store paths"
       `Quick (fun () ->
         let d : Target.descriptor = {
@@ -195,6 +215,7 @@ let tests =
           cpus = 1;
           memory_mib = 1024;
           configured_users = [];
+          overlay_store = false;
         } in
         match Target.validate_descriptor_coherence d with
         | Error msg ->
@@ -211,6 +232,7 @@ let tests =
           cpus = 1;
           memory_mib = 1024;
           configured_users = [];
+          overlay_store = false;
         } in
         match Target.validate_descriptor_coherence d with
         | Ok () -> ()

@@ -5,7 +5,7 @@ let tests ~bin =
   [
     Alcotest.test_case "shows empty and multi-instance state"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let empty =
                   run_cli_with_env ~bin ~state_dir ~extra_env [ "list" ]

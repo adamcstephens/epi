@@ -50,6 +50,12 @@ let with_mock_runtime f =
        ^ "\", \"cpus\": 2, \"memory_mib\": 1024, \"configuredUsers\": [\"root\", \"'\"$USER\"'\"]}'\n\
          \  exit 0\n\
           fi\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.overlay-store\" ]; then\n\
+         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
+       ^ "\", \"initrd\": \"" ^ initrd
+       ^ "\", \"cpus\": 2, \"memory_mib\": 1024, \"overlayStore\": true}'\n\
+         \  exit 0\n\
+          fi\n\
           SAFE_TARGET=$(echo \"$EPI_TARGET\" | tr '/:' '__')\n\
           TARGET_DISK=\"" ^ dir ^ "/disk-${SAFE_TARGET}.img\"\n\
           cp -n \"" ^ disk ^ "\" \"$TARGET_DISK\" 2>/dev/null || true\n\
@@ -95,17 +101,19 @@ let with_mock_runtime f =
          done\n\
          exec sleep 30\n";
       let virtiofsd = Filename.concat dir "virtiofsd.sh" in
+      let virtiofsd_log = Filename.concat dir "virtiofsd.log" in
       write_file virtiofsd
-        "#!/usr/bin/env sh\n\
-         # Mock virtiofsd: find --socket-path arg, touch the socket file, stay alive\n\
-         prev=\"\"\n\
-         for arg in \"$@\"; do\n\
-        \  if [ \"$prev\" = \"--socket-path\" ]; then\n\
-        \    touch \"$arg\"\n\
-        \  fi\n\
-        \  prev=\"$arg\"\n\
-         done\n\
-         exec sleep 30\n";
+        ("#!/usr/bin/env sh\n\
+          # Mock virtiofsd: log args, find --socket-path arg, touch the socket file, stay alive\n\
+          echo \"$*\" >> \"" ^ virtiofsd_log ^ "\"\n\
+          prev=\"\"\n\
+          for arg in \"$@\"; do\n\
+         \  if [ \"$prev\" = \"--socket-path\" ]; then\n\
+         \    touch \"$arg\"\n\
+         \  fi\n\
+         \  prev=\"$arg\"\n\
+          done\n\
+          exec sleep 30\n");
       make_executable resolver;
       make_executable cloud_hypervisor;
       make_executable xorriso;
@@ -125,4 +133,4 @@ let with_mock_runtime f =
           ("EPI_NO_WAIT", "1");
         ]
       in
-      f ~extra_env ~launch_log ~disk)
+      f ~extra_env ~launch_log ~virtiofsd_log ~disk)

@@ -11,12 +11,14 @@
 ## Testing
 - Always execute red/green TDD
 - Ensure you run e2e tests at least once before finalizing
+- Always add new e2e tests when adding capability that requires state convergence inside the VM.
 - Quick tests: `dune test` (runs unit + CLI integration concurrently)
 - Unit only: `dune exec test/unit/test_unit.exe`
 - CLI only: `dune exec test/test_epi.exe -- _build/default/bin/epi.exe --quick-tests`
 - Individual groups: `... -- test <group>` (unit: `test epi_json`, `test cache`, `test provision`; CLI: `test launch`, `test seed`)
 - List groups: `... -- list`
 - E2E (requires real VM): `dune exec test/e2e/test_e2e.exe -- -e`
+- E2E individual tests: `dune exec test/e2e/test_e2e.exe -- test e2e-hooks -e -v`
 - When possible, manually test: e.g. `dune exec epi -- list`
 - Use `--help=plain` for CLI help (without `=plain`, pager hangs non-interactively)
 

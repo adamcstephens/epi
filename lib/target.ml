@@ -20,6 +20,7 @@ type descriptor = {
   cpus : int;
   memory_mib : int;
   configured_users : string list;
+  overlay_store : bool;
 }
 
 let default_cmdline = "console=ttyS0 root=/dev/vda2 ro"
@@ -40,7 +41,15 @@ let descriptor_of_json json =
     | `List items -> List.filter_map to_string_option items
     | _ -> []
   in
-  { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users }
+  let overlay_store =
+    match json |> member "overlayStore" with
+    | `Bool b -> b
+    | _ ->
+      match json |> member "overlayStoreEnabled" with
+      | `Bool b -> b
+      | _ -> false
+  in
+  { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users; overlay_store }
 
 type resolution_error = {
   target : string;
@@ -168,7 +177,7 @@ let build_target_artifact_if_missing ~target ~label =
         | "kernel" ->
             flake_ref ^ "#" ^ config_name ^ ".config.system.build.kernel"
         | "disk" ->
-            flake_ref ^ "#" ^ config_name ^ ".config.system.build.images.qemu"
+            flake_ref ^ "#" ^ config_name ^ ".config.system.build.image"
         | "initrd" ->
             flake_ref ^ "#" ^ config_name
             ^ ".config.system.build.initialRamdisk"
@@ -278,6 +287,7 @@ let descriptor_to_json descriptor =
     ("cpus", `Int descriptor.cpus);
     ("memory_mib", `Int descriptor.memory_mib);
     ("configuredUsers", `List (List.map (fun s -> `String s) descriptor.configured_users));
+    ("overlayStore", `Bool descriptor.overlay_store);
   ])
 
 let save_descriptor_cache target descriptor =

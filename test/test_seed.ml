@@ -5,7 +5,7 @@ let tests ~bin =
   [
     Alcotest.test_case "missing xorriso produces a clear error"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let extra_env =
                   List.filter
@@ -26,7 +26,7 @@ let tests ~bin =
                   "xorriso")));
     Alcotest.test_case "seed ISO is passed as --disk argument to cloud-hypervisor"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env

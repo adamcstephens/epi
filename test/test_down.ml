@@ -5,7 +5,7 @@ let tests ~bin =
   [
     Alcotest.test_case "stop clears runtime and reports success"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -29,7 +29,7 @@ let tests ~bin =
                       "expected runtime to be cleared after stop"))));
     Alcotest.test_case "pre-stop hook runs before stopping"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-hooks" (fun hooks_dir ->
                     let hook_point_dir = Filename.concat hooks_dir "epi/hooks/pre-stop.d" in

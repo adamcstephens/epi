@@ -343,8 +343,9 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
     | Some path -> Error (Mount_path_not_a_directory { target; path })
     | None -> Ok ()
   in
+  let needs_virtiofsd = mount_paths <> [] || descriptor.overlay_store in
   let* () =
-    if mount_paths <> [] && not (check_virtiofsd ()) then
+    if needs_virtiofsd && not (check_virtiofsd ()) then
       Error (Virtiofsd_missing { target })
     else Ok ()
   in
@@ -410,6 +411,24 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
       Error (Virtiofsd_failed { target; details = "virtiofsd socket did not appear" })
     else Ok sock
   in
+  let* nix_store_virtiofsd =
+    if descriptor.overlay_store then
+      let sock = Filename.concat instance_dir "virtiofsd-nix.sock" in
+      if Sys.file_exists sock then Unix.unlink sock;
+      let virtiofsd_unit = Printf.sprintf "epi-%s_%s_virtiofsd_nix" escaped unit_id in
+      let result =
+        Process.run_helper ~unit_name:virtiofsd_unit ~slice
+          ~prog:(virtiofsd_bin ())
+          ~args:[ "--socket-path"; sock; "--shared-dir"; "/nix" ]
+          ()
+      in
+      if result.status <> 0 then
+        Error (Virtiofsd_failed { target; details = result.stderr })
+      else if not (wait_for_passt_socket sock 2000) then
+        Error (Virtiofsd_failed { target; details = "nix-store virtiofsd socket did not appear" })
+      else Ok (Some sock)
+    else Ok None
+  in
   let* virtiofsd_sockets =
     let rec loop acc i = function
       | [] -> Ok (List.rev acc)
@@ -423,12 +442,19 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   let disk_arg = "path=" ^ launch_disk in
   let seed_disk_arg = "path=" ^ seed_iso_path ^ ",readonly=on" in
   let net_arg = "vhost_user=true,socket=" ^ passt_sock ^ ",vhost_mode=client" in
+  let nix_store_fs_args =
+    match nix_store_virtiofsd with
+    | Some sock -> [ Printf.sprintf "tag=nix-store,socket=%s" sock ]
+    | None -> []
+  in
+  let user_fs_args =
+    List.mapi (fun i sock ->
+        Printf.sprintf "tag=hostfs-%d,socket=%s" i sock) virtiofsd_sockets
+  in
   let fs_args =
-    match virtiofsd_sockets with
+    match nix_store_fs_args @ user_fs_args with
     | [] -> []
-    | socks ->
-        "--fs" :: List.mapi (fun i sock ->
-            Printf.sprintf "tag=hostfs-%d,socket=%s" i sock) socks
+    | args -> "--fs" :: args
   in
   let base_args =
     [ "--kernel"; descriptor.kernel;
@@ -448,7 +474,10 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   in
   let helper_units =
     (passt_unit ^ ".service")
-    :: List.mapi (fun i _ ->
+    :: (if descriptor.overlay_store then
+          [ Printf.sprintf "epi-%s_%s_virtiofsd_nix.service" escaped unit_id ]
+        else [])
+    @ List.mapi (fun i _ ->
         Printf.sprintf "epi-%s_%s_virtiofsd_%d.service" escaped unit_id i)
       mount_paths
   in

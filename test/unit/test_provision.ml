@@ -57,7 +57,7 @@ let tests =
                     initrd = None;
                     cmdline = Target.default_cmdline;
                     cpus = 1; memory_mib = 1024;
-                    configured_users = [] }
+                    configured_users = []; overlay_store = false }
                 in
                 (* Pretend disk is a nix store path for the test.
                    ensure_writable_disk checks is_nix_store_path, so we need
@@ -87,7 +87,7 @@ let tests =
                   initrd = None;
                   cmdline = Target.default_cmdline;
                   cpus = 1; memory_mib = 1024;
-                  configured_users = [] }
+                  configured_users = []; overlay_store = false }
               in
               match Vm_launch.ensure_writable_disk
                       ~instance_name:"nonstore-test" ~target:".#test"

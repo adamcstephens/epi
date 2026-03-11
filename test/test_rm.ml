@@ -17,7 +17,7 @@ let tests ~bin =
               ~state_dir "dev-a"));
     Alcotest.test_case "refuses to remove running instance without --force"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let launch_result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -34,7 +34,7 @@ let tests ~bin =
                   "use `epi rm --force dev-a`")));
     Alcotest.test_case "--force terminates running instance before removing"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let launch_result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
@@ -53,7 +53,7 @@ let tests ~bin =
                   ~state_dir "dev-a")));
     Alcotest.test_case "rm stale instance succeeds"
       `Quick (fun () ->
-        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~virtiofsd_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
