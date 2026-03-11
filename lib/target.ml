@@ -48,7 +48,16 @@ type resolution_error = {
   exit_code : int option;
 }
 
+let expand_flake_ref_tilde target =
+  match String.index_opt target '#' with
+  | None -> Config.expand_tilde target
+  | Some i ->
+      let flake_ref = String.sub target 0 i in
+      let rest = String.sub target i (String.length target - i) in
+      Config.expand_tilde flake_ref ^ rest
+
 let resolve_descriptor target =
+  let target = expand_flake_ref_tilde target in
   let process_result =
     match Sys.getenv_opt "EPI_TARGET_RESOLVER_CMD" with
     | Some resolver_cmd ->
