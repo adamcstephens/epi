@@ -63,6 +63,23 @@ let ssh_exec runtime cmd =
          result.stderr);
   result.stdout
 
+let check_disk_grew runtime =
+  let out = ssh_exec runtime [ "df"; "--output=size"; "/" ] in
+  let lines = String.split_on_char '\n' out in
+  let size_line =
+    List.find_opt (fun l -> String.trim l <> "" && String.trim l <> "1K-blocks") lines
+  in
+  match size_line with
+  | None -> Alcotest.fail "could not parse df output"
+  | Some line ->
+    let size_kb = int_of_string (String.trim line) in
+    (* 40G disk should yield at least 30G usable *)
+    let min_kb = 30 * 1024 * 1024 in
+    if size_kb < min_kb then
+      Alcotest.fail
+        (Printf.sprintf "root filesystem too small: %d KB (expected >= %d KB)"
+           size_kb min_kb)
+
 let restart_instance ~instance_name ~target runtime =
   ignore (Epi.stop_instance ~instance_name runtime);
   Epi.Instance_store.clear_runtime instance_name;

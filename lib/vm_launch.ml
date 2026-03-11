@@ -60,6 +60,16 @@ let resize_disk ~target ~path ~size =
              })
       else Ok ()
 
+let grow_partition ~path =
+  let result =
+    Process.run ~prog:"sgdisk"
+      ~args:[ "-e"; "-d"; "1"; "-n"; "1:0:0"; "-t";
+              "1:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"; path ]
+      ()
+  in
+  if result.status <> 0 then
+    Printf.eprintf "vm: sgdisk partition grow failed: %s\n" result.stderr
+
 let copy_file ~source ~destination =
   let input_channel = open_in_bin source in
   Fun.protect
@@ -92,7 +102,9 @@ let ensure_writable_disk ~instance_name ~target ~disk_size (descriptor : Target.
         copy_file ~source:descriptor.disk ~destination:overlay_path;
         match resize_disk ~target ~path:overlay_path ~size:disk_size with
         | Error _ as error -> error
-        | Ok () -> Ok overlay_path
+        | Ok () ->
+            grow_partition ~path:overlay_path;
+            Ok overlay_path
       with Sys_error details ->
         Error (Vm_disk_overlay_prepare_failed { target; details }))
   else Ok descriptor.disk
@@ -414,9 +426,9 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   let fs_args =
     match virtiofsd_sockets with
     | [] -> []
-    | sockets ->
+    | socks ->
         "--fs" :: List.mapi (fun i sock ->
-            Printf.sprintf "tag=hostfs-%d,socket=%s" i sock) sockets
+            Printf.sprintf "tag=hostfs-%d,socket=%s" i sock) socks
   in
   let base_args =
     [ "--kernel"; descriptor.kernel;
