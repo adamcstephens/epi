@@ -30,7 +30,6 @@
             ];
           };
         };
-        flake.manual-test = config.flake.nixosConfigurations.manual-test;
 
         perSystem =
           { pkgs, ... }:
