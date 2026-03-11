@@ -1,4 +1,4 @@
 (library
  (name epi)
  (flags :standard -open Cmdlang)
- (libraries cmdlang unix yojson))
+ (libraries cmdlang unix yojson otoml))

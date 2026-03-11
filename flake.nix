@@ -57,8 +57,9 @@
               ]);
             };
 
-            packages = {
-              default = pkgs.pkgsMusl.callPackage ./nix/package.nix {
+            packages = rec {
+              default = epi;
+              epi = pkgs.pkgsMusl.callPackage ./nix/package.nix {
                 ocamlPackages = pkgs.pkgsMusl.ocamlPackages_latest;
                 inherit (pkgs)
                   curl

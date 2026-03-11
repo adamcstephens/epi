@@ -171,8 +171,7 @@ let launch_command =
      let+ instance_name =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
      and+ target =
-       Arg.named [ "target" ]
-         (Param.validated_string (module Target))
+       Arg.named_opt [ "target" ] Param.string
          ~docv:"FLAKE#CONFIG"
          ~doc:
            "Flake target in <flake-ref>#<config-name> form, for example .#dev."
@@ -210,8 +209,24 @@ let launch_command =
            "Maximum seconds to wait for SSH connectivity (default 120). \
             Overrides EPI_WAIT_TIMEOUT_SECONDS."
      in
-     let target = Target.to_string target in
-     let disk_size = Option.value disk_size ~default:"40G" in
+     let config = match Config.load () with
+       | Ok c -> c
+       | Error msg -> fail msg
+     in
+     let cli_mounts =
+       let cwd = Sys.getcwd () in
+       List.map (Config.resolve_path ~base:cwd) mount_paths
+     in
+     let merged = match Config.merge ~cli_target:target ~cli_mounts ~cli_disk_size:disk_size config with
+       | Ok m -> m
+       | Error msg -> fail msg
+     in
+     let target = match Target.of_string merged.Config.resolved_target with
+       | Ok t -> Target.to_string t
+       | Error (`Msg msg) -> fail msg
+     in
+     let mount_paths = merged.Config.resolved_mounts in
+     let disk_size = merged.Config.resolved_disk_size in
      let console_options = resolve_console_attach_options () in
      let no_wait = resolve_no_wait no_wait in
      let wait_timeout = resolve_wait_timeout wait_timeout in
