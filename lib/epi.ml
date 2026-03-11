@@ -537,10 +537,21 @@ let list_command =
      match Instance_store.list () with
      | [] -> print_endline "No instances found."
      | instances ->
-         print_endline "INSTANCE\tTARGET";
+         print_endline "INSTANCE\tTARGET\tSTATUS\tSSH";
          List.iter
            (fun (instance_name, target) ->
-             Printf.printf "%s\t%s\n" instance_name target)
+             let status, ssh =
+               match Instance_store.find_runtime instance_name with
+               | Some runtime when instance_is_running ~instance_name runtime ->
+                   let ssh_str =
+                     match runtime.Instance_store.ssh_port with
+                     | Some port -> string_of_int port
+                     | None -> "-"
+                   in
+                   ("running", ssh_str)
+               | _ -> ("stopped", "-")
+             in
+             Printf.printf "%s\t%s\t%s\t%s\n" instance_name target status ssh)
            instances)
 
 let cmd =
@@ -576,13 +587,21 @@ let cmd =
            let instance_name, target =
              resolve_instance_target ~command_name:"status" instance_name
            in
-           Printf.printf "status: instance=%s target=%s\n" instance_name target;
            match Instance_store.find_runtime instance_name with
            | Some runtime when instance_is_running ~instance_name runtime ->
+               Printf.printf "Instance: %s\n" instance_name;
+               Printf.printf "Target:   %s\n" target;
+               Printf.printf "Status:   running\n";
                (match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
-               | None -> ())
-           | _ -> ()) );
+               | None -> ());
+               Printf.printf "Serial:   %s\n" runtime.Instance_store.serial_socket;
+               Printf.printf "Disk:     %s\n" runtime.Instance_store.disk;
+               Printf.printf "Unit ID:  %s\n" runtime.Instance_store.unit_id
+           | _ ->
+               Printf.printf "Instance: %s\n" instance_name;
+               Printf.printf "Target:   %s\n" target;
+               Printf.printf "Status:   stopped\n") );
       ("rm", rm_command);
       ("console", console_command);
       ("ssh", ssh_command);

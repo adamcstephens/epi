@@ -26,9 +26,9 @@ let tests ~bin =
                 assert_success ~context:"list multi" listed;
                 let _, listed_out, _ = listed in
                 assert_contains ~context:"list header" listed_out
-                  "INSTANCE\tTARGET";
-                assert_contains ~context:"list default row" listed_out
-                  "default\t.#default";
-                assert_contains ~context:"list qa row" listed_out
-                  "qa-1\tgithub:org/repo#qa-1")));
+                  "INSTANCE\tTARGET\tSTATUS\tSSH";
+                assert_contains ~context:"list default running" listed_out
+                  "default\t.#default\trunning\t";
+                assert_contains ~context:"list qa running" listed_out
+                  "qa-1\tgithub:org/repo#qa-1\trunning\t")));
   ]
