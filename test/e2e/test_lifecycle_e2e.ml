@@ -19,6 +19,9 @@ let tests =
         let out = E2e_helpers.ssh_exec runtime [ "echo"; "ok" ] in
         Alcotest.(check string) "ssh works" "ok" (String.trim out);
 
+        let init_status = E2e_helpers.ssh_exec runtime [ "systemctl"; "is-active"; "epi-init" ] in
+        Alcotest.(check string) "epi-init succeeded" "active" (String.trim init_status);
+
         let runtime2 =
           E2e_helpers.restart_instance ~instance_name ~target runtime
         in
