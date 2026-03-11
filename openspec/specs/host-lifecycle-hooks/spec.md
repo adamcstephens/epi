@@ -1,7 +1,5 @@
-## ADDED Requirements
-
 ### Requirement: Host hooks are discovered from drop-in directories
-The system SHALL discover host hook scripts from drop-in directories at two layers: user-level (`~/.config/epi/hooks/<hook-point>.d/`) and project-level (`.epi/hooks/<hook-point>.d/`). Within each layer, the system SHALL collect top-level executable files (applying to all instances) and executable files from a subdirectory matching the instance name (applying to that instance only). Dotfiles are ignored. Non-executable files are skipped with a warning. Files SHALL be sorted lexically within each group. Overall execution order SHALL be: user top-level → user `<instance>/` → project top-level → project `<instance>/`.
+The system SHALL discover host hook scripts from drop-in directories at three layers: user-level (`~/.config/epi/hooks/<hook-point>.d/`), project-level (`.epi/hooks/<hook-point>.d/`), and nix-config-level (paths from the target descriptor's `hooks.<hook-point>` array). Within each file-based layer, the system SHALL collect top-level executable files (applying to all instances) and executable files from a subdirectory matching the instance name (applying to that instance only). Dotfiles are ignored. Non-executable files are skipped with a warning. Files SHALL be sorted lexically within each group. Overall execution order SHALL be: user top-level → user `<instance>/` → project top-level → project `<instance>/` → nix-config hooks. Nix-config hooks are already sorted by the NixOS module and do not have instance subdirectories.
 
 #### Scenario: Project-level hook scripts are discovered
 - **WHEN** `.epi/hooks/post-launch.d/` contains `00-setup.sh` and `01-check.sh`
@@ -23,8 +21,13 @@ The system SHALL discover host hook scripts from drop-in directories at two laye
 - **AND** the instance name is `default`
 - **THEN** execution order is: `notify.sh` (user), `setup.sh` (project)
 
-#### Scenario: No hook directories exist
-- **WHEN** neither `~/.config/epi/hooks/post-launch.d/` nor `.epi/hooks/post-launch.d/` exist
+#### Scenario: Nix-config hooks follow file-based hooks
+- **WHEN** `.epi/hooks/post-launch.d/setup.sh` exists
+- **AND** the target descriptor contains `hooks.post-launch` with `["/nix/store/...-check"]`
+- **THEN** execution order is: `setup.sh` (project), `/nix/store/...-check` (nix-config)
+
+#### Scenario: No hook directories exist and no nix-config hooks
+- **WHEN** neither file-based hook directories nor target descriptor hooks exist
 - **THEN** no hooks are collected and launch proceeds normally
 
 ### Requirement: Host hooks are executed with instance environment variables

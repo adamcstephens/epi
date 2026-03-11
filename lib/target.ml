@@ -12,6 +12,11 @@ let of_string target =
   | [ _flake_ref; _config_name ] -> Ok target
   | _ -> Error (`Msg "--target must use <flake-ref>#<config-name>")
 
+type hooks_config = {
+  post_launch : string list;
+  pre_stop : string list;
+}
+
 type descriptor = {
   kernel : string;
   disk : string;
@@ -20,6 +25,7 @@ type descriptor = {
   cpus : int;
   memory_mib : int;
   configured_users : string list;
+  hooks : hooks_config;
 }
 
 let default_cmdline = "console=ttyS0 root=/dev/vda2 ro"
@@ -40,7 +46,23 @@ let descriptor_of_json json =
     | `List items -> List.filter_map to_string_option items
     | _ -> []
   in
-  { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users }
+  let parse_hook_set hooks_json key =
+    match hooks_json |> member key with
+    | `Assoc pairs ->
+        pairs
+        |> List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2)
+        |> List.filter_map (fun (_, v) -> to_string_option v)
+    | `List items -> List.filter_map to_string_option items
+    | _ -> []
+  in
+  let hooks =
+    match json |> member "hooks" with
+    | `Assoc _ as hooks_json ->
+        { post_launch = parse_hook_set hooks_json "post-launch";
+          pre_stop = parse_hook_set hooks_json "pre-stop" }
+    | _ -> { post_launch = []; pre_stop = [] }
+  in
+  { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users; hooks }
 
 type resolution_error = {
   target : string;
@@ -72,10 +94,12 @@ let ensure_store_realized path =
   match store_root_of_path path with
   | None -> ()
   | Some store_root ->
-      let _ =
-        Process.run ~prog:"nix-store" ~args:[ "--realise"; store_root ] ()
-      in
-      ()
+      if Sys.file_exists store_root then ()
+      else
+        let _ =
+          Process.run ~prog:"nix-store" ~args:[ "--realise"; store_root ] ()
+        in
+        ()
 
 let split_target target =
   match String.index_opt target '#' with
@@ -168,7 +192,7 @@ let build_target_artifact_if_missing ~target ~label =
         | "kernel" ->
             flake_ref ^ "#" ^ config_name ^ ".config.system.build.kernel"
         | "disk" ->
-            flake_ref ^ "#" ^ config_name ^ ".config.system.build.images.qemu"
+            flake_ref ^ "#" ^ config_name ^ ".config.system.build.image"
         | "initrd" ->
             flake_ref ^ "#" ^ config_name
             ^ ".config.system.build.initialRamdisk"
@@ -270,6 +294,15 @@ let cache_path target =
   Filename.concat target_cache (hash ^ ".descriptor")
 
 let descriptor_to_json descriptor =
+  let hooks_fields =
+    (match descriptor.hooks.post_launch with
+     | [] -> []
+     | paths -> [("post-launch", `List (List.map (fun s -> `String s) paths))])
+    @
+    (match descriptor.hooks.pre_stop with
+     | [] -> []
+     | paths -> [("pre-stop", `List (List.map (fun s -> `String s) paths))])
+  in
   `Assoc ([
     ("kernel", `String descriptor.kernel);
     ("disk", `String descriptor.disk);
@@ -278,7 +311,7 @@ let descriptor_to_json descriptor =
     ("cpus", `Int descriptor.cpus);
     ("memory_mib", `Int descriptor.memory_mib);
     ("configuredUsers", `List (List.map (fun s -> `String s) descriptor.configured_users));
-  ])
+  ] @ (match hooks_fields with [] -> [] | _ -> [("hooks", `Assoc hooks_fields)]))
 
 let save_descriptor_cache target descriptor =
   let path = cache_path target in

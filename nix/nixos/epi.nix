@@ -24,6 +24,7 @@ let
     ];
 
     text = ''
+      export PATH="/run/wrappers/bin:$PATH"
       EPIDATA=$(blkid -L epidata 2>/dev/null) || exit 0
       [ -b "$EPIDATA" ] || exit 0
 
@@ -69,9 +70,6 @@ let
         chown "$USERNAME:" "$MOUNT_PATH"
       done
 
-      HOME_DIR=$(eval echo "~$USERNAME")
-      chown -R "$USERNAME:" "$HOME_DIR"
-
       # Guest hooks: run on first boot only
       HOOK_GUARD="/var/lib/epi-init-done"
       if [ ! -f "$HOOK_GUARD" ]; then
@@ -83,6 +81,12 @@ let
             su - "$USERNAME" -c "$hook" || echo "epi-init: hook $(basename "$hook") failed (exit $?)"
           done
         fi
+        ${lib.concatStrings (
+          lib.mapAttrsToList (name: path: ''
+            echo "epi-init: running nix guest hook ${name}"
+            su - "$USERNAME" -c "${path}" || echo "epi-init: nix guest hook ${name} failed (exit $?)"
+          '') cfg.hooks.guest-init
+        )}
         touch "$HOOK_GUARD"
       fi
     '';
@@ -134,6 +138,26 @@ in
       readOnly = true;
       description = "Usernames configured in the NixOS config, auto-detected from users.users.";
     };
+
+    hooks = {
+      guest-init = lib.mkOption {
+        type = lib.types.attrsOf lib.types.path;
+        default = { };
+        description = "Guest-init hook scripts declared in NixOS config. Keys are script names (used for lexical ordering), values are paths to executable scripts.";
+      };
+
+      post-launch = lib.mkOption {
+        type = lib.types.attrsOf lib.types.path;
+        default = { };
+        description = "Post-launch hook scripts declared in NixOS config. Keys are script names (used for lexical ordering), values are paths to executable scripts.";
+      };
+
+      pre-stop = lib.mkOption {
+        type = lib.types.attrsOf lib.types.path;
+        default = { };
+        description = "Pre-stop hook scripts declared in NixOS config. Keys are script names (used for lexical ordering), values are paths to executable scripts.";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -146,6 +170,10 @@ in
       memory_mib = 1024;
       configuredUsers = builtins.attrNames config.users.users;
     };
+
+    system.extraDependencies =
+      (lib.attrValues cfg.hooks.post-launch)
+      ++ (lib.attrValues cfg.hooks.pre-stop);
 
     environment.systemPackages = [ pkgs.jq ];
 

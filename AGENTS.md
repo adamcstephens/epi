@@ -17,6 +17,7 @@
 - Individual groups: `... -- test <group>` (unit: `test epi_json`, `test cache`, `test provision`; CLI: `test launch`, `test seed`)
 - List groups: `... -- list`
 - E2E (requires real VM): `dune exec test/e2e/test_e2e.exe -- -e`
+- E2E individual groups: `dune exec test/e2e/test_e2e.exe -- test e2e-setup -e` (`-e` must be last). You *must* test e2e-setup first in order to force a rebuild before testing other e2e groups.
 - When possible, manually test: e.g. `dune exec epi -- list`
 - Use `--help=plain` for CLI help (without `=plain`, pager hangs non-interactively)
 

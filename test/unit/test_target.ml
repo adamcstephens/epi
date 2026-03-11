@@ -185,6 +185,66 @@ let tests =
         Alcotest.(check int) "memory_mib" 2048 d.memory_mib;
         Alcotest.(check (list string)) "configured_users"
           ["root"; "admin"] d.configured_users);
+    Alcotest.test_case "descriptor_of_json parses hooks from attrsets" `Quick (fun () ->
+        let json = Yojson.Basic.from_string
+          {|{"kernel": "/k", "disk": "/d",
+             "hooks": {
+               "post-launch": {"01-setup.sh": "/nix/store/setup", "00-first.sh": "/nix/store/first"},
+               "pre-stop": {"cleanup.sh": "/nix/store/cleanup"},
+               "guest-init": {"init.sh": "/nix/store/init"}
+             }}|}
+        in
+        let d = Target.descriptor_of_json json in
+        Alcotest.(check (list string)) "post-launch sorted by key"
+          ["/nix/store/first"; "/nix/store/setup"] d.hooks.post_launch;
+        Alcotest.(check (list string)) "pre-stop"
+          ["/nix/store/cleanup"] d.hooks.pre_stop);
+    Alcotest.test_case "descriptor_of_json parses hooks from arrays (cache format)" `Quick (fun () ->
+        let json = Yojson.Basic.from_string
+          {|{"kernel": "/k", "disk": "/d",
+             "hooks": {
+               "post-launch": ["/nix/store/first", "/nix/store/setup"],
+               "pre-stop": ["/nix/store/cleanup"]
+             }}|}
+        in
+        let d = Target.descriptor_of_json json in
+        Alcotest.(check (list string)) "post-launch"
+          ["/nix/store/first"; "/nix/store/setup"] d.hooks.post_launch;
+        Alcotest.(check (list string)) "pre-stop"
+          ["/nix/store/cleanup"] d.hooks.pre_stop);
+    Alcotest.test_case "descriptor_of_json defaults hooks to empty" `Quick (fun () ->
+        let json = Yojson.Basic.from_string {|{"kernel": "/k", "disk": "/d"}|} in
+        let d = Target.descriptor_of_json json in
+        Alcotest.(check (list string)) "post-launch" [] d.hooks.post_launch;
+        Alcotest.(check (list string)) "pre-stop" [] d.hooks.pre_stop);
+    Alcotest.test_case "descriptor_to_json omits hooks when empty" `Quick (fun () ->
+        let d : Target.descriptor = {
+          kernel = "/k"; disk = "/d"; initrd = None;
+          cmdline = Target.default_cmdline;
+          cpus = 1; memory_mib = 1024;
+          configured_users = [];
+          hooks = { post_launch = []; pre_stop = [] };
+        } in
+        let json = Target.descriptor_to_json d in
+        let open Yojson.Basic.Util in
+        Alcotest.(check bool) "no hooks field"
+          true (json |> member "hooks" = `Null));
+    Alcotest.test_case "descriptor_to_json includes hooks when present" `Quick (fun () ->
+        let d : Target.descriptor = {
+          kernel = "/k"; disk = "/d"; initrd = None;
+          cmdline = Target.default_cmdline;
+          cpus = 1; memory_mib = 1024;
+          configured_users = [];
+          hooks = { post_launch = ["/nix/store/setup"]; pre_stop = [] };
+        } in
+        let json = Target.descriptor_to_json d in
+        let open Yojson.Basic.Util in
+        let hooks = json |> member "hooks" in
+        Alcotest.(check bool) "hooks present" true (hooks <> `Null);
+        let pl = hooks |> member "post-launch" |> to_list |> List.filter_map to_string_option in
+        Alcotest.(check (list string)) "post-launch" ["/nix/store/setup"] pl;
+        Alcotest.(check bool) "pre-stop omitted" true
+          (hooks |> member "pre-stop" = `Null));
     Alcotest.test_case "validate_descriptor_coherence rejects mixed store paths"
       `Quick (fun () ->
         let d : Target.descriptor = {
@@ -195,6 +255,7 @@ let tests =
           cpus = 1;
           memory_mib = 1024;
           configured_users = [];
+          hooks = { post_launch = []; pre_stop = [] };
         } in
         match Target.validate_descriptor_coherence d with
         | Error msg ->
@@ -211,6 +272,7 @@ let tests =
           cpus = 1;
           memory_mib = 1024;
           configured_users = [];
+          hooks = { post_launch = []; pre_stop = [] };
         } in
         match Target.validate_descriptor_coherence d with
         | Ok () -> ()

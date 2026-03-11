@@ -242,24 +242,20 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
     in
     write epi_json_path epi_json;
     let hooks_dir = Filename.concat staging_dir "hooks" in
-    let hook_files =
-      match guest_hooks with
-      | [] -> []
-      | hooks ->
-          if not (Sys.file_exists hooks_dir) then Unix.mkdir hooks_dir 0o755;
-          List.mapi (fun i src ->
-            let dest = Filename.concat hooks_dir
-              (Printf.sprintf "%03d-%s" i (Filename.basename src)) in
-            copy_file ~source:src ~destination:dest;
-            Unix.chmod dest 0o755;
-            dest) hooks
-    in
+    (match guest_hooks with
+     | [] -> ()
+     | hooks ->
+         if not (Sys.file_exists hooks_dir) then Unix.mkdir hooks_dir 0o755;
+         List.iteri (fun i src ->
+           let dest = Filename.concat hooks_dir
+             (Printf.sprintf "%03d-%s" i (Filename.basename src)) in
+           copy_file ~source:src ~destination:dest;
+           Unix.chmod dest 0o755) hooks);
     let result =
       Process.run ~prog:(xorriso_bin ())
         ~args:
-          ([ "-as"; "mkisofs"; "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
-            epi_json_path ]
-           @ hook_files)
+          [ "-as"; "mkisofs"; "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
+            staging_dir ]
         ()
     in
     if result.status <> 0 then
