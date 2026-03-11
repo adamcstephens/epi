@@ -157,16 +157,16 @@ let generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid 
   Yojson.Basic.pretty_to_string (`Assoc fields)
 
 type seed_iso_error =
-  | Genisoimage_missing
+  | Xorriso_missing
   | Seed_iso_creation_failed of { details : string }
 
-let genisoimage_bin () =
-  match Sys.getenv_opt "EPI_GENISOIMAGE_BIN" with
+let xorriso_bin () =
+  match Sys.getenv_opt "EPI_XORRISO_BIN" with
   | Some path -> path
-  | None -> "genisoimage"
+  | None -> "xorriso"
 
-let check_genisoimage () =
-  let bin = genisoimage_bin () in
+let check_xorriso () =
+  let bin = xorriso_bin () in
   let result =
     Process.run ~prog:"sh"
       ~args:[ "-c"; "command -v " ^ bin ]
@@ -211,7 +211,7 @@ let wait_for_passt_socket socket_path max_wait_ms =
   loop steps
 
 let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths =
-  if not (check_genisoimage ()) then Error Genisoimage_missing
+  if not (check_xorriso ()) then Error Xorriso_missing
   else
     let iso_path =
       Filename.concat instance_dir "epidata.iso"
@@ -230,9 +230,9 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
     in
     write epi_json_path epi_json;
     let result =
-      Process.run ~prog:(genisoimage_bin ())
+      Process.run ~prog:(xorriso_bin ())
         ~args:
-          [ "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
+          [ "-as"; "mkisofs"; "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
             epi_json_path ]
         ()
     in
@@ -324,9 +324,9 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   in
   let* seed_iso_path =
     match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths with
-    | Error Genisoimage_missing ->
+    | Error Xorriso_missing ->
         Error (Seed_iso_generation_failed { target;
-          details = "genisoimage not found on $PATH. Install cdrkit to enable cloud-init seed ISO generation." })
+          details = "xorriso not found on $PATH. Install xorriso to enable seed ISO generation." })
     | Error (Seed_iso_creation_failed { details }) ->
         Error (Seed_iso_generation_failed { target; details })
     | Ok path -> Ok path

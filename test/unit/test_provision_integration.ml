@@ -62,8 +62,8 @@ let with_mock_env dir f =
      \  exit 12\n\
       fi\n\
       exec sleep 30\n");
-  let genisoimage = Filename.concat dir "genisoimage.sh" in
-  write_file genisoimage
+  let xorriso = Filename.concat dir "xorriso.sh" in
+  write_file xorriso
     "#!/usr/bin/env sh\n\
      OUTPUT=\"\"\n\
      while [ $# -gt 0 ]; do\n\
@@ -85,7 +85,7 @@ let with_mock_env dir f =
     \  prev=\"$arg\"\n\
      done\n\
      exec sleep 30\n";
-  List.iter (fun p -> Unix.chmod p 0o755) [resolver; cloud_hypervisor; genisoimage; passt];
+  List.iter (fun p -> Unix.chmod p 0o755) [resolver; cloud_hypervisor; xorriso; passt];
   let cache_dir = Filename.concat dir "cache" in
   Unix.mkdir cache_dir 0o755;
   let state_dir = Filename.concat dir "state" in
@@ -95,7 +95,7 @@ let with_mock_env dir f =
   write_file (Filename.concat ssh_dir "id_test.pub") "ssh-ed25519 AAAA testkey";
   with_env "EPI_TARGET_RESOLVER_CMD" resolver (fun () ->
     with_env "EPI_CLOUD_HYPERVISOR_BIN" cloud_hypervisor (fun () ->
-      with_env "EPI_GENISOIMAGE_BIN" genisoimage (fun () ->
+      with_env "EPI_XORRISO_BIN" xorriso (fun () ->
         with_env "EPI_PASST_BIN" passt (fun () ->
           with_env "EPI_CACHE_DIR" cache_dir (fun () ->
             with_env "EPI_STATE_DIR" state_dir (fun () ->

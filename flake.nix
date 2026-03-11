@@ -41,7 +41,7 @@
           {
             devShells.default = pkgs.mkShell {
               packages = [
-                pkgs.cdrkit
+                pkgs.xorriso
                 pkgs.cloud-hypervisor
                 pkgs.jq
                 pkgs.qemu-utils
