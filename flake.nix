@@ -8,7 +8,7 @@
   outputs =
     inputs@{ flake-parts, nixpkgs, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } (
-      { config, ... }:
+      { ... }:
       {
         systems = [
           "x86_64-linux"
@@ -30,6 +30,8 @@
             ];
           };
         };
+
+        flake.nixosModules.epi = ./nix/nixos/epi.nix;
 
         perSystem =
           { pkgs, ... }:
