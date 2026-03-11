@@ -2,7 +2,7 @@
 Define the CLI surface for managing development VM instances, including creation, lifecycle operations, and instance inventory.
 ## Requirements
 ### Requirement: Launch command creates or starts an instance from a target
-The CLI SHALL provide a `launch` command that accepts an optional positional instance name and a required `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use `default` as the instance name. The command SHALL accept `--no-wait` to skip SSH polling and `--wait-timeout` to configure the SSH wait duration.
+The CLI SHALL provide a `launch` command that accepts an optional positional instance name and an optional `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use `default` as the instance name. If `--target` is omitted, the CLI SHALL look for a `target` value in the project config file (`.epi/config.toml`). If neither CLI nor config provides a target, the CLI MUST exit non-zero with an error message explaining both ways to provide a target. The command SHALL accept `--no-wait` to skip SSH polling and `--wait-timeout` to configure the SSH wait duration.
 
 #### Scenario: Explicit instance name provided
 - **WHEN** a user runs `epi launch dev-a --target .#dev-a`
@@ -22,6 +22,17 @@ The CLI SHALL provide a `launch` command that accepts an optional positional ins
 #### Scenario: --wait-timeout configures wait duration
 - **WHEN** a user runs `epi launch --target .#dev-a --wait-timeout 60`
 - **THEN** the SSH polling phase uses a 60-second timeout instead of the default
+
+#### Scenario: Target from config file when --target omitted
+- **WHEN** `.epi/config.toml` contains `target = ".#dev"`
+- **AND** a user runs `epi launch` without `--target`
+- **THEN** the CLI resolves target `.#dev`
+
+#### Scenario: No target from CLI or config
+- **WHEN** no `.epi/config.toml` exists or it has no `target` key
+- **AND** a user runs `epi launch` without `--target`
+- **THEN** the CLI exits non-zero
+- **AND** the error message explains that `--target` is required or a target can be set in `.epi/config.toml`
 
 ### Requirement: Target value follows flake#config syntax
 The CLI SHALL treat `--target` as a single string value in `<flake-ref>#<config-name>` form and MUST reject malformed values with actionable errors.
@@ -141,4 +152,3 @@ The `epi logs` command SHALL display logs for the instance's systemd services by
 - **WHEN** `epi logs dev-a` is invoked and `dev-a` has no stored runtime
 - **THEN** the command exits non-zero
 - **AND** the error states that no runtime is found for the instance
-
