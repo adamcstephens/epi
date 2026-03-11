@@ -39,7 +39,8 @@ let make_descriptor ~dir =
     { kernel; disk; initrd = None;
       cmdline = Target.default_cmdline;
       cpus = 2; memory_mib = 1024;
-      configured_users = [] }
+      configured_users = [];
+      hooks = { post_launch = []; pre_stop = [] } }
   in
   (descriptor, kernel, disk)
 

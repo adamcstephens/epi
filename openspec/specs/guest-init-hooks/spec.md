@@ -1,5 +1,3 @@
-## ADDED Requirements
-
 ### Requirement: Guest init hooks are collected and embedded in seed ISO
 The system SHALL collect guest hook scripts from `guest-init.d/` directories at two layers: user-level (`~/.config/epi/hooks/guest-init.d/`) and project-level (`.epi/hooks/guest-init.d/`). Within each layer, top-level executable files and instance-specific `<instance>/` executable files are collected using the same discovery and ordering rules as host hooks. Collected scripts SHALL be embedded into the seed ISO at provision time, alongside `epi.json`.
 
@@ -18,12 +16,17 @@ The system SHALL collect guest hook scripts from `guest-init.d/` directories at 
 - **THEN** the seed ISO is created without hook scripts (same as current behavior)
 
 ### Requirement: Guest init hooks are executed as the provisioned user
-The `epi-init` service SHALL execute guest hook scripts from the seed ISO after completing all other initialization steps (user creation, hostname, SSH keys, mounts). Scripts SHALL be executed sequentially in their embedded order using `su - <username> -c <script>`. If a hook script exits non-zero, the service SHALL log the failure and continue with remaining hooks.
+The `epi-init` service SHALL execute guest hook scripts from the seed ISO after completing all other initialization steps (user creation, hostname, SSH keys, mounts). After seed ISO hooks, the service SHALL execute Nix-declared guest-init hooks (baked into the VM image). Scripts SHALL be executed sequentially using `su - <username> -c <script>`. If a hook script exits non-zero, the service SHALL log the failure and continue with remaining hooks.
 
 #### Scenario: Guest hooks run after init as user
 - **WHEN** a VM boots with guest hook scripts in the seed ISO
 - **AND** the provisioned user is `alice`
 - **THEN** each hook script runs as `alice` after user creation, hostname, SSH keys, and mounts are complete
+
+#### Scenario: Nix-declared guest hooks run after seed ISO hooks
+- **WHEN** seed ISO contains file-based guest hooks
+- **AND** the epi-init service has Nix-declared guest hooks baked in
+- **THEN** seed ISO hooks execute first, then Nix-declared hooks execute
 
 #### Scenario: Guest hook failure does not block boot
 - **WHEN** a guest hook script exits with code 1
@@ -34,3 +37,4 @@ The `epi-init` service SHALL execute guest hook scripts from the seed ISO after 
 #### Scenario: Guest hooks run on first boot only
 - **WHEN** a VM reboots (not first provision)
 - **THEN** guest hook scripts from the seed ISO do NOT re-execute
+- **AND** Nix-declared guest hooks do NOT re-execute

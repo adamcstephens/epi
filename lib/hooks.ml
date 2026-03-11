@@ -31,11 +31,15 @@ let discover_from_dir ~instance_name dir =
   let instance = discover_scripts instance_dir in
   top @ instance
 
-let discover ~instance_name hook_point =
+let discover ~instance_name ?(nix_hooks = []) hook_point =
   let user_dir = Filename.concat (user_hooks_dir ()) (hook_point ^ ".d") in
   let project_dir = Filename.concat (project_hooks_dir ()) (hook_point ^ ".d") in
+  List.iter (fun path ->
+    if Target.is_nix_store_path path then
+      Target.ensure_store_realized path) nix_hooks;
   discover_from_dir ~instance_name user_dir
   @ discover_from_dir ~instance_name project_dir
+  @ nix_hooks
 
 let discover_guest ~instance_name =
   discover ~instance_name "guest-init"

@@ -150,7 +150,12 @@ let provision_and_report ~command_name ~attach_console ~console_options
                 let username =
                   match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
                 in
-                let hooks = Hooks.discover ~instance_name "post-launch" in
+                let nix_hooks =
+                  match Target.load_descriptor_cache (Target.canonicalize_target target) with
+                  | Some desc -> desc.Target.hooks.post_launch
+                  | None -> []
+                in
+                let hooks = Hooks.discover ~instance_name ~nix_hooks "post-launch" in
                 if hooks <> [] then (
                   Printf.printf "hooks: running %d post-launch hook(s)\n%!" (List.length hooks);
                   let env = Hooks.{
@@ -449,7 +454,15 @@ let stop_command =
          let username =
            match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
          in
-         let hooks = Hooks.discover ~instance_name "pre-stop" in
+         let nix_hooks =
+           match Instance_store.find instance_name with
+           | Some target ->
+               (match Target.load_descriptor_cache (Target.canonicalize_target target) with
+                | Some desc -> desc.Target.hooks.pre_stop
+                | None -> [])
+           | None -> []
+         in
+         let hooks = Hooks.discover ~instance_name ~nix_hooks "pre-stop" in
          if hooks <> [] then (
            Printf.printf "hooks: running %d pre-stop hook(s)\n%!" (List.length hooks);
            let ssh_port = Option.value ~default:0 runtime.Instance_store.ssh_port in
@@ -668,3 +681,5 @@ let cmd =
 module Instance_store = Instance_store
 module Vm_launch = Vm_launch
 module Process = Process
+module Target = Target
+module Hooks = Hooks

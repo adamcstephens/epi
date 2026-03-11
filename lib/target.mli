@@ -3,6 +3,11 @@ type t
 val of_string : string -> (t, [ `Msg of string ]) result
 val to_string : t -> string
 
+type hooks_config = {
+  post_launch : string list;
+  pre_stop : string list;
+}
+
 type descriptor = {
   kernel : string;
   disk : string;
@@ -11,6 +16,7 @@ type descriptor = {
   cpus : int;
   memory_mib : int;
   configured_users : string list;
+  hooks : hooks_config;
 }
 
 type resolution_error = {
@@ -28,6 +34,7 @@ val resolve_descriptor : string -> (descriptor, resolution_error) result
 val resolve_descriptor_cached : rebuild:bool -> string -> (cache_result, resolution_error) result
 val validate_descriptor : target:string -> descriptor -> (unit, string) result
 val is_nix_store_path : string -> bool
+val ensure_store_realized : string -> unit
 val descriptor_paths : descriptor -> string list
 val split_target : string -> (string * string) option
 val canonicalize_target : string -> string
@@ -35,3 +42,4 @@ val store_root_of_path : string -> string option
 val descriptor_paths_exist : descriptor -> bool
 val cache_dir : unit -> string
 val validate_descriptor_coherence : descriptor -> (unit, string) result
+val load_descriptor_cache : string -> descriptor option

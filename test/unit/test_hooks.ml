@@ -212,4 +212,54 @@ let tests =
               (fun () ->
                 let scripts = Hooks.discover ~instance_name:"default" "post-launch" in
                 Alcotest.(check int) "count" 0 (List.length scripts))));
+    Alcotest.test_case "discover: nix-config hooks appended at lowest precedence" `Quick (fun () ->
+        with_temp_dir "hooks-nix" (fun dir ->
+            let user_dir = Filename.concat dir "user/epi/hooks/post-launch.d" in
+            let project_dir = Filename.concat dir "project/.epi/hooks/post-launch.d" in
+            mkdir_p user_dir;
+            mkdir_p project_dir;
+            write_script (Filename.concat user_dir "01-user.sh");
+            write_script (Filename.concat project_dir "02-project.sh");
+            let nix_hook = Filename.concat dir "nix-hook.sh" in
+            write_script nix_hook;
+            let old_xdg = Sys.getenv_opt "XDG_CONFIG_HOME" in
+            let old_cwd = Sys.getcwd () in
+            Unix.putenv "XDG_CONFIG_HOME" (Filename.concat dir "user");
+            Sys.chdir (Filename.concat dir "project");
+            Fun.protect
+              ~finally:(fun () ->
+                (match old_xdg with
+                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                Sys.chdir old_cwd)
+              (fun () ->
+                let scripts = Hooks.discover ~instance_name:"default"
+                    ~nix_hooks:[nix_hook] "post-launch" in
+                Alcotest.(check int) "count" 3 (List.length scripts);
+                Alcotest.(check bool) "user first" true
+                  (String.ends_with ~suffix:"01-user.sh" (List.nth scripts 0));
+                Alcotest.(check bool) "project second" true
+                  (String.ends_with ~suffix:"02-project.sh" (List.nth scripts 1));
+                Alcotest.(check bool) "nix last" true
+                  (String.ends_with ~suffix:"nix-hook.sh" (List.nth scripts 2)))));
+    Alcotest.test_case "discover: nix-config hooks work with no file-based hooks" `Quick (fun () ->
+        with_temp_dir "hooks-nix-only" (fun dir ->
+            let nix_hook = Filename.concat dir "nix-hook.sh" in
+            write_script nix_hook;
+            let old_xdg = Sys.getenv_opt "XDG_CONFIG_HOME" in
+            let old_cwd = Sys.getcwd () in
+            Unix.putenv "XDG_CONFIG_HOME" (Filename.concat dir "user");
+            Sys.chdir dir;
+            Fun.protect
+              ~finally:(fun () ->
+                (match old_xdg with
+                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                Sys.chdir old_cwd)
+              (fun () ->
+                let scripts = Hooks.discover ~instance_name:"default"
+                    ~nix_hooks:[nix_hook] "post-launch" in
+                Alcotest.(check int) "count" 1 (List.length scripts);
+                Alcotest.(check bool) "is nix hook" true
+                  (String.ends_with ~suffix:"nix-hook.sh" (List.hd scripts)))));
   ]
