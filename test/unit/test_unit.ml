@@ -8,4 +8,5 @@ let () =
       ("cache", Test_cache.tests);
       ("provision", Test_provision.tests);
       ("provision_integration", Test_provision_integration.tests);
+      ("config", Test_config.tests);
     ]
