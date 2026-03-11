@@ -10,6 +10,7 @@
 
 ## Testing
 - Always execute red/green TDD
+- Ensure you run e2e tests at least once before finalizing
 - Quick tests: `dune test` (runs unit + CLI integration concurrently)
 - Unit only: `dune exec test/unit/test_unit.exe`
 - CLI only: `dune exec test/test_epi.exe -- _build/default/bin/epi.exe --quick-tests`
