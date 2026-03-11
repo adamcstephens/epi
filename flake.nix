@@ -60,7 +60,12 @@
 
             packages = rec {
               default = epi;
-              epi = pkgs.pkgsMusl.callPackage ./nix/package.nix {
+
+              epi = pkgs.callPackage ./nix/wrapper.nix {
+                inherit epi-unwrapped;
+              };
+
+              epi-unwrapped = pkgs.pkgsMusl.callPackage ./nix/package.nix {
                 ocamlPackages = pkgs.pkgsMusl.ocamlPackages_latest;
                 inherit (pkgs)
                   curl
