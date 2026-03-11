@@ -67,10 +67,10 @@ let with_mock_runtime f =
          \  exit 23\n\
           fi\n\
           exec sleep \"${EPI_MOCK_VM_SLEEP:-30}\"\n");
-      let genisoimage = Filename.concat dir "genisoimage.sh" in
-      write_file genisoimage
+      let xorriso = Filename.concat dir "xorriso.sh" in
+      write_file xorriso
         ("#!/usr/bin/env sh\n\
-          # Mock genisoimage: create a fake ISO file at -output path\n\
+          # Mock xorriso: create a fake ISO file at -output path\n\
           OUTPUT=\"\"\n\
           while [ $# -gt 0 ]; do\n\
          \  case \"$1\" in\n\
@@ -108,7 +108,7 @@ let with_mock_runtime f =
          exec sleep 30\n";
       make_executable resolver;
       make_executable cloud_hypervisor;
-      make_executable genisoimage;
+      make_executable xorriso;
       make_executable passt;
       make_executable virtiofsd;
       let cache_dir = Filename.concat dir "cache" in
@@ -117,7 +117,7 @@ let with_mock_runtime f =
         [
           ("EPI_TARGET_RESOLVER_CMD", resolver);
           ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
-          ("EPI_GENISOIMAGE_BIN", genisoimage);
+          ("EPI_XORRISO_BIN", xorriso);
           ("EPI_PASST_BIN", passt);
           ("EPI_VIRTIOFSD_BIN", virtiofsd);
           ("EPI_MOCK_VM_SLEEP", "30");

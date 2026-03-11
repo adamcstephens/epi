@@ -1,5 +1,4 @@
 {
-  cdrkit,
   cloud-hypervisor,
   lib,
   epi-unwrapped,
@@ -8,6 +7,7 @@
   qemu-utils,
   runCommand,
   virtiofsd,
+  xorriso,
 }:
 runCommand "epi"
   {
@@ -18,11 +18,11 @@ runCommand "epi"
     mkdir -vp $out/bin/
     makeWrapper ${lib.getExe epi-unwrapped} $out/bin/epi --prefix PATH : ${
       lib.makeBinPath [
-        cdrkit
         cloud-hypervisor
         passt
         qemu-utils
         virtiofsd
+        xorriso
       ]
     }
   ''
