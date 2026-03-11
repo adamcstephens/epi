@@ -57,8 +57,10 @@ let tests ~bin =
                 in
                 assert_success ~context:"status default" status_default;
                 let _, status_out, _ = status_default in
-                assert_contains ~context:"status default output" status_out
-                  "status: instance=default")));
+                assert_contains ~context:"status instance" status_out
+                  "Instance: default";
+                assert_contains ~context:"status running" status_out
+                  "Status:   running")));
     Alcotest.test_case "emits stage progress messages during provisioning"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->

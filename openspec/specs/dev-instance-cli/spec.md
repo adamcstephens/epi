@@ -61,12 +61,22 @@ If a lifecycle command is invoked without an instance name and `default` does no
 - **AND** the error message suggests running `epi launch --target <flake#config>` or passing an instance name
 
 ### Requirement: CLI exposes instance inventory
-The CLI SHALL provide a `list` command that outputs known instance names and their associated targets.
+The CLI SHALL provide a `list` command that outputs known instance names, their associated targets, running status, and SSH port. The output SHALL be a four-column table with headers `INSTANCE`, `TARGET`, `STATUS`, and `SSH`. The STATUS column SHALL show `running` if the instance's systemd unit is active, or `stopped` otherwise. The SSH column SHALL show the forwarded host port number if the instance is running and has an SSH port, or `-` otherwise.
 
-#### Scenario: Multiple instances exist
-- **WHEN** a user runs `epi list` with `default`, `dev-a`, and `qa-1` defined
-- **THEN** the output includes each instance name
-- **AND** the output includes the stored target for each instance
+#### Scenario: Multiple instances with mixed running state
+- **WHEN** a user runs `epi list` with instances `dev-a` (running, SSH port 54321) and `qa-1` (stopped)
+- **THEN** the output includes headers `INSTANCE  TARGET  STATUS  SSH`
+- **AND** `dev-a` row shows `running` in STATUS and `54321` in SSH
+- **AND** `qa-1` row shows `stopped` in STATUS and `-` in SSH
+
+#### Scenario: All instances stopped
+- **WHEN** a user runs `epi list` and all instances are stopped
+- **THEN** every row shows `stopped` in STATUS and `-` in SSH
+
+#### Scenario: Instance has runtime but systemd unit is no longer active
+- **WHEN** an instance has a `runtime` field in state.json but `systemctl --user is-active` reports inactive
+- **THEN** the STATUS column shows `stopped`
+- **AND** the SSH column shows `-`
 
 ### Requirement: Launch reports SSH connection details after successful launch
 After a successful `epi launch`, the CLI SHALL print the host port forwarded to the VM's SSH port so the user can connect immediately.
@@ -77,15 +87,21 @@ After a successful `epi launch`, the CLI SHALL print the host port forwarded to 
 - **AND** the message includes the host port number (e.g., `SSH port: 54321`)
 
 ### Requirement: Status includes forwarded SSH port
-The CLI SHALL include the forwarded SSH host port in the output of any status or inspection command that shows runtime details for a running instance.
+The `epi status` command SHALL display instance details in a labeled field format. The output SHALL include the instance name, target, and running status. When the instance is running with runtime metadata, the output SHALL additionally include SSH port, serial socket path, disk path, and unit ID.
 
-#### Scenario: Status shows SSH port for running instance
-- **WHEN** a user queries the status of running instance `dev-a`
-- **THEN** the output includes the forwarded SSH host port
+#### Scenario: Status shows full runtime details for running instance
+- **WHEN** a user runs `epi status dev-a` and `dev-a` is running with SSH port 54321
+- **THEN** the output shows `Instance: dev-a`
+- **AND** the output shows `Target: .#dev-a`
+- **AND** the output shows `Status: running`
+- **AND** the output shows `SSH port: 54321`
 
-#### Scenario: Status omits SSH port for stopped instance
-- **WHEN** a user queries the status of stopped instance `dev-a`
-- **THEN** no SSH port is shown (no runtime metadata available)
+#### Scenario: Status shows minimal info for stopped instance
+- **WHEN** a user runs `epi status dev-a` and `dev-a` is stopped
+- **THEN** the output shows `Instance: dev-a`
+- **AND** the output shows `Target: .#dev-a`
+- **AND** the output shows `Status: stopped`
+- **AND** no SSH port, serial socket, or disk path lines are shown
 
 ### Requirement: ssh command opens an SSH session to a running instance
 The `epi ssh` command SHALL resolve the instance's stored SSH port and exec into `ssh`, replacing the epi process. It SHALL not wrap or proxy the SSH connection — the user's terminal is handed directly to `ssh`.
