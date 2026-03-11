@@ -209,10 +209,15 @@ let launch_command =
            "Maximum seconds to wait for SSH connectivity (default 120). \
             Overrides EPI_WAIT_TIMEOUT_SECONDS."
      in
-     let config = match Config.load () with
+     let user_config = match Config.load_user () with
        | Ok c -> c
        | Error msg -> fail msg
      in
+     let project_config = match Config.load () with
+       | Ok c -> c
+       | Error msg -> fail msg
+     in
+     let config = Config.merge_configs ~user:user_config ~project:project_config in
      let cli_mounts =
        let cwd = Sys.getcwd () in
        List.map (Config.resolve_path ~base:cwd) mount_paths
