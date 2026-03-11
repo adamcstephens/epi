@@ -17,34 +17,34 @@ let with_mock_runtime f =
       write_file mutable_disk "mutable-disk";
       write_file resolver
         ("#!/usr/bin/env sh\n\
-          if [ \"$EPI_TARGET\" = \".#fail-resolve\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.fail-resolve\" ]; then\n\
          \  echo \"resolver exploded\" >&2\n\
          \  exit 21\n\
           fi\n\
-          if [ \"$EPI_TARGET\" = \".#missing-disk\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.missing-disk\" ]; then\n\
          \  printf '{\"kernel\": \"" ^ kernel
        ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
          \  exit 0\n\
           fi\n\
-          if [ \"$EPI_TARGET\" = \".#mutable-disk\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.mutable-disk\" ]; then\n\
          \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ mutable_disk
        ^ "\", \"initrd\": \"" ^ initrd
        ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
          \  exit 0\n\
           fi\n\
-          if [ \"$EPI_TARGET\" = \".#custom-cmdline\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.custom-cmdline\" ]; then\n\
          \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
        ^ "\", \"initrd\": \"" ^ initrd
        ^ "\", \"cmdline\": \"console=ttyS0 root=/dev/vda1 ro\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
          \  exit 0\n\
           fi\n\
-          if [ \"$EPI_TARGET\" = \".#owner\" ] || [ \"$EPI_TARGET\" = \".#qa\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.owner\" ] || [ \"$EPI_TARGET\" = \".#nixosConfigurations.qa\" ]; then\n\
          \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
        ^ "\", \"initrd\": \"" ^ initrd
        ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
          \  exit 0\n\
           fi\n\
-          if [ \"$EPI_TARGET\" = \".#user-configured\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.user-configured\" ]; then\n\
          \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
        ^ "\", \"initrd\": \"" ^ initrd
        ^ "\", \"cpus\": 2, \"memory_mib\": 1024, \"configuredUsers\": [\"root\", \"'\"$USER\"'\"]}'\n\

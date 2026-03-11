@@ -30,6 +30,7 @@ val validate_descriptor : target:string -> descriptor -> (unit, string) result
 val is_nix_store_path : string -> bool
 val descriptor_paths : descriptor -> string list
 val split_target : string -> (string * string) option
+val canonicalize_target : string -> string
 val store_root_of_path : string -> string option
 val descriptor_paths_exist : descriptor -> bool
 val cache_dir : unit -> string

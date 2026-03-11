@@ -485,6 +485,7 @@ let wait_for_ssh ~ssh_port ~ssh_key_path ~timeout_seconds =
 
 let provision ~rebuild ~mount_paths ~disk_size ~instance_name ~target =
   let ( let* ) = Result.bind in
+  let target = Target.canonicalize_target target in
   Printf.printf "vm: resolving target=%s\n%!" target;
   let* descriptor =
     match Target.resolve_descriptor_cached ~rebuild target with

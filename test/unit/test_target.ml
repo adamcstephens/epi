@@ -1,3 +1,35 @@
+let with_temp_dir prefix f =
+  let base =
+    Filename.concat
+      (Filename.get_temp_dir_name ())
+      (prefix ^ string_of_int (Unix.getpid ()))
+  in
+  let rec find_free n =
+    let candidate = if n = 0 then base else base ^ "-" ^ string_of_int n in
+    if Sys.file_exists candidate then find_free (n + 1) else candidate
+  in
+  let dir = find_free 0 in
+  Unix.mkdir dir 0o755;
+  let rec remove_tree path =
+    if Sys.file_exists path then
+      if Sys.is_directory path then (
+        Sys.readdir path
+        |> Array.iter (fun name -> remove_tree (Filename.concat path name));
+        Unix.rmdir path)
+      else Sys.remove path
+  in
+  Fun.protect ~finally:(fun () -> remove_tree dir) (fun () -> f dir)
+
+let with_env key value f =
+  let old = Sys.getenv_opt key in
+  Unix.putenv key value;
+  Fun.protect
+    ~finally:(fun () ->
+      match old with
+      | Some v -> Unix.putenv key v
+      | None -> Unix.putenv key "")
+    f
+
 let check_ok msg = function
   | Ok _ -> ()
   | Error (`Msg e) -> Alcotest.fail (msg ^ ": " ^ e)
@@ -58,6 +90,74 @@ let tests =
         Alcotest.(check (option (pair string string))) "empty config"
           None
           (Target.split_target ".#"));
+    Alcotest.test_case "canonicalize_target translates shorthand" `Quick
+      (fun () ->
+        Alcotest.(check string) "dot shorthand"
+          ".#nixosConfigurations.manual-test"
+          (Target.canonicalize_target ".#manual-test");
+        Alcotest.(check string) "github shorthand"
+          "github:org/repo#nixosConfigurations.config"
+          (Target.canonicalize_target "github:org/repo#config");
+        Alcotest.(check string) "path shorthand"
+          "/path/to/flake#nixosConfigurations.name"
+          (Target.canonicalize_target "/path/to/flake#name"));
+    Alcotest.test_case "canonicalize_target skips already-canonical" `Quick
+      (fun () ->
+        Alcotest.(check string) "already canonical"
+          ".#nixosConfigurations.manual-test"
+          (Target.canonicalize_target ".#nixosConfigurations.manual-test"));
+    Alcotest.test_case "canonicalize_target handles edge cases" `Quick
+      (fun () ->
+        Alcotest.(check string) "no hash" "no-hash"
+          (Target.canonicalize_target "no-hash");
+        Alcotest.(check string) "empty config" ".#"
+          (Target.canonicalize_target ".#");
+        Alcotest.(check string) "empty flake" "#config"
+          (Target.canonicalize_target "#config"));
+    Alcotest.test_case "resolve_descriptor canonicalizes target for resolver"
+      `Quick (fun () ->
+        with_temp_dir "epi-target-canon" (fun dir ->
+          let log = Filename.concat dir "target.log" in
+          let kernel = Filename.concat dir "vmlinuz" in
+          let disk = Filename.concat dir "disk.img" in
+          let oc = open_out kernel in output_string oc "k"; close_out oc;
+          let oc = open_out disk in output_string oc "d"; close_out oc;
+          let resolver = Filename.concat dir "resolver.sh" in
+          let oc = open_out resolver in
+          Printf.fprintf oc
+            "#!/usr/bin/env sh\necho \"$EPI_TARGET\" > %s\nprintf '{\"kernel\": \"%s\", \"disk\": \"%s\", \"cpus\": 1, \"memory_mib\": 512}'\n"
+            log kernel disk;
+          close_out oc;
+          Unix.chmod resolver 0o755;
+          let cache_dir = Filename.concat dir "cache" in
+          Unix.mkdir cache_dir 0o755;
+          with_env "EPI_CACHE_DIR" cache_dir (fun () ->
+            with_env "EPI_TARGET_RESOLVER_CMD" resolver (fun () ->
+              match Target.resolve_descriptor ".#myvm" with
+              | Error e -> Alcotest.fail e.details
+              | Ok _ ->
+                  let ic = open_in log in
+                  let received = input_line ic in
+                  close_in ic;
+                  Alcotest.(check string) "canonicalized"
+                    ".#nixosConfigurations.myvm" received))));
+    Alcotest.test_case "resolve_descriptor returns error for failing resolver"
+      `Quick (fun () ->
+        with_temp_dir "epi-target-fail" (fun dir ->
+          let resolver = Filename.concat dir "resolver.sh" in
+          let oc = open_out resolver in
+          output_string oc "#!/usr/bin/env sh\necho \"not found\" >&2\nexit 1\n";
+          close_out oc;
+          Unix.chmod resolver 0o755;
+          let cache_dir = Filename.concat dir "cache" in
+          Unix.mkdir cache_dir 0o755;
+          with_env "EPI_CACHE_DIR" cache_dir (fun () ->
+            with_env "EPI_TARGET_RESOLVER_CMD" resolver (fun () ->
+              match Target.resolve_descriptor ".#nonexistent" with
+              | Ok _ -> Alcotest.fail "expected error"
+              | Error e ->
+                  Alcotest.(check string) "target is canonicalized in error"
+                    ".#nixosConfigurations.nonexistent" e.target))));
     Alcotest.test_case "descriptor_of_json uses defaults for missing fields"
       `Quick (fun () ->
         let json = Yojson.Basic.from_string {|{"kernel": "/k", "disk": "/d"}|} in

@@ -14,7 +14,7 @@ let tests ~bin =
                 assert_success ~context:"explicit up" explicit;
                 let _, stdout_explicit, _ = explicit in
                 assert_contains ~context:"explicit up output" stdout_explicit
-                  "vm: resolving target=.#dev-a";
+                  "vm: resolving target=.#nixosConfigurations.dev-a";
                 assert_contains ~context:"explicit up output" stdout_explicit
                   "vm: evaluated target, building artifacts";
                 assert_contains ~context:"explicit up output" stdout_explicit
@@ -72,7 +72,7 @@ let tests ~bin =
                 assert_success ~context:"stage progress up" result;
                 let _, stdout, _ = result in
                 assert_contains ~context:"stage: target evaluation start" stdout
-                  "vm: resolving target=.#stage-test";
+                  "vm: resolving target=.#nixosConfigurations.stage-test";
                 assert_contains ~context:"stage: launch preparation start" stdout
                   "vm: evaluated target, building artifacts";
                 assert_contains ~context:"stage: VM launch start" stdout
@@ -129,7 +129,7 @@ let tests ~bin =
                 assert_contains ~context:"resolution failure stage" err
                   "target resolution failed";
                 assert_contains ~context:"resolution failure target" err
-                  ".#fail-resolve")));
+                  ".#nixosConfigurations.fail-resolve")));
     Alcotest.test_case "validates launch inputs before VM launch"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->

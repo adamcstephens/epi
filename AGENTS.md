@@ -9,7 +9,7 @@
 - Never pull OCaml deps from nixpkgs, only use dune pkg
 
 ## Testing
-- Use red/green TDD
+- Always execute red/green TDD
 - Quick tests: `dune test` (runs unit + CLI integration concurrently)
 - Unit only: `dune exec test/unit/test_unit.exe`
 - CLI only: `dune exec test/test_epi.exe -- _build/default/bin/epi.exe --quick-tests`

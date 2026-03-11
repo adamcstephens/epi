@@ -56,33 +56,6 @@ let expand_flake_ref_tilde target =
       let rest = String.sub target i (String.length target - i) in
       Config.expand_tilde flake_ref ^ rest
 
-let resolve_descriptor target =
-  let target = expand_flake_ref_tilde target in
-  let process_result =
-    match Sys.getenv_opt "EPI_TARGET_RESOLVER_CMD" with
-    | Some resolver_cmd ->
-        let env = Process.env_with [ ("EPI_TARGET", target) ] in
-        Process.run ~env ~prog:"/bin/sh" ~args:[ "-c"; resolver_cmd ] ()
-    | None ->
-        Process.run ~prog:"nix"
-          ~args:[ "eval"; "--json"; target ^ ".config.epi" ]
-          ()
-  in
-  if process_result.status <> 0 then
-    Error
-      {
-        target;
-        details =
-          (if process_result.stderr = "" then "<no stderr>"
-           else process_result.stderr);
-        exit_code = Some process_result.status;
-      }
-  else
-    match Yojson.Basic.from_string process_result.stdout with
-    | json -> Ok (descriptor_of_json json)
-    | exception Yojson.Json_error msg ->
-        Error { target; details = "invalid JSON output: " ^ msg; exit_code = None }
-
 let store_root_of_path path =
   let prefix = "/nix/store/" in
   if not (String.starts_with ~prefix path) then None
@@ -115,6 +88,76 @@ let split_target target =
       in
       if flake_ref = "" || config_name = "" then None
       else Some (flake_ref, config_name)
+
+let canonicalize_target target =
+  match split_target target with
+  | None -> target
+  | Some (flake_ref, config_name) ->
+      if String.starts_with ~prefix:"nixosConfigurations." config_name then
+        target
+      else flake_ref ^ "#nixosConfigurations." ^ config_name
+
+let check_target_exists target =
+  let result =
+    Process.run ~prog:"nix"
+      ~args:[ "eval"; target; "--apply"; "x: true" ]
+      ()
+  in
+  if result.status <> 0 then
+    Error
+      {
+        target;
+        details = Printf.sprintf "target '%s' not found in flake" target;
+        exit_code = Some result.status;
+      }
+  else Ok ()
+
+let resolve_descriptor target =
+  let target = expand_flake_ref_tilde target in
+  let target = canonicalize_target target in
+  match Sys.getenv_opt "EPI_TARGET_RESOLVER_CMD" with
+  | Some resolver_cmd ->
+      let env = Process.env_with [ ("EPI_TARGET", target) ] in
+      let process_result =
+        Process.run ~env ~prog:"/bin/sh" ~args:[ "-c"; resolver_cmd ] ()
+      in
+      if process_result.status <> 0 then
+        Error
+          {
+            target;
+            details =
+              (if process_result.stderr = "" then "<no stderr>"
+               else process_result.stderr);
+            exit_code = Some process_result.status;
+          }
+      else (
+        match Yojson.Basic.from_string process_result.stdout with
+        | json -> Ok (descriptor_of_json json)
+        | exception Yojson.Json_error msg ->
+            Error { target; details = "invalid JSON output: " ^ msg; exit_code = None })
+  | None -> (
+      match check_target_exists target with
+      | Error _ as e -> e
+      | Ok () ->
+          let process_result =
+            Process.run ~prog:"nix"
+              ~args:[ "eval"; "--json"; target ^ ".config.epi" ]
+              ()
+          in
+          if process_result.status <> 0 then
+            Error
+              {
+                target;
+                details =
+                  (if process_result.stderr = "" then "<no stderr>"
+                   else process_result.stderr);
+                exit_code = Some process_result.status;
+              }
+          else (
+            match Yojson.Basic.from_string process_result.stdout with
+            | json -> Ok (descriptor_of_json json)
+            | exception Yojson.Json_error msg ->
+                Error { target; details = "invalid JSON output: " ^ msg; exit_code = None }))
 
 let build_target_artifact_if_missing ~target ~label =
   match split_target target with
