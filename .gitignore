@@ -28,4 +28,6 @@ setup.log
 # Local OPAM switch
 _opam/
 *.img
-.epi
+
+.epi/cache
+.epi/state
