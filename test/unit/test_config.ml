@@ -146,4 +146,105 @@ let tests =
         | Error msg ->
             Alcotest.(check bool) "mentions config.toml"
               true (Util.contains msg "config.toml"));
+    Alcotest.test_case "user_config_path: EPI_CONFIG_FILE takes precedence" `Quick (fun () ->
+        let saved_epi = Sys.getenv_opt "EPI_CONFIG_FILE" in
+        let saved_xdg = Sys.getenv_opt "XDG_CONFIG_HOME" in
+        Fun.protect ~finally:(fun () ->
+          (match saved_epi with Some v -> Unix.putenv "EPI_CONFIG_FILE" v | None -> Unix.putenv "EPI_CONFIG_FILE" "");
+          if saved_epi = None then (try Unix.putenv "EPI_CONFIG_FILE" "" with _ -> ());
+          (match saved_xdg with Some v -> Unix.putenv "XDG_CONFIG_HOME" v | None -> ()))
+        (fun () ->
+          Unix.putenv "EPI_CONFIG_FILE" "/custom/config.toml";
+          Unix.putenv "XDG_CONFIG_HOME" "/xdg/home";
+          match Config.user_config_path () with
+          | Some p -> Alcotest.(check string) "path" "/custom/config.toml" p
+          | None -> Alcotest.fail "expected Some"));
+    Alcotest.test_case "user_config_path: XDG_CONFIG_HOME used when no EPI_CONFIG_FILE" `Quick (fun () ->
+        with_temp_dir "epi-ucp" (fun _dir ->
+          let save_env name =
+            let v = Sys.getenv_opt name in
+            (name, v)
+          in
+          let saved = List.map save_env ["EPI_CONFIG_FILE"; "XDG_CONFIG_HOME"] in
+          Fun.protect ~finally:(fun () ->
+            List.iter (fun (name, v) ->
+              match v with Some s -> Unix.putenv name s | None -> Unix.putenv name "") saved)
+          (fun () ->
+            Unix.putenv "EPI_CONFIG_FILE" "";
+            Unix.putenv "XDG_CONFIG_HOME" "/xdg/custom";
+            match Config.user_config_path () with
+            | Some p -> Alcotest.(check string) "path" "/xdg/custom/epi/config.toml" p
+            | None -> Alcotest.fail "expected Some")));
+    Alcotest.test_case "user_config_path: defaults to HOME/.config" `Quick (fun () ->
+        with_temp_dir "epi-ucp-def" (fun _dir ->
+          let save_env name =
+            let v = Sys.getenv_opt name in
+            (name, v)
+          in
+          let saved = List.map save_env ["EPI_CONFIG_FILE"; "XDG_CONFIG_HOME"] in
+          Fun.protect ~finally:(fun () ->
+            List.iter (fun (name, v) ->
+              match v with Some s -> Unix.putenv name s | None -> Unix.putenv name "") saved)
+          (fun () ->
+            Unix.putenv "EPI_CONFIG_FILE" "";
+            Unix.putenv "XDG_CONFIG_HOME" "";
+            let home = Sys.getenv "HOME" in
+            match Config.user_config_path () with
+            | Some p -> Alcotest.(check string) "path"
+                (Filename.concat (Filename.concat (Filename.concat home ".config") "epi") "config.toml") p
+            | None -> Alcotest.fail "expected Some")));
+    Alcotest.test_case "load_user: loads from EPI_CONFIG_FILE" `Quick (fun () ->
+        with_temp_dir "epi-load-user" (fun dir ->
+          let config_file = Filename.concat dir "user-config.toml" in
+          write_file config_file "target = \".#user-target\"\n";
+          let saved = Sys.getenv_opt "EPI_CONFIG_FILE" in
+          Fun.protect ~finally:(fun () ->
+            match saved with Some v -> Unix.putenv "EPI_CONFIG_FILE" v | None -> Unix.putenv "EPI_CONFIG_FILE" "")
+          (fun () ->
+            Unix.putenv "EPI_CONFIG_FILE" config_file;
+            match Config.load_user () with
+            | Error e -> Alcotest.fail e
+            | Ok c -> Alcotest.(check (option string)) "target" (Some ".#user-target") c.Config.target)));
+    Alcotest.test_case "load_user: error when EPI_CONFIG_FILE set but missing" `Quick (fun () ->
+        let saved = Sys.getenv_opt "EPI_CONFIG_FILE" in
+        Fun.protect ~finally:(fun () ->
+          match saved with Some v -> Unix.putenv "EPI_CONFIG_FILE" v | None -> Unix.putenv "EPI_CONFIG_FILE" "")
+        (fun () ->
+          Unix.putenv "EPI_CONFIG_FILE" "/nonexistent/config.toml";
+          match Config.load_user () with
+          | Ok _ -> Alcotest.fail "expected error for missing explicit config"
+          | Error msg ->
+              Alcotest.(check bool) "mentions path" true (Util.contains msg "/nonexistent/config.toml")));
+    Alcotest.test_case "load_user: empty config when default path missing" `Quick (fun () ->
+        with_temp_dir "epi-load-user-miss" (fun dir ->
+          let saved_epi = Sys.getenv_opt "EPI_CONFIG_FILE" in
+          let saved_xdg = Sys.getenv_opt "XDG_CONFIG_HOME" in
+          Fun.protect ~finally:(fun () ->
+            (match saved_epi with Some v -> Unix.putenv "EPI_CONFIG_FILE" v | None -> Unix.putenv "EPI_CONFIG_FILE" "");
+            (match saved_xdg with Some v -> Unix.putenv "XDG_CONFIG_HOME" v | None -> Unix.putenv "XDG_CONFIG_HOME" ""))
+          (fun () ->
+            Unix.putenv "EPI_CONFIG_FILE" "";
+            Unix.putenv "XDG_CONFIG_HOME" dir;
+            match Config.load_user () with
+            | Error e -> Alcotest.fail e
+            | Ok c ->
+                Alcotest.(check (option string)) "target" None c.Config.target;
+                Alcotest.(check (option (list string))) "mounts" None c.Config.mounts)));
+    Alcotest.test_case "merge_configs: project overrides user" `Quick (fun () ->
+        let user : Config.t = { target = Some ".#user"; mounts = Some ["/user/m"]; disk_size = Some "20G" } in
+        let project : Config.t = { target = Some ".#proj"; mounts = None; disk_size = Some "60G" } in
+        let merged = Config.merge_configs ~user ~project in
+        Alcotest.(check (option string)) "target" (Some ".#proj") merged.Config.target;
+        Alcotest.(check (option (list string))) "mounts" (Some ["/user/m"]) merged.Config.mounts;
+        Alcotest.(check (option string)) "disk_size" (Some "60G") merged.Config.disk_size);
+    Alcotest.test_case "three-tier: CLI > project > user" `Quick (fun () ->
+        let user : Config.t = { target = Some ".#user"; mounts = Some ["/user/m"]; disk_size = Some "20G" } in
+        let project : Config.t = { target = Some ".#proj"; mounts = None; disk_size = None } in
+        let merged = Config.merge_configs ~user ~project in
+        match Config.merge ~cli_target:(Some ".#cli") ~cli_mounts:[] ~cli_disk_size:None merged with
+        | Error e -> Alcotest.fail e
+        | Ok r ->
+            Alcotest.(check string) "target from CLI" ".#cli" r.Config.resolved_target;
+            Alcotest.(check (list string)) "mounts from user" ["/user/m"] r.Config.resolved_mounts;
+            Alcotest.(check string) "disk_size from user" "20G" r.Config.resolved_disk_size);
   ]
