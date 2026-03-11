@@ -145,7 +145,24 @@ let provision_and_report ~command_name ~attach_console ~console_options
             (match Vm_launch.wait_for_ssh ~ssh_port
                      ~ssh_key_path:runtime.Instance_store.ssh_key_path
                      ~timeout_seconds:wait_timeout with
-            | Ok () -> Printf.printf "vm: SSH ready\n%!"
+            | Ok () ->
+                Printf.printf "vm: SSH ready\n%!";
+                let username =
+                  match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
+                in
+                let hooks = Hooks.discover ~instance_name "post-launch" in
+                if hooks <> [] then (
+                  Printf.printf "hooks: running %d post-launch hook(s)\n%!" (List.length hooks);
+                  let env = Hooks.{
+                    instance_name;
+                    ssh_port;
+                    ssh_key_path = runtime.Instance_store.ssh_key_path;
+                    ssh_user = username;
+                    state_dir = Instance_store.state_dir ();
+                  } in
+                  match Hooks.execute ~env hooks with
+                  | Ok () -> Printf.printf "hooks: post-launch hooks complete\n%!"
+                  | Error msg -> fail (Printf.sprintf "post-launch hook failed: %s" msg))
             | Error error -> fail (Vm_launch.pp_provision_error error))
         | None -> ());
       if attach_console then
@@ -429,6 +446,23 @@ let stop_command =
            "stop: instance=%s was already stopped (stale runtime cleared)\n"
            instance_name
      | Some runtime -> (
+         let username =
+           match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
+         in
+         let hooks = Hooks.discover ~instance_name "pre-stop" in
+         if hooks <> [] then (
+           Printf.printf "hooks: running %d pre-stop hook(s)\n%!" (List.length hooks);
+           let ssh_port = Option.value ~default:0 runtime.Instance_store.ssh_port in
+           let env = Hooks.{
+             instance_name;
+             ssh_port;
+             ssh_key_path = runtime.Instance_store.ssh_key_path;
+             ssh_user = username;
+             state_dir = Instance_store.state_dir ();
+           } in
+           match Hooks.execute ~env hooks with
+           | Ok () -> Printf.printf "hooks: pre-stop hooks complete\n%!"
+           | Error msg -> Printf.eprintf "warning: pre-stop hook failed: %s\n%!" msg);
          match terminate_instance_runtime ~instance_name runtime with
          | Ok () ->
              Instance_store.clear_runtime instance_name;

@@ -9,4 +9,5 @@ let () =
       ("provision", Test_provision.tests);
       ("provision_integration", Test_provision_integration.tests);
       ("config", Test_config.tests);
+      ("hooks", Test_hooks.tests);
     ]

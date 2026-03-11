@@ -210,7 +210,7 @@ let wait_for_passt_socket socket_path max_wait_ms =
   in
   loop steps
 
-let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths =
+let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths ~guest_hooks =
   if not (check_xorriso ()) then Error Xorriso_missing
   else
     let iso_path =
@@ -229,11 +229,25 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
       close_out channel
     in
     write epi_json_path epi_json;
+    let hooks_dir = Filename.concat staging_dir "hooks" in
+    let hook_files =
+      match guest_hooks with
+      | [] -> []
+      | hooks ->
+          if not (Sys.file_exists hooks_dir) then Unix.mkdir hooks_dir 0o755;
+          List.mapi (fun i src ->
+            let dest = Filename.concat hooks_dir
+              (Printf.sprintf "%03d-%s" i (Filename.basename src)) in
+            copy_file ~source:src ~destination:dest;
+            Unix.chmod dest 0o755;
+            dest) hooks
+    in
     let result =
       Process.run ~prog:(xorriso_bin ())
         ~args:
-          [ "-as"; "mkisofs"; "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
+          ([ "-as"; "mkisofs"; "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
             epi_json_path ]
+           @ hook_files)
         ()
     in
     if result.status <> 0 then
@@ -322,8 +336,9 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
       Error (Virtiofsd_missing { target })
     else Ok ()
   in
+  let guest_hooks = Hooks.discover_guest ~instance_name in
   let* seed_iso_path =
-    match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths with
+    match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths ~guest_hooks with
     | Error Xorriso_missing ->
         Error (Seed_iso_generation_failed { target;
           details = "xorriso not found on $PATH. Install xorriso to enable seed ISO generation." })

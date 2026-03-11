@@ -69,6 +69,20 @@ let
       done
 
       chown -R "$USERNAME:" "~$USERNAME"
+
+      # Guest hooks: run on first boot only
+      HOOK_GUARD="/var/lib/epi-init-done"
+      if [ ! -f "$HOOK_GUARD" ]; then
+        HOOKS_DIR="$TMPDIR/hooks"
+        if [ -d "$HOOKS_DIR" ]; then
+          for hook in "$HOOKS_DIR"/*; do
+            [ -f "$hook" ] && [ -x "$hook" ] || continue
+            echo "epi-init: running guest hook $(basename "$hook")"
+            su - "$USERNAME" -c "$hook" || echo "epi-init: hook $(basename "$hook") failed (exit $?)"
+          done
+        fi
+        touch "$HOOK_GUARD"
+      fi
     '';
   };
 in
