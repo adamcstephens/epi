@@ -29,7 +29,8 @@
               }
             ];
           };
-        };
+
+};
 
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
 
@@ -43,6 +44,7 @@
               packages = [
                 pkgs.xorriso
                 pkgs.cloud-hypervisor
+                pkgs.gptfdisk
                 pkgs.jq
                 pkgs.qemu-utils
                 pkgs.passt

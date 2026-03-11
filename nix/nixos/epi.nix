@@ -2,6 +2,7 @@
   lib,
   config,
   pkgs,
+  modulesPath,
   ...
 }:
 let
@@ -68,7 +69,8 @@ let
         chown "$USERNAME:" "$MOUNT_PATH"
       done
 
-      chown -R "$USERNAME:" "~$USERNAME"
+      HOME_DIR=$(eval echo "~$USERNAME")
+      chown -R "$USERNAME:" "$HOME_DIR"
 
       # Guest hooks: run on first boot only
       HOOK_GUARD="/var/lib/epi-init-done"
@@ -87,6 +89,9 @@ let
   };
 in
 {
+  disabledModules = [ "virtualisation/disk-image.nix" ];
+  imports = [ "${modulesPath}/image/repart.nix" ];
+
   options.epi = {
     enable = lib.mkEnableOption "epi";
 
@@ -135,8 +140,8 @@ in
     epi = {
       kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
-      disk = "${config.system.build.images.qemu}/nixos-image-qcow2-${config.system.nixos.label}-${pkgs.stdenv.hostPlatform.system}.qcow2";
-      cmdline = "console=ttyS0 root=LABEL=nixos ro init=/nix/var/nix/profiles/system/init";
+      disk = "${config.system.build.image}/${config.image.baseName}.raw";
+      cmdline = "console=ttyS0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
       cpus = 1;
       memory_mib = 1024;
       configuredUsers = builtins.attrNames config.users.users;
@@ -150,9 +155,7 @@ in
       autoResize = true;
     };
 
-    boot.growPartition = true;
-
-    boot.loader.grub.device = "/dev/vda";
+    boot.loader.grub.enable = false;
 
     boot.initrd.availableKernelModules = [
       "virtio_pci"
@@ -193,5 +196,19 @@ in
     users.users.root.initialHashedPassword = lib.mkOverride 150 "";
 
     system.stateVersion = "24.11";
+
+    image.repart = {
+      name = "epi-disk";
+      sectorSize = 512;
+      partitions."10-root" = {
+        repartConfig = {
+          Type = "root";
+          Format = "ext4";
+          Label = "nixos";
+          Minimize = "guess";
+        };
+        storePaths = [ config.system.build.toplevel ];
+      };
+    };
   };
 }
