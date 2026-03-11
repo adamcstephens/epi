@@ -49,6 +49,7 @@ let ssh_exec runtime cmd =
         ([
            "-T"; "-p"; port_str;
            "-i"; runtime.Epi.Instance_store.ssh_key_path;
+           "-o"; "IdentitiesOnly=yes";
            "-o"; "StrictHostKeyChecking=no";
            "-o"; "UserKnownHostsFile=/dev/null";
            "-o"; "BatchMode=yes";

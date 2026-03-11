@@ -494,6 +494,7 @@ let wait_for_ssh ~ssh_port ~ssh_key_path ~timeout_seconds =
         ~args:[
           "-p"; port_str;
           "-i"; ssh_key_path;
+          "-o"; "IdentitiesOnly=yes";
           "-o"; "ConnectTimeout=5";
           "-o"; "StrictHostKeyChecking=no";
           "-o"; "UserKnownHostsFile=/dev/null";
