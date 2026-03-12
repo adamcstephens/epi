@@ -121,6 +121,11 @@ let stop_instance ~instance_name runtime =
   | Ok slice -> Process.stop_unit slice
   | Error _ -> false
 
+let console_log_capture_path ~instance_name options =
+  match options.capture_path with
+  | Some _ as explicit -> explicit
+  | None -> Some (Console.console_log_path instance_name)
+
 let attach_console_for_running_instance ~instance_name ~options runtime =
   if not (instance_is_running ~instance_name runtime) then (
     Instance_store.clear_runtime instance_name;
@@ -128,13 +133,55 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
       (Console.pp_console_error
          (Console.Instance_not_running { instance_name })))
   else
+    let capture_path = console_log_capture_path ~instance_name options in
     match
       Console.attach_console ~instance_name ~read_stdin:options.read_stdin
-        ?capture_path:options.capture_path
-        ?timeout_seconds:options.timeout_seconds runtime
+        ?capture_path ?timeout_seconds:options.timeout_seconds runtime
     with
     | Ok () -> ()
     | Error error -> fail (Console.pp_console_error error)
+
+let wait_and_run_hooks ~wait_timeout ~instance_name ~target runtime =
+  match runtime.Instance_store.ssh_port with
+  | Some ssh_port -> (
+      Printf.printf "vm: waiting for SSH (timeout %ds)...\n%!" wait_timeout;
+      match
+        Vm_launch.wait_for_ssh ~ssh_port
+          ~ssh_key_path:runtime.Instance_store.ssh_key_path
+          ~timeout_seconds:wait_timeout
+      with
+      | Ok () ->
+          Printf.printf "vm: SSH ready\n%!";
+          let username =
+            match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
+          in
+          let nix_hooks =
+            match
+              Target.load_descriptor_cache (Target.canonicalize_target target)
+            with
+            | Some desc -> desc.Target.hooks.post_launch
+            | None -> []
+          in
+          let hooks = Hooks.discover ~instance_name ~nix_hooks "post-launch" in
+          if hooks <> [] then (
+            Printf.printf "hooks: running %d post-launch hook(s)\n%!"
+              (List.length hooks);
+            let env =
+              Hooks.
+                {
+                  instance_name;
+                  ssh_port;
+                  ssh_key_path = runtime.Instance_store.ssh_key_path;
+                  ssh_user = username;
+                  state_dir = Instance_store.state_dir ();
+                }
+            in
+            match Hooks.execute ~env hooks with
+            | Ok () -> Printf.printf "hooks: post-launch hooks complete\n%!"
+            | Error msg -> Printf.eprintf "post-launch hook failed: %s\n%!" msg)
+      | Error error ->
+          Printf.eprintf "%s\n%!" (Vm_launch.pp_provision_error error))
+  | None -> ()
 
 let provision_and_report ~command_name ~attach_console ~console_options ~rebuild
     ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target =
@@ -143,60 +190,31 @@ let provision_and_report ~command_name ~attach_console ~console_options ~rebuild
       ()
   with
   | Error error -> fail (Vm_launch.pp_provision_error error)
-  | Ok runtime ->
+  | Ok runtime -> (
       Instance_store.set_provisioned ~instance_name ~target ~runtime;
-      (if not no_wait then
-         match runtime.Instance_store.ssh_port with
-         | Some ssh_port -> (
-             Printf.printf "vm: waiting for SSH (timeout %ds)...\n%!"
-               wait_timeout;
-             match
-               Vm_launch.wait_for_ssh ~ssh_port
-                 ~ssh_key_path:runtime.Instance_store.ssh_key_path
-                 ~timeout_seconds:wait_timeout
-             with
-             | Ok () ->
-                 Printf.printf "vm: SSH ready\n%!";
-                 let username =
-                   match Sys.getenv_opt "USER" with
-                   | Some u -> u
-                   | None -> "user"
-                 in
-                 let nix_hooks =
-                   match
-                     Target.load_descriptor_cache
-                       (Target.canonicalize_target target)
-                   with
-                   | Some desc -> desc.Target.hooks.post_launch
-                   | None -> []
-                 in
-                 let hooks =
-                   Hooks.discover ~instance_name ~nix_hooks "post-launch"
-                 in
-                 if hooks <> [] then (
-                   Printf.printf "hooks: running %d post-launch hook(s)\n%!"
-                     (List.length hooks);
-                   let env =
-                     Hooks.
-                       {
-                         instance_name;
-                         ssh_port;
-                         ssh_key_path = runtime.Instance_store.ssh_key_path;
-                         ssh_user = username;
-                         state_dir = Instance_store.state_dir ();
-                       }
-                   in
-                   match Hooks.execute ~env hooks with
-                   | Ok () ->
-                       Printf.printf "hooks: post-launch hooks complete\n%!"
-                   | Error msg ->
-                       fail (Printf.sprintf "post-launch hook failed: %s" msg))
-             | Error error -> fail (Vm_launch.pp_provision_error error))
-         | None -> ());
-      if attach_console then
+      if attach_console then (
+        let bg_pid =
+          if no_wait then -1
+          else
+            let pid = Unix.fork () in
+            if pid = 0 then (
+              wait_and_run_hooks ~wait_timeout ~instance_name ~target runtime;
+              exit 0)
+            else pid
+        in
         attach_console_for_running_instance ~instance_name
-          ~options:console_options runtime
-      else (
+          ~options:console_options runtime;
+        if bg_pid > 0 then
+          let _ = Unix.waitpid [] bg_pid in
+          ())
+      else
+        let capture_pid =
+          Console.start_console_capture ~instance_name
+            ~serial_socket:runtime.Instance_store.serial_socket
+        in
+        if not no_wait then
+          wait_and_run_hooks ~wait_timeout ~instance_name ~target runtime;
+        Console.stop_console_capture capture_pid;
         Printf.printf
           "%s: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
           command_name instance_name target runtime.Instance_store.unit_id
@@ -733,6 +751,36 @@ let cmd =
                Printf.printf "Target:   %s\n" target;
                Printf.printf "Status:   stopped\n") );
       ("rm", rm_command);
+      ( "console-log",
+        Command.make ~summary:"Show captured console log for an instance."
+          ~readme:(fun () ->
+            "Show the console log captured during instance launch or console \
+             session.\n\
+             If INSTANCE is omitted, `default` is used.")
+          (let open Command.Std in
+           let+ instance_name =
+             Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE"
+               ~doc:"Instance name."
+           in
+           let instance_name = resolve_instance_name instance_name in
+           let log_path = Console.console_log_path instance_name in
+           if not (Sys.file_exists log_path) then
+             fail
+               (Printf.sprintf "No console log found for instance '%s'."
+                  instance_name)
+           else
+             let channel = open_in log_path in
+             (try
+                let buf = Bytes.create 4096 in
+                let rec loop () =
+                  let n = input channel buf 0 (Bytes.length buf) in
+                  if n > 0 then (
+                    output stdout buf 0 n;
+                    loop ())
+                in
+                loop ()
+              with End_of_file -> ());
+             close_in channel) );
       ("console", console_command);
       ("ssh", ssh_command);
       ("exec", exec_command);
@@ -745,4 +793,6 @@ module Instance_store = Instance_store
 module Vm_launch = Vm_launch
 module Process = Process
 module Target = Target
+module Console = Console
 module Hooks = Hooks
+module Util = Util

@@ -18,6 +18,10 @@ let provision_and_wait ?(rebuild = false) ~instance_name ~target ~mount_paths ()
   | Error err -> Alcotest.fail (Epi.Vm_launch.pp_provision_error err)
   | Ok runtime -> (
       Epi.Instance_store.set_provisioned ~instance_name ~target ~runtime;
+      let capture_pid =
+        Epi.Console.start_console_capture ~instance_name
+          ~serial_socket:runtime.Epi.Instance_store.serial_socket
+      in
       let ssh_port =
         match runtime.Epi.Instance_store.ssh_port with
         | Some p -> p
@@ -28,8 +32,12 @@ let provision_and_wait ?(rebuild = false) ~instance_name ~target ~mount_paths ()
           ~ssh_key_path:runtime.Epi.Instance_store.ssh_key_path
           ~timeout_seconds:120
       with
-      | Ok () -> runtime
-      | Error err -> Alcotest.fail (Epi.Vm_launch.pp_provision_error err))
+      | Ok () ->
+          Epi.Console.stop_console_capture capture_pid;
+          runtime
+      | Error err ->
+          Epi.Console.stop_console_capture capture_pid;
+          Alcotest.fail (Epi.Vm_launch.pp_provision_error err))
 
 let ssh_exec runtime cmd =
   let ssh_port =
