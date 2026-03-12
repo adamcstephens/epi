@@ -15,7 +15,9 @@ fn connect_socket(path: &str, retries: u32, interval: Duration) -> Result<UnixSt
             Ok(stream) => return Ok(stream),
             Err(e) => {
                 if i == retries - 1 {
-                    bail!("failed to connect to serial socket {path} after {retries} attempts: {e}");
+                    bail!(
+                        "failed to connect to serial socket {path} after {retries} attempts: {e}"
+                    );
                 }
                 std::thread::sleep(interval);
             }
@@ -55,11 +57,7 @@ pub fn attach(
         terminal::enable_raw_mode()?;
     }
     // Ensure raw mode is restored on any exit path
-    let _raw_guard = if read_stdin {
-        Some(RawModeGuard)
-    } else {
-        None
-    };
+    let _raw_guard = if read_stdin { Some(RawModeGuard) } else { None };
 
     eprintln!("attached to console (Ctrl-T q to detach)");
 
@@ -99,8 +97,8 @@ pub fn attach(
                     eprintln!("\ndetached");
                     return Ok(());
                 }
-                ctrl_t_pressed = key.code == KeyCode::Char('t')
-                    && key.modifiers.contains(KeyModifiers::CONTROL);
+                ctrl_t_pressed =
+                    key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL);
 
                 // Forward the keypress to the socket
                 if let Some(bytes) = key_to_bytes(&key) {

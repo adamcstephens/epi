@@ -187,4 +187,3 @@ mod tests {
         assert_eq!(out.stdout, "works");
     }
 }
-

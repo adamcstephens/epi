@@ -224,21 +224,33 @@ fn cmd_launch(
         let _ = vm_launch::stop_instance(instance);
     }
 
-    let resolved = config::resolve(cli_target, cli_mounts, cli_disk_size)?;
+    let mut resolved = config::resolve(cli_target, cli_mounts, cli_disk_size)?;
+    resolved.target = target::expand_tilde(&resolved.target);
 
     target::validate(&resolved.target)?;
 
+    let pre_existing = instance_store::find(instance)?.is_some();
     instance_store::set_launching(instance, &resolved.target, resolved.mounts.clone())?;
 
     eprintln!("provisioning {instance} from {}", resolved.target);
 
-    let runtime = vm_launch::provision(
+    let runtime = match vm_launch::provision(
         instance,
         &resolved.target,
         &resolved.mounts,
         &resolved.disk_size,
         rebuild,
-    )?;
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            if pre_existing {
+                let _ = instance_store::clear_runtime(instance);
+            } else {
+                let _ = instance_store::remove(instance);
+            }
+            return Err(e);
+        }
+    };
 
     let ssh_port = runtime.ssh_port.unwrap_or(0);
     let ssh_key_path = runtime.ssh_key_path.clone();
@@ -253,7 +265,33 @@ fn cmd_launch(
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
-    if !no_wait && ssh_port > 0 {
+    if attach_console {
+        // Run SSH wait + hooks in background so console attaches immediately
+        let wait_handle = if !no_wait && ssh_port > 0 {
+            let inst = instance.to_string();
+            let key = ssh_key_path.clone();
+            let tgt = resolved.target.clone();
+            let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(wait_timeout);
+            Some(std::thread::spawn(move || -> Result<()> {
+                eprintln!("waiting for SSH on port {ssh_port}...");
+                vm_launch::wait_for_ssh(ssh_port, &key, timeout)?;
+                eprintln!("instance {inst} is ready (ssh port {ssh_port})");
+                run_post_launch_hooks(&inst, &tgt, ssh_port, &key)?;
+                Ok(())
+            }))
+        } else {
+            None
+        };
+
+        console::attach(instance, None, None)?;
+
+        if let Some(handle) = wait_handle {
+            let _ = handle.join();
+        }
+    } else if !no_wait && ssh_port > 0 {
         let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -263,32 +301,33 @@ fn cmd_launch(
         vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, timeout)?;
         eprintln!("instance {instance} is ready (ssh port {ssh_port})");
 
-        // Run post-launch hooks
-        let state = instance_store::load_state(instance)?;
-        let desc_hooks = if let Some(ref st) = state {
-            let cache = target::resolve_descriptor_cached(&st.target, false)?;
-            cache.descriptor().hooks.post_launch.clone()
-        } else {
-            vec![]
+        run_post_launch_hooks(instance, &resolved.target, ssh_port, &ssh_key_path)?;
+    }
+
+    Ok(())
+}
+
+fn run_post_launch_hooks(
+    instance: &str,
+    target_str: &str,
+    ssh_port: u16,
+    ssh_key_path: &str,
+) -> Result<()> {
+    let desc_hooks = target::resolve_descriptor_cached(target_str, false)
+        .map(|c| c.descriptor().hooks.post_launch.clone())
+        .unwrap_or_default();
+
+    let hook_scripts = hooks::discover(instance, &desc_hooks, "post-launch")?;
+    if !hook_scripts.is_empty() {
+        let env = hooks::HookEnv {
+            instance_name: instance.to_string(),
+            ssh_port,
+            ssh_key_path: ssh_key_path.to_string(),
+            ssh_user: ssh_user(),
+            state_dir: instance_store::state_dir().to_string_lossy().to_string(),
         };
-
-        let hook_scripts = hooks::discover(instance, &desc_hooks, "post-launch")?;
-        if !hook_scripts.is_empty() {
-            let env = hooks::HookEnv {
-                instance_name: instance.to_string(),
-                ssh_port,
-                ssh_key_path: ssh_key_path.clone(),
-                ssh_user: ssh_user(),
-                state_dir: instance_store::state_dir().to_string_lossy().to_string(),
-            };
-            hooks::execute(&env, &hook_scripts)?;
-        }
+        hooks::execute(&env, &hook_scripts)?;
     }
-
-    if attach_console {
-        console::attach(instance, None, None)?;
-    }
-
     Ok(())
 }
 
@@ -331,7 +370,12 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
 
 fn cmd_stop(instance: &str) -> Result<()> {
     if !instance_store::instance_is_running(instance)? {
-        eprintln!("instance {instance} is not running");
+        if instance_store::find_runtime(instance)?.is_some() {
+            instance_store::clear_runtime(instance)?;
+            eprintln!("stop: instance {instance} was already stopped (stale runtime cleared)");
+        } else {
+            eprintln!("instance {instance} is not running");
+        }
         return Ok(());
     }
 
@@ -413,7 +457,10 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<16} {:<40} {:<10} {}", "INSTANCE", "TARGET", "STATUS", "SSH");
+    println!(
+        "{:<16} {:<40} {:<10} {}",
+        "INSTANCE", "TARGET", "STATUS", "SSH"
+    );
 
     for (name, target_str) in &instances {
         let running = instance_store::instance_is_running(name)?;
@@ -452,11 +499,16 @@ fn cmd_ssh(instance: &str) -> Result<()> {
 
     let err = std::process::Command::new("ssh")
         .args([
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-            "-i", &runtime.ssh_key_path,
-            "-p", &ssh_port.to_string(),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-i",
+            &runtime.ssh_key_path,
+            "-p",
+            &ssh_port.to_string(),
             &ssh_target(),
         ])
         .exec();
@@ -478,11 +530,16 @@ fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no SSH port for instance {instance}"))?;
 
     let mut args = vec![
-        "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
-        "-o".to_string(), "UserKnownHostsFile=/dev/null".to_string(),
-        "-o".to_string(), "LogLevel=ERROR".to_string(),
-        "-i".to_string(), runtime.ssh_key_path.clone(),
-        "-p".to_string(), ssh_port.to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=no".to_string(),
+        "-o".to_string(),
+        "UserKnownHostsFile=/dev/null".to_string(),
+        "-o".to_string(),
+        "LogLevel=ERROR".to_string(),
+        "-i".to_string(),
+        runtime.ssh_key_path.clone(),
+        "-p".to_string(),
+        ssh_port.to_string(),
         ssh_target(),
         "--".to_string(),
     ];
@@ -490,9 +547,7 @@ fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
 
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let err = std::process::Command::new("ssh")
-        .args(&arg_refs)
-        .exec();
+    let err = std::process::Command::new("ssh").args(&arg_refs).exec();
 
     bail!("failed to exec ssh: {err}");
 }
@@ -527,6 +582,23 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
         eprintln!("waiting for SSH on port {ssh_port}...");
         vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, 120)?;
         eprintln!("instance {instance} rebuilt and ready");
+
+        // Run post-launch hooks
+        let desc_hooks = target::resolve_descriptor_cached(&state.target, false)
+            .map(|c| c.descriptor().hooks.post_launch.clone())
+            .unwrap_or_default();
+
+        let hook_scripts = hooks::discover(instance, &desc_hooks, "post-launch")?;
+        if !hook_scripts.is_empty() {
+            let env = hooks::HookEnv {
+                instance_name: instance.to_string(),
+                ssh_port,
+                ssh_key_path,
+                ssh_user: ssh_user(),
+                state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+            };
+            hooks::execute(&env, &hook_scripts)?;
+        }
     }
 
     Ok(())

@@ -66,8 +66,9 @@ fn discover_scripts(dir: &Path) -> Result<Vec<PathBuf>> {
 pub fn discover_guest(instance_name: &str) -> Result<Vec<PathBuf>> {
     let mut hooks = vec![];
     for base in [user_hooks_dir(), project_hooks_dir()] {
-        let dir = base.join("guest-init.d").join(instance_name);
-        hooks.extend(discover_scripts(&dir)?);
+        let top = base.join("guest-init.d");
+        hooks.extend(discover_scripts(&top)?);
+        hooks.extend(discover_scripts(&top.join(instance_name))?);
     }
     Ok(hooks)
 }
@@ -81,8 +82,9 @@ pub fn discover(
     let mut hooks = vec![];
 
     for base in [user_hooks_dir(), project_hooks_dir()] {
-        let dir = base.join(format!("{hook_point}.d")).join(instance_name);
-        hooks.extend(discover_scripts(&dir)?);
+        let top = base.join(format!("{hook_point}.d"));
+        hooks.extend(discover_scripts(&top)?);
+        hooks.extend(discover_scripts(&top.join(instance_name))?);
     }
 
     // Nix-provided hooks
@@ -122,11 +124,7 @@ pub fn execute(env: &HookEnv, scripts: &[PathBuf]) -> Result<()> {
     for script in scripts {
         let script_str = script.to_string_lossy();
         eprintln!("running hook: {script_str}");
-        let out = process::run_with_env(
-            &script_str,
-            &[],
-            &env_vars,
-        )?;
+        let out = process::run_with_env(&script_str, &[], &env_vars)?;
         if !out.success() {
             anyhow::bail!(
                 "hook {} failed (exit {}): {}",

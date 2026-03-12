@@ -91,8 +91,8 @@ pub fn set_launching(name: &str, target: &str, mounts: Vec<String>) -> Result<()
 }
 
 pub fn set_provisioned(name: &str, runtime: Runtime) -> Result<()> {
-    let mut state = load_state(name)?
-        .ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
+    let mut state =
+        load_state(name)?.ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
     state.runtime = Some(runtime);
     save_state(name, &state)
 }
@@ -336,11 +336,15 @@ mod tests {
     fn list_from_dir_returns_sorted() {
         let dir = TempDir::new().unwrap();
         let mk = |name: &str, target: &str| {
-            write_state(dir.path(), name, &InstanceState {
-                target: target.into(),
-                runtime: None,
-                mounts: vec![],
-            });
+            write_state(
+                dir.path(),
+                name,
+                &InstanceState {
+                    target: target.into(),
+                    runtime: None,
+                    mounts: vec![],
+                },
+            );
         };
         mk("beta", ".#b");
         mk("alpha", ".#a");
@@ -365,11 +369,15 @@ mod tests {
     #[test]
     fn remove_deletes_dir() {
         let dir = TempDir::new().unwrap();
-        write_state(dir.path(), "vm1", &InstanceState {
-            target: ".#dev".into(),
-            runtime: None,
-            mounts: vec![],
-        });
+        write_state(
+            dir.path(),
+            "vm1",
+            &InstanceState {
+                target: ".#dev".into(),
+                runtime: None,
+                mounts: vec![],
+            },
+        );
         assert!(dir.path().join("vm1").exists());
 
         fs::remove_dir_all(dir.path().join("vm1")).unwrap();
