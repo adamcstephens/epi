@@ -450,7 +450,7 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   in
   let exec_stop_posts =
     List.map (fun u ->
-        Printf.sprintf "%s --user stop %s" Process.systemctl_bin u)
+        Printf.sprintf "%s --user stop %s" (Process.systemctl_bin ()) u)
       helper_units
   in
   let vm_unit = Printf.sprintf "epi-%s_%s_vm" escaped unit_id in

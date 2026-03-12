@@ -39,7 +39,15 @@ let generate_unit_id () =
       done);
   Buffer.contents buf
 
-let systemctl_bin = "/run/current-system/sw/bin/systemctl"
+let systemd_run_bin () =
+  match Sys.getenv_opt "EPI_SYSTEMD_RUN_BIN" with
+  | Some bin -> bin
+  | None -> "systemd-run"
+
+let systemctl_bin () =
+  match Sys.getenv_opt "EPI_SYSTEMCTL_BIN" with
+  | Some bin -> bin
+  | None -> "/run/current-system/sw/bin/systemctl"
 
 let setenv_args () =
   Unix.environment ()
@@ -50,7 +58,7 @@ let setenv_args () =
       | None -> None)
 
 let run_helper ~unit_name ~slice ~prog ~args () =
-  run ~prog:"systemd-run"
+  run ~prog:(systemd_run_bin ())
     ~args:
       ([ "--user"; "--collect";
          "--unit=" ^ unit_name;
@@ -64,7 +72,7 @@ let run_service ~unit_name ~slice ~exec_stop_posts ~prog ~args () =
   let stop_props =
     List.map (fun cmd -> "--property=ExecStopPost=" ^ cmd) exec_stop_posts
   in
-  run ~prog:"systemd-run"
+  run ~prog:(systemd_run_bin ())
     ~args:
       ([ "--user"; "--collect";
          "--unit=" ^ unit_name;
@@ -78,9 +86,9 @@ let run_service ~unit_name ~slice ~exec_stop_posts ~prog ~args () =
 
 
 let unit_is_active unit_name =
-  let result = run ~prog:systemctl_bin ~args:[ "--user"; "is-active"; unit_name ] () in
+  let result = run ~prog:(systemctl_bin ()) ~args:[ "--user"; "is-active"; unit_name ] () in
   result.status = 0
 
 let stop_unit unit_name =
-  let result = run ~prog:systemctl_bin ~args:[ "--user"; "stop"; unit_name ] () in
+  let result = run ~prog:(systemctl_bin ()) ~args:[ "--user"; "stop"; unit_name ] () in
   result.status = 0
