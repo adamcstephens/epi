@@ -24,6 +24,11 @@ let
     ];
 
     text = ''
+      if [ -f /nix-path-registration ]; then
+        ${config.nix.package.out}/bin/nix-store --load-db < /nix-path-registration &&
+        rm /nix-path-registration
+      fi
+
       export PATH="/run/wrappers/bin:$PATH"
       EPIDATA=$(blkid -L epidata 2>/dev/null) || exit 0
       [ -b "$EPIDATA" ] || exit 0
@@ -117,6 +122,12 @@ let
       rmdir /run/epi-init/epidata 2>/dev/null || true
     '';
   };
+
+  imageStorePaths = [ config.system.build.toplevel ] ++ cfg.extraStorePaths;
+
+  closureInfo = pkgs.closureInfo {
+    rootPaths = imageStorePaths;
+  };
 in
 {
   disabledModules = [ "virtualisation/disk-image.nix" ];
@@ -124,6 +135,15 @@ in
 
   options.epi = {
     enable = lib.mkEnableOption "epi";
+
+    extraStorePaths = lib.mkOption {
+      type = lib.types.listOf lib.types.pathInStore;
+      description = ''
+        extra store paths to copy into the disk image.
+        for example: `[ config.home-manager.users.adam.home.activationPackage ]`
+      '';
+      default = [ ];
+    };
 
     kernel = lib.mkOption {
       type = lib.types.str;
@@ -198,8 +218,7 @@ in
     };
 
     system.extraDependencies =
-      (lib.attrValues cfg.hooks.post-launch)
-      ++ (lib.attrValues cfg.hooks.pre-stop);
+      (lib.attrValues cfg.hooks.post-launch) ++ (lib.attrValues cfg.hooks.pre-stop);
 
     environment.systemPackages = [ pkgs.jq ];
 
@@ -266,8 +285,6 @@ in
 
     users.users.root.initialHashedPassword = lib.mkOverride 150 "";
 
-    system.stateVersion = "24.11";
-
     image.repart = {
       name = "epi-disk";
       sectorSize = 512;
@@ -278,7 +295,10 @@ in
           Label = "nixos";
           Minimize = "guess";
         };
-        storePaths = [ config.system.build.toplevel ];
+        storePaths = imageStorePaths;
+        contents = {
+          "/nix-path-registration".source = "${closureInfo}/registration";
+        };
       };
     };
   };
