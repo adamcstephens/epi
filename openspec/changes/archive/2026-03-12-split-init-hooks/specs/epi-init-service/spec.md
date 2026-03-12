@@ -1,3 +1,5 @@
+## MODIFIED Requirements
+
 ### Requirement: epi-init service handles all guest initialization
 The NixOS guest image SHALL include an `epi-init.service` systemd oneshot service that runs on every boot. The service SHALL mount the epidata ISO at `/run/epi-init/epidata`, read `epi.json`, create the user account, set the hostname, set up SSH authorized keys, and set up virtiofs mounts — in that order. The service SHALL leave the epidata ISO mounted at `/run/epi-init/epidata` for use by `epi-init-hooks.service`. The service SHALL NOT execute guest hook scripts — hook execution is handled by `epi-init-hooks.service`.
 

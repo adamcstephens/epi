@@ -1,19 +1,4 @@
-### Requirement: Guest init hooks are collected and embedded in seed ISO
-The system SHALL collect guest hook scripts from `guest-init.d/` directories at two layers: user-level (`~/.config/epi/hooks/guest-init.d/`) and project-level (`.epi/hooks/guest-init.d/`). Within each layer, top-level executable files and instance-specific `<instance>/` executable files are collected using the same discovery and ordering rules as host hooks. Collected scripts SHALL be embedded into the seed ISO at provision time, alongside `epi.json`.
-
-#### Scenario: Guest hooks are embedded in seed ISO
-- **WHEN** `.epi/hooks/guest-init.d/install-tools.sh` exists and is executable
-- **AND** a user runs `epi launch dev --target .#dev`
-- **THEN** the seed ISO contains the `install-tools.sh` script
-
-#### Scenario: Multiple layers are embedded in order
-- **WHEN** `~/.config/epi/hooks/guest-init.d/dotfiles.sh` exists
-- **AND** `.epi/hooks/guest-init.d/project-setup.sh` exists
-- **THEN** the seed ISO contains both scripts with user-level ordered before project-level
-
-#### Scenario: No guest hooks exist
-- **WHEN** no `guest-init.d/` directories exist at any layer
-- **THEN** the seed ISO is created without hook scripts (same as current behavior)
+## MODIFIED Requirements
 
 ### Requirement: Guest init hooks are executed as the provisioned user
 The `epi-init-hooks.service` SHALL execute guest hook scripts from the seed ISO after `epi-init.service` completes all initialization steps and after `network-online.target` is reached. After seed ISO hooks, the service SHALL execute Nix-declared guest-init hooks (baked into the VM image). Scripts SHALL be executed sequentially using `su - <username> -c <script>`, where the username is read from `/run/epi-init/epidata/epi.json`. If a hook script exits non-zero, the service SHALL log the failure and continue with remaining hooks.

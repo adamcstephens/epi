@@ -24,13 +24,12 @@ let tests =
         let instance_name = E2e_helpers.unique_name "e2e-hooks" in
         let target = ".#manual-test" in
         let latest_runtime = ref None in
-        let project_hooks_dir = ".epi/hooks" in
+        let project_hooks_dir = Filename.temp_dir "epi-test-hooks" "" in
         let cleanup () =
           (match !latest_runtime with
           | Some rt -> ignore (Epi.stop_instance ~instance_name rt)
           | None -> ());
           Epi.Instance_store.remove instance_name;
-          (* clean up project hooks *)
           List.iter
             (fun sub ->
               let d = Filename.concat project_hooks_dir sub in
@@ -40,9 +39,12 @@ let tests =
                   (Sys.readdir d);
                 Unix.rmdir d
               end)
-            [ "post-launch.d"; "pre-stop.d"; "guest-init.d" ]
+            [ "post-launch.d"; "pre-stop.d"; "guest-init.d" ];
+          (try Unix.rmdir project_hooks_dir with Unix.Unix_error _ -> ());
+          Unix.putenv "EPI_PROJECT_HOOKS_DIR" (Filename.concat ".epi" "hooks")
         in
         Fun.protect ~finally:cleanup (fun () ->
+            Unix.putenv "EPI_PROJECT_HOOKS_DIR" project_hooks_dir;
             let instance_dir = Epi.Instance_store.instance_dir instance_name in
             let log_path = Filename.concat instance_dir "hook-order.log" in
 
@@ -75,7 +77,7 @@ let tests =
             (* Verify guest-init: both file-based and nix hooks ran *)
             let journal =
               E2e_helpers.ssh_exec runtime
-                [ "journalctl"; "-u"; "epi-init"; "--no-pager" ]
+                [ "journalctl"; "-u"; "epi-init-hooks"; "--no-pager" ]
             in
             Alcotest.(check bool)
               "file-based guest-init hook ran" true
