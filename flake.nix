@@ -66,6 +66,9 @@
                 pkgs.passt
                 pkgs.virtiofsd
                 pkgs.openssh
+
+                pkgs.cargo
+                pkgs.rustc
               ]
               ++ (with ocamlPackages; [
                 dune_3

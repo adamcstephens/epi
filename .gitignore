@@ -31,3 +31,9 @@ _opam/
 
 .epi/cache
 .epi/state
+
+
+# Added by cargo
+
+/target
+.cargo-home/
