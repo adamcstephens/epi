@@ -128,6 +128,90 @@ let tests =
                 Alcotest.(check string)
                   "ssh_key_path" "/tmp/none_key" r.ssh_key_path
             | None -> Alcotest.fail "expected runtime to be found"));
+    Alcotest.test_case "set_launching writes target and partial runtime" `Quick
+      (fun () ->
+        with_state_dir (fun _dir ->
+            Instance_store.set_launching ~instance_name:"launch-test"
+              ~target:".#dev" ~unit_id:"launch0001";
+            (match Instance_store.find "launch-test" with
+            | Some target -> Alcotest.(check string) "target" ".#dev" target
+            | None -> Alcotest.fail "expected target after set_launching");
+            match Instance_store.find_runtime "launch-test" with
+            | Some r ->
+                Alcotest.(check string) "unit_id" "launch0001" r.unit_id;
+                Alcotest.(check string) "serial_socket" "" r.serial_socket;
+                Alcotest.(check string) "disk" "" r.disk;
+                Alcotest.(check (option int)) "ssh_port" None r.ssh_port;
+                Alcotest.(check string) "ssh_key_path" "" r.ssh_key_path
+            | None -> Alcotest.fail "expected partial runtime after set_launching"));
+    Alcotest.test_case "set_provisioned over partial runtime produces complete state"
+      `Quick (fun () ->
+        with_state_dir (fun _dir ->
+            Instance_store.set_launching ~instance_name:"upgrade-test"
+              ~target:".#dev" ~unit_id:"upgrade0001";
+            let runtime : Instance_store.runtime =
+              {
+                unit_id = "upgrade0001";
+                serial_socket = "/tmp/serial.sock";
+                disk = "/tmp/disk.img";
+                ssh_port = Some 2222;
+                ssh_key_path = "/tmp/id_ed25519";
+              }
+            in
+            Instance_store.set_provisioned ~instance_name:"upgrade-test"
+              ~target:".#dev" ~runtime;
+            (match Instance_store.find "upgrade-test" with
+            | Some target -> Alcotest.(check string) "target" ".#dev" target
+            | None -> Alcotest.fail "expected target after set_provisioned");
+            match Instance_store.find_runtime "upgrade-test" with
+            | Some r ->
+                Alcotest.(check string) "unit_id" "upgrade0001" r.unit_id;
+                Alcotest.(check string)
+                  "serial_socket" "/tmp/serial.sock" r.serial_socket;
+                Alcotest.(check string) "disk" "/tmp/disk.img" r.disk;
+                Alcotest.(check (option int)) "ssh_port" (Some 2222) r.ssh_port;
+                Alcotest.(check string)
+                  "ssh_key_path" "/tmp/id_ed25519" r.ssh_key_path
+            | None -> Alcotest.fail "expected complete runtime after set_provisioned"));
+    Alcotest.test_case "partial runtime visible in list" `Quick (fun () ->
+        with_state_dir (fun _dir ->
+            Instance_store.set_launching ~instance_name:"partial-list"
+              ~target:".#dev" ~unit_id:"partial0001";
+            let entries = Instance_store.list () in
+            let names = List.map fst entries in
+            Alcotest.(check bool)
+              "partial instance in list" true
+              (List.mem "partial-list" names)));
+    Alcotest.test_case "remove cleans up partial runtime instance" `Quick
+      (fun () ->
+        with_state_dir (fun _dir ->
+            Instance_store.set_launching ~instance_name:"partial-rm"
+              ~target:".#dev" ~unit_id:"partial0002";
+            Instance_store.remove "partial-rm";
+            (match Instance_store.find "partial-rm" with
+            | None -> ()
+            | Some _ ->
+                Alcotest.fail "expected partial instance to be removed after rm");
+            match Instance_store.find_runtime "partial-rm" with
+            | None -> ()
+            | Some _ ->
+                Alcotest.fail
+                  "expected partial runtime to be removed after rm"));
+    Alcotest.test_case "clear_runtime on partial runtime removes runtime keeps target"
+      `Quick (fun () ->
+        with_state_dir (fun _dir ->
+            Instance_store.set_launching ~instance_name:"partial-clear"
+              ~target:".#dev" ~unit_id:"partial0003";
+            Instance_store.clear_runtime "partial-clear";
+            (match Instance_store.find "partial-clear" with
+            | Some target ->
+                Alcotest.(check string) "target preserved" ".#dev" target
+            | None ->
+                Alcotest.fail "expected target to remain after clear_runtime");
+            match Instance_store.find_runtime "partial-clear" with
+            | None -> ()
+            | Some _ ->
+                Alcotest.fail "expected runtime cleared"));
     Alcotest.test_case "runtime without ssh_key_path returns None (stale)"
       `Quick (fun () ->
         with_state_dir (fun dir ->

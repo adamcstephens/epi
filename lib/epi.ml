@@ -183,13 +183,27 @@ let wait_and_run_hooks ~wait_timeout ~instance_name ~target runtime =
           Printf.eprintf "%s\n%!" (Vm_launch.pp_provision_error error))
   | None -> ()
 
+let cleanup_failed_provision ~instance_name ~pre_existing =
+  (match Instance_store.find_runtime instance_name with
+  | Some runtime -> (
+      let unit_id = runtime.Instance_store.unit_id in
+      match Instance_store.slice_name ~instance_name ~unit_id with
+      | Ok slice -> ignore (Process.stop_unit slice)
+      | Error _ -> ())
+  | None -> ());
+  if pre_existing then Instance_store.clear_runtime instance_name
+  else Instance_store.remove instance_name
+
 let provision_and_report ~command_name ~attach_console ~console_options ~rebuild
-    ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target =
+    ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target
+    ~pre_existing =
   match
     Vm_launch.provision ~rebuild ~mount_paths ~disk_size ~instance_name ~target
       ()
   with
-  | Error error -> fail (Vm_launch.pp_provision_error error)
+  | Error error ->
+      cleanup_failed_provision ~instance_name ~pre_existing;
+      fail (Vm_launch.pp_provision_error error)
   | Ok runtime -> (
       Instance_store.set_provisioned ~instance_name ~target ~runtime;
       if attach_console then (
@@ -320,11 +334,11 @@ let launch_command =
          Instance_store.clear_runtime instance_name;
          provision_and_report ~command_name:"launch" ~attach_console
            ~console_options ~rebuild ~no_wait ~wait_timeout ~mount_paths
-           ~disk_size ~instance_name ~target
+           ~disk_size ~instance_name ~target ~pre_existing:true
      | None ->
          provision_and_report ~command_name:"launch" ~attach_console
            ~console_options ~rebuild ~no_wait ~wait_timeout ~mount_paths
-           ~disk_size ~instance_name ~target)
+           ~disk_size ~instance_name ~target ~pre_existing:false)
 
 let lifecycle_command ~name ~summary =
   Command.make ~summary
@@ -630,12 +644,12 @@ let start_command =
          provision_and_report ~command_name:"start" ~attach_console
            ~console_options ~rebuild:false ~no_wait ~wait_timeout
            ~mount_paths:(Instance_store.load_mounts instance_name)
-           ~disk_size:"40G" ~instance_name ~target
+           ~disk_size:"40G" ~instance_name ~target ~pre_existing:true
      | None ->
          provision_and_report ~command_name:"start" ~attach_console
            ~console_options ~rebuild:false ~no_wait ~wait_timeout
            ~mount_paths:(Instance_store.load_mounts instance_name)
-           ~disk_size:"40G" ~instance_name ~target)
+           ~disk_size:"40G" ~instance_name ~target ~pre_existing:true)
 
 let rm_command =
   Command.make ~summary:"Remove an instance from state and runtime."

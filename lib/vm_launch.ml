@@ -392,6 +392,7 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target
     | _ -> Ok ()
   in
   let unit_id = Process.generate_unit_id () in
+  Instance_store.set_launching ~instance_name ~target ~unit_id;
   let* escaped =
     Process.escape_unit_name instance_name
     |> Result.map_error (fun msg ->

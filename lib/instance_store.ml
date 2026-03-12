@@ -50,9 +50,8 @@ let runtime_to_json (rt : runtime) =
 let runtime_of_json json =
   let open Yojson.Basic.Util in
   let unit_id = json |> member "unit_id" |> to_string_option in
-  let ssh_key_path = json |> member "ssh_key_path" |> to_string_option in
-  match (unit_id, ssh_key_path) with
-  | Some unit_id, Some ssh_key_path when unit_id <> "" && ssh_key_path <> "" ->
+  match unit_id with
+  | Some unit_id when unit_id <> "" ->
       Some
         {
           unit_id;
@@ -63,7 +62,9 @@ let runtime_of_json json =
             json |> member "disk" |> to_string_option
             |> Option.value ~default:"";
           ssh_port = json |> member "ssh_port" |> to_int_option;
-          ssh_key_path;
+          ssh_key_path =
+            json |> member "ssh_key_path" |> to_string_option
+            |> Option.value ~default:"";
         }
   | _ -> None
 
@@ -146,6 +147,19 @@ let set ~instance_name ~target =
     List.filter (fun (k, _) -> k <> "target" && k <> "runtime") fields
   in
   save_state_json instance_name (`Assoc (("target", `String target) :: fields))
+
+let set_launching ~instance_name ~target ~unit_id =
+  let runtime =
+    {
+      unit_id;
+      serial_socket = "";
+      disk = "";
+      ssh_port = None;
+      ssh_key_path = "";
+    }
+  in
+  save_target instance_name target;
+  save_runtime instance_name runtime
 
 let set_provisioned ~instance_name ~target ~runtime =
   save_target instance_name target;
