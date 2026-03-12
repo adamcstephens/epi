@@ -134,7 +134,7 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
 let provision_and_report ~command_name ~attach_console ~console_options
     ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target =
   match Vm_launch.provision ~rebuild ~mount_paths ~disk_size
-          ~instance_name ~target with
+          ~instance_name ~target () with
   | Error error -> fail (Vm_launch.pp_provision_error error)
   | Ok runtime ->
       Instance_store.set_provisioned ~instance_name ~target ~runtime;
