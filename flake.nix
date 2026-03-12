@@ -49,7 +49,7 @@
         perSystem =
           { pkgs, ... }:
           let
-            ocamlPackages = pkgs.ocamlPackages_latest;
+            ocamlPackages = pkgs.ocaml-ng.ocamlPackages_latest;
           in
           {
             devShells.default = pkgs.mkShell {
@@ -83,7 +83,7 @@
               };
 
               epi-unwrapped = pkgs.pkgsMusl.callPackage ./nix/package.nix {
-                ocamlPackages = pkgs.pkgsMusl.ocamlPackages_latest;
+                ocamlPackages = pkgs.pkgsMusl.ocaml-ng.ocamlPackages_latest;
                 inherit (pkgs)
                   curl
                   fetchurl
