@@ -24,7 +24,6 @@ type provision_error =
   | Systemd_session_unavailable of { target : string; details : string }
   | Ssh_wait_timeout of { timeout_seconds : int }
 
-
 let qemu_img_bin () =
   match Sys.getenv_opt "EPI_QEMU_IMG_BIN" with
   | Some path -> path
@@ -32,9 +31,7 @@ let qemu_img_bin () =
 
 let find_qemu_img () =
   let bin = qemu_img_bin () in
-  let result =
-    Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
-  in
+  let result = Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] () in
   if result.status = 0 then Some bin else None
 
 let resize_disk ~target ~path ~size =
@@ -63,8 +60,17 @@ let resize_disk ~target ~path ~size =
 let grow_partition ~path =
   let result =
     Process.run ~prog:"sgdisk"
-      ~args:[ "-e"; "-d"; "1"; "-n"; "1:0:0"; "-t";
-              "1:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"; path ]
+      ~args:
+        [
+          "-e";
+          "-d";
+          "1";
+          "-n";
+          "1:0:0";
+          "-t";
+          "1:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709";
+          path;
+        ]
       ()
   in
   if result.status <> 0 then
@@ -90,11 +96,10 @@ let copy_file ~source ~destination =
           in
           loop ()))
 
-let ensure_writable_disk ~instance_name ~target ~disk_size (descriptor : Target.descriptor) =
+let ensure_writable_disk ~instance_name ~target ~disk_size
+    (descriptor : Target.descriptor) =
   if Target.is_nix_store_path descriptor.disk then
-    let overlay_path =
-      Instance_store.instance_path instance_name "disk.img"
-    in
+    let overlay_path = Instance_store.instance_path instance_name "disk.img" in
     if Sys.file_exists overlay_path then Ok overlay_path
     else (
       Instance_store.ensure_instance_dir instance_name;
@@ -120,8 +125,7 @@ let read_ssh_public_keys () =
   in
   match ssh_dir with
   | None ->
-      Printf.eprintf
-        "warning: HOME not set, cannot read SSH public keys\n%!";
+      Printf.eprintf "warning: HOME not set, cannot read SSH public keys\n%!";
       []
   | Some ssh_dir ->
       if not (Sys.file_exists ssh_dir) then (
@@ -147,24 +151,26 @@ let read_ssh_public_keys () =
             pub_files
         in
         if keys = [] then
-          Printf.eprintf
-            "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
+          Printf.eprintf "warning: no SSH public keys found in ~/.ssh/*.pub\n%!";
         keys
 
-let generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths =
+let generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid
+    ~mount_paths =
   let user_fields =
     [ ("name", `String username) ]
     @ (if user_exists then [] else [ ("uid", `Int host_uid) ])
-    @ (match ssh_keys with
-       | [] -> []
-       | keys -> [ ("ssh_authorized_keys", `List (List.map (fun k -> `String k) keys)) ])
+    @
+    match ssh_keys with
+    | [] -> []
+    | keys ->
+        [ ("ssh_authorized_keys", `List (List.map (fun k -> `String k) keys)) ]
   in
   let fields =
-    [ ("hostname", `String instance_name);
-      ("user", `Assoc user_fields) ]
-    @ (match mount_paths with
-       | [] -> []
-       | paths -> [ ("mounts", `List (List.map (fun p -> `String p) paths)) ])
+    [ ("hostname", `String instance_name); ("user", `Assoc user_fields) ]
+    @
+    match mount_paths with
+    | [] -> []
+    | paths -> [ ("mounts", `List (List.map (fun p -> `String p) paths)) ]
   in
   Yojson.Basic.pretty_to_string (`Assoc fields)
 
@@ -179,11 +185,7 @@ let xorriso_bin () =
 
 let check_xorriso () =
   let bin = xorriso_bin () in
-  let result =
-    Process.run ~prog:"sh"
-      ~args:[ "-c"; "command -v " ^ bin ]
-      ()
-  in
+  let result = Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] () in
   result.status = 0
 
 let passt_bin () =
@@ -193,9 +195,7 @@ let passt_bin () =
 
 let check_passt () =
   let bin = passt_bin () in
-  let result =
-    Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
-  in
+  let result = Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] () in
   result.status = 0
 
 let virtiofsd_bin () =
@@ -205,9 +205,7 @@ let virtiofsd_bin () =
 
 let check_virtiofsd () =
   let bin = virtiofsd_bin () in
-  let result =
-    Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] ()
-  in
+  let result = Process.run ~prog:"sh" ~args:[ "-c"; "command -v " ^ bin ] () in
   result.status = 0
 
 let wait_for_passt_socket socket_path max_wait_ms =
@@ -222,19 +220,18 @@ let wait_for_passt_socket socket_path max_wait_ms =
   in
   loop steps
 
-let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths ~guest_hooks =
+let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys
+    ~user_exists ~host_uid ~mount_paths ~guest_hooks =
   if not (check_xorriso ()) then Error Xorriso_missing
   else
-    let iso_path =
-      Filename.concat instance_dir "epidata.iso"
-    in
-    let staging_dir =
-      Filename.concat instance_dir "epidata"
-    in
-    (if not (Sys.file_exists staging_dir) then
-       Unix.mkdir staging_dir 0o755);
+    let iso_path = Filename.concat instance_dir "epidata.iso" in
+    let staging_dir = Filename.concat instance_dir "epidata" in
+    if not (Sys.file_exists staging_dir) then Unix.mkdir staging_dir 0o755;
     let epi_json_path = Filename.concat staging_dir "epi.json" in
-    let epi_json = generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths in
+    let epi_json =
+      generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists
+        ~host_uid ~mount_paths
+    in
     let write path content =
       let channel = open_out path in
       output_string channel content;
@@ -243,19 +240,32 @@ let generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exi
     write epi_json_path epi_json;
     let hooks_dir = Filename.concat staging_dir "hooks" in
     (match guest_hooks with
-     | [] -> ()
-     | hooks ->
-         if not (Sys.file_exists hooks_dir) then Unix.mkdir hooks_dir 0o755;
-         List.iteri (fun i src ->
-           let dest = Filename.concat hooks_dir
-             (Printf.sprintf "%03d-%s" i (Filename.basename src)) in
-           copy_file ~source:src ~destination:dest;
-           Unix.chmod dest 0o755) hooks);
+    | [] -> ()
+    | hooks ->
+        if not (Sys.file_exists hooks_dir) then Unix.mkdir hooks_dir 0o755;
+        List.iteri
+          (fun i src ->
+            let dest =
+              Filename.concat hooks_dir
+                (Printf.sprintf "%03d-%s" i (Filename.basename src))
+            in
+            copy_file ~source:src ~destination:dest;
+            Unix.chmod dest 0o755)
+          hooks);
     let result =
       Process.run ~prog:(xorriso_bin ())
         ~args:
-          [ "-as"; "mkisofs"; "-output"; iso_path; "-volid"; "epidata"; "-joliet"; "-rock";
-            staging_dir ]
+          [
+            "-as";
+            "mkisofs";
+            "-output";
+            iso_path;
+            "-volid";
+            "epidata";
+            "-joliet";
+            "-rock";
+            staging_dir;
+          ]
         ()
     in
     if result.status <> 0 then
@@ -278,9 +288,7 @@ let alloc_free_port () =
       | _ -> failwith "alloc_free_port: unexpected socket address")
 
 let generate_ssh_key ~target ~instance_name =
-  let key_path =
-    Instance_store.instance_path instance_name "id_ed25519"
-  in
+  let key_path = Instance_store.instance_path instance_name "id_ed25519" in
   Instance_store.ensure_instance_dir instance_name;
   if Sys.file_exists key_path then Unix.unlink key_path;
   let pub_path = key_path ^ ".pub" in
@@ -291,9 +299,17 @@ let generate_ssh_key ~target ~instance_name =
       ()
   in
   if result.status <> 0 then
-    Error (Vm_launch_failed { target; exit_code = result.status; details = "ssh-keygen failed: " ^ result.stderr })
+    Error
+      (Vm_launch_failed
+         {
+           target;
+           exit_code = result.status;
+           details = "ssh-keygen failed: " ^ result.stderr;
+         })
   else
-    let pub_content = Util.read_file pub_path |> Option.value ~default:"" |> String.trim in
+    let pub_content =
+      Util.read_file pub_path |> Option.value ~default:"" |> String.trim
+    in
     Ok (key_path, pub_content)
 
 let is_session_unavailable_error stderr =
@@ -303,7 +319,8 @@ let is_session_unavailable_error stderr =
   || Util.contains lowered "failed to get d-bus connection"
   || Util.contains lowered "no user session"
 
-let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor : Target.descriptor) =
+let launch_detached ~mount_paths ~disk_size ~instance_name ~target
+    (descriptor : Target.descriptor) =
   let ( let* ) = Result.bind in
   let cloud_hypervisor_bin =
     match Sys.getenv_opt "EPI_CLOUD_HYPERVISOR_BIN" with
@@ -313,7 +330,9 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   Instance_store.ensure_instance_dir instance_name;
   let serial_socket = Instance_store.serial_socket_path instance_name in
   if Sys.file_exists serial_socket then Unix.unlink serial_socket;
-  let memory_arg = "size=" ^ string_of_int descriptor.memory_mib ^ "M,shared=on" in
+  let memory_arg =
+    "size=" ^ string_of_int descriptor.memory_mib ^ "M,shared=on"
+  in
   let cpu_arg = "boot=" ^ string_of_int descriptor.cpus in
   let serial_arg = "socket=" ^ serial_socket in
   let username =
@@ -321,9 +340,7 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   in
   let instance_dir = Instance_store.instance_dir instance_name in
   let ssh_keys = read_ssh_public_keys () in
-  let* (ssh_key_path, pub_content) =
-    generate_ssh_key ~target ~instance_name
-  in
+  let* ssh_key_path, pub_content = generate_ssh_key ~target ~instance_name in
   Printf.printf "vm: generated SSH key %s\n%!" ssh_key_path;
   let ssh_keys = ssh_keys @ [ pub_content ] in
   let host_uid = Unix.getuid () in
@@ -331,8 +348,7 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   let passt_sock = Filename.concat instance_dir "passt.sock" in
   let ssh_port = alloc_free_port () in
   let* () =
-    if not (check_passt ()) then Error (Passt_missing { target })
-    else Ok ()
+    if not (check_passt ()) then Error (Passt_missing { target }) else Ok ()
   in
   let* () =
     match List.find_opt (fun p -> not (Sys.is_directory p)) mount_paths with
@@ -346,27 +362,40 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   in
   let guest_hooks = Hooks.discover_guest ~instance_name in
   let* seed_iso_path =
-    match generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths ~guest_hooks with
+    match
+      generate_seed_iso ~instance_name ~instance_dir ~username ~ssh_keys
+        ~user_exists ~host_uid ~mount_paths ~guest_hooks
+    with
     | Error Xorriso_missing ->
-        Error (Seed_iso_generation_failed { target;
-          details = "xorriso not found on $PATH. Install xorriso to enable seed ISO generation." })
+        Error
+          (Seed_iso_generation_failed
+             {
+               target;
+               details =
+                 "xorriso not found on $PATH. Install xorriso to enable seed \
+                  ISO generation.";
+             })
     | Error (Seed_iso_creation_failed { details }) ->
         Error (Seed_iso_generation_failed { target; details })
     | Ok path -> Ok path
   in
-  let* launch_disk = ensure_writable_disk ~instance_name ~target ~disk_size descriptor in
+  let* launch_disk =
+    ensure_writable_disk ~instance_name ~target ~disk_size descriptor
+  in
   let* () =
     match Instance_store.find_running_owner_by_disk launch_disk with
     | Some (owner_instance, { Instance_store.unit_id = owner_unit_id; _ })
       when not (String.equal owner_instance instance_name) ->
-        Error (Vm_disk_lock_held_by_instance
-          { target; disk = launch_disk; owner_instance; owner_unit_id })
+        Error
+          (Vm_disk_lock_held_by_instance
+             { target; disk = launch_disk; owner_instance; owner_unit_id })
     | _ -> Ok ()
   in
   let unit_id = Process.generate_unit_id () in
   let* escaped =
     Process.escape_unit_name instance_name
-    |> Result.map_error (fun msg -> Vm_launch_failed { target; exit_code = 1; details = msg })
+    |> Result.map_error (fun msg ->
+        Vm_launch_failed { target; exit_code = 1; details = msg })
   in
   let slice = Printf.sprintf "epi-%s_%s.slice" escaped unit_id in
   if Sys.file_exists passt_sock then Unix.unlink passt_sock;
@@ -374,26 +403,36 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   if Sys.file_exists passt_repair_sock then Unix.unlink passt_repair_sock;
   let passt_unit = Printf.sprintf "epi-%s_%s_passt" escaped unit_id in
   let passt_result =
-    Process.run_helper ~unit_name:passt_unit ~slice
-      ~prog:(passt_bin ())
-      ~args:[ "--foreground"; "--vhost-user"; "--socket"; passt_sock;
-              "-t"; Printf.sprintf "%d:22" ssh_port ]
+    Process.run_helper ~unit_name:passt_unit ~slice ~prog:(passt_bin ())
+      ~args:
+        [
+          "--foreground";
+          "--vhost-user";
+          "--socket";
+          passt_sock;
+          "-t";
+          Printf.sprintf "%d:22" ssh_port;
+        ]
       ()
   in
   let* () =
     if passt_result.status <> 0 then
       if is_session_unavailable_error passt_result.stderr then
-        Error (Systemd_session_unavailable { target; details = passt_result.stderr })
-      else
-        Error (Passt_failed { target; details = passt_result.stderr })
+        Error
+          (Systemd_session_unavailable { target; details = passt_result.stderr })
+      else Error (Passt_failed { target; details = passt_result.stderr })
     else if not (wait_for_passt_socket passt_sock 2000) then
       Error (Passt_failed { target; details = "passt socket did not appear" })
     else Ok ()
   in
   let start_virtiofsd i path =
-    let sock = Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.sock" i) in
+    let sock =
+      Filename.concat instance_dir (Printf.sprintf "virtiofsd-%d.sock" i)
+    in
     if Sys.file_exists sock then Unix.unlink sock;
-    let virtiofsd_unit = Printf.sprintf "epi-%s_%s_virtiofsd_%d" escaped unit_id i in
+    let virtiofsd_unit =
+      Printf.sprintf "epi-%s_%s_virtiofsd_%d" escaped unit_id i
+    in
     let result =
       Process.run_helper ~unit_name:virtiofsd_unit ~slice
         ~prog:(virtiofsd_bin ())
@@ -403,7 +442,9 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
     if result.status <> 0 then
       Error (Virtiofsd_failed { target; details = result.stderr })
     else if not (wait_for_passt_socket sock 2000) then
-      Error (Virtiofsd_failed { target; details = "virtiofsd socket did not appear" })
+      Error
+        (Virtiofsd_failed
+           { target; details = "virtiofsd socket did not appear" })
     else Ok sock
   in
   let* virtiofsd_sockets =
@@ -423,18 +464,31 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
     match virtiofsd_sockets with
     | [] -> []
     | socks ->
-        "--fs" :: List.mapi (fun i sock ->
-            Printf.sprintf "tag=hostfs-%d,socket=%s" i sock) socks
+        "--fs"
+        :: List.mapi
+             (fun i sock -> Printf.sprintf "tag=hostfs-%d,socket=%s" i sock)
+             socks
   in
   let base_args =
-    [ "--kernel"; descriptor.kernel;
-      "--disk"; disk_arg; seed_disk_arg;
-      "--cpus"; cpu_arg;
-      "--memory"; memory_arg;
-      "--serial"; serial_arg;
-      "--console"; "off";
-      "--cmdline"; descriptor.cmdline;
-      "--net"; net_arg ]
+    [
+      "--kernel";
+      descriptor.kernel;
+      "--disk";
+      disk_arg;
+      seed_disk_arg;
+      "--cpus";
+      cpu_arg;
+      "--memory";
+      memory_arg;
+      "--serial";
+      serial_arg;
+      "--console";
+      "off";
+      "--cmdline";
+      descriptor.cmdline;
+      "--net";
+      net_arg;
+    ]
     @ fs_args
   in
   let args =
@@ -444,26 +498,34 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
   in
   let helper_units =
     (passt_unit ^ ".service")
-    :: List.mapi (fun i _ ->
-        Printf.sprintf "epi-%s_%s_virtiofsd_%d.service" escaped unit_id i)
-      mount_paths
+    :: List.mapi
+         (fun i _ ->
+           Printf.sprintf "epi-%s_%s_virtiofsd_%d.service" escaped unit_id i)
+         mount_paths
   in
   let exec_stop_posts =
-    List.map (fun u ->
-        Printf.sprintf "%s --user stop %s" (Process.systemctl_bin ()) u)
+    List.map
+      (fun u -> Printf.sprintf "%s --user stop %s" (Process.systemctl_bin ()) u)
       helper_units
   in
   let vm_unit = Printf.sprintf "epi-%s_%s_vm" escaped unit_id in
   let vm_result =
-    Process.run_service ~unit_name:vm_unit ~slice
-      ~exec_stop_posts ~prog:cloud_hypervisor_bin ~args ()
+    Process.run_service ~unit_name:vm_unit ~slice ~exec_stop_posts
+      ~prog:cloud_hypervisor_bin ~args ()
   in
   if vm_result.status <> 0 then
     if is_session_unavailable_error vm_result.stderr then
       Error (Systemd_session_unavailable { target; details = vm_result.stderr })
     else
-      Error (Vm_launch_failed { target; exit_code = vm_result.status;
-        details = (if vm_result.stderr = "" then "<no stderr>" else vm_result.stderr) })
+      Error
+        (Vm_launch_failed
+           {
+             target;
+             exit_code = vm_result.status;
+             details =
+               (if vm_result.stderr = "" then "<no stderr>"
+                else vm_result.stderr);
+           })
   else
     (* systemd-run returns 0 after creating the unit, but the VM process
        may exit immediately (e.g. exec failure, lock conflict). Wait
@@ -471,11 +533,22 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
     let vm_service = vm_unit ^ ".service" in
     let _ = Unix.select [] [] [] 0.15 in
     if not (Process.unit_is_active vm_service) then
-      Error (Vm_launch_failed { target; exit_code = 1;
-        details = "VM exited immediately after start" })
+      Error
+        (Vm_launch_failed
+           {
+             target;
+             exit_code = 1;
+             details = "VM exited immediately after start";
+           })
     else
-      Ok { Instance_store.unit_id; serial_socket; disk = launch_disk;
-           ssh_port = Some ssh_port; ssh_key_path }
+      Ok
+        {
+          Instance_store.unit_id;
+          serial_socket;
+          disk = launch_disk;
+          ssh_port = Some ssh_port;
+          ssh_key_path;
+        }
 
 module type Runner = sig
   val launch_vm :
@@ -503,23 +576,33 @@ let wait_for_ssh ~ssh_port ~ssh_key_path ~timeout_seconds =
   let rec loop () =
     let result =
       Process.run ~prog:"ssh"
-        ~args:[
-          "-p"; port_str;
-          "-i"; ssh_key_path;
-          "-o"; "IdentitiesOnly=yes";
-          "-o"; "ConnectTimeout=5";
-          "-o"; "StrictHostKeyChecking=no";
-          "-o"; "UserKnownHostsFile=/dev/null";
-          "-o"; "BatchMode=yes";
-          target; "true"
-        ] ()
+        ~args:
+          [
+            "-p";
+            port_str;
+            "-i";
+            ssh_key_path;
+            "-o";
+            "IdentitiesOnly=yes";
+            "-o";
+            "ConnectTimeout=5";
+            "-o";
+            "StrictHostKeyChecking=no";
+            "-o";
+            "UserKnownHostsFile=/dev/null";
+            "-o";
+            "BatchMode=yes";
+            target;
+            "true";
+          ]
+        ()
     in
     if result.status = 0 then Ok ()
     else if Unix.gettimeofday () >= deadline then
       Error (Ssh_wait_timeout { timeout_seconds })
-    else (
+    else
       let _ = Unix.select [] [] [] 2.0 in
-      loop ())
+      loop ()
   in
   loop ()
 
@@ -528,7 +611,9 @@ module Real_runner : Runner = struct
   let wait_for_ssh = wait_for_ssh
 end
 
-let provision ?(resolver = (module Target.Real_resolver : Target.Resolver)) ?(runner = (module Real_runner : Runner)) ~rebuild ~mount_paths ~disk_size ~instance_name ~target () =
+let provision ?(resolver = (module Target.Real_resolver : Target.Resolver))
+    ?(runner = (module Real_runner : Runner)) ~rebuild ~mount_paths ~disk_size
+    ~instance_name ~target () =
   let ( let* ) = Result.bind in
   let module Resolver = (val resolver : Target.Resolver) in
   let module Runner = (val runner : Runner) in
@@ -547,7 +632,8 @@ let provision ?(resolver = (module Target.Real_resolver : Target.Resolver)) ?(ru
   in
   let* () =
     Target.validate_descriptor ~target descriptor
-    |> Result.map_error (fun details -> Descriptor_validation_failed { target; details })
+    |> Result.map_error (fun details ->
+        Descriptor_validation_failed { target; details })
   in
   Printf.printf "vm: starting VM instance=%s\n%!" instance_name;
   Runner.launch_vm ~mount_paths ~disk_size ~instance_name ~target descriptor
@@ -563,7 +649,8 @@ let pp_provision_error = function
   | Vm_launch_failed { target; exit_code; details } ->
       Printf.sprintf "VM launch failed for %s (exit=%d): %s" target exit_code
         details
-  | Vm_disk_lock_held_by_instance { target; disk; owner_instance; owner_unit_id } ->
+  | Vm_disk_lock_held_by_instance
+      { target; disk; owner_instance; owner_unit_id } ->
       Printf.sprintf
         "VM launch failed for %s: another running VM already holds disk lock \
          %s (owner=%s unit_id=%s). Stop that instance and retry."
@@ -576,9 +663,8 @@ let pp_provision_error = function
          target-built disk: %s"
         target details
   | Seed_iso_generation_failed { target; details } ->
-      Printf.sprintf
-        "VM launch failed for %s: seed ISO generation failed: %s" target
-        details
+      Printf.sprintf "VM launch failed for %s: seed ISO generation failed: %s"
+        target details
   | Passt_missing { target } ->
       Printf.sprintf
         "VM launch failed for %s: passt binary not found on $PATH. Set \
@@ -586,8 +672,8 @@ let pp_provision_error = function
          networking."
         target
   | Passt_failed { target; details } ->
-      Printf.sprintf "VM launch failed for %s: passt failed to start: %s"
-        target details
+      Printf.sprintf "VM launch failed for %s: passt failed to start: %s" target
+        details
   | Virtiofsd_missing { target } ->
       Printf.sprintf
         "VM launch failed for %s: virtiofsd binary not found on $PATH. Set \
@@ -595,24 +681,27 @@ let pp_provision_error = function
          host directory sharing."
         target
   | Virtiofsd_failed { target; details } ->
-      Printf.sprintf
-        "VM launch failed for %s: virtiofsd failed to start: %s" target details
+      Printf.sprintf "VM launch failed for %s: virtiofsd failed to start: %s"
+        target details
   | Mount_path_not_a_directory { target; path } ->
       Printf.sprintf
         "VM launch failed for %s: --mount path is not a directory: %s \
          (virtiofsd only supports directory sharing)"
         target path
   | Vm_disk_resize_failed { target; details } ->
-      Printf.sprintf
-        "VM launch failed for %s: disk resize failed: %s" target details
+      Printf.sprintf "VM launch failed for %s: disk resize failed: %s" target
+        details
   | Systemd_session_unavailable { target; details } ->
       Printf.sprintf
         "VM launch failed for %s: systemd user session unavailable: %s\n\
-         Ensure your user session is active. You may need to run: loginctl enable-linger %s"
+         Ensure your user session is active. You may need to run: loginctl \
+         enable-linger %s"
         target details
         (match Sys.getenv_opt "USER" with Some u -> u | None -> "$USER")
   | Ssh_wait_timeout { timeout_seconds } ->
       Printf.sprintf
-        "SSH wait timed out after %d seconds. The VM is running but SSH is not reachable.\n\
-         Try connecting manually or increase the timeout with --wait-timeout or EPI_WAIT_TIMEOUT_SECONDS."
+        "SSH wait timed out after %d seconds. The VM is running but SSH is not \
+         reachable.\n\
+         Try connecting manually or increase the timeout with --wait-timeout \
+         or EPI_WAIT_TIMEOUT_SECONDS."
         timeout_seconds

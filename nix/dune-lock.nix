@@ -10,25 +10,27 @@
 
 let
   # Read a .pkg file and normalize whitespace for easier matching
-  readPkg = name:
-    builtins.replaceStrings [ "\n" ] [ " " ] (builtins.readFile (lockDir + "/${name}"));
+  readPkg = name: builtins.replaceStrings [ "\n" ] [ " " ] (builtins.readFile (lockDir + "/${name}"));
 
   # Extract url from a fetch block fragment
-  extractUrl = block:
+  extractUrl =
+    block:
     let
       m = builtins.match ".*\\(url ([^)]+)\\).*" block;
     in
     if m != null then lib.strings.trim (builtins.head m) else null;
 
   # Extract checksum from a fetch block fragment
-  extractChecksum = block:
+  extractChecksum =
+    block:
     let
       m = builtins.match ".*\\(checksum ([^)]+)\\).*" block;
     in
     if m != null then lib.strings.trim (builtins.head m) else null;
 
   # Parse "sha256=abc123" into { type, value }
-  parseChecksum = checksumStr:
+  parseChecksum =
+    checksumStr:
     let
       parts = lib.splitString "=" checksumStr;
     in
@@ -38,7 +40,8 @@ let
     };
 
   # Create a fetch entry from url and checksum
-  makeFetch = pkgName: url: checksum:
+  makeFetch =
+    pkgName: url: checksum:
     let
       effective = if hashOverrides ? ${pkgName} then hashOverrides.${pkgName} else checksum;
       parsed = parseChecksum effective;
@@ -52,7 +55,8 @@ let
     };
 
   # Extract the main source fetch from a .pkg file
-  extractSource = pkgName: content:
+  extractSource =
+    pkgName: content:
     let
       parts = lib.splitString "(source" content;
       hasSourceBlock = builtins.length parts > 1;
@@ -70,7 +74,8 @@ let
       null;
 
   # Extract extra_sources fetches from a .pkg file
-  extractExtraSources = pkgName: content:
+  extractExtraSources =
+    pkgName: content:
     let
       hasExtra = builtins.match ".*(\\(extra_sources .*).*" content != null;
       afterExtra =
@@ -80,25 +85,21 @@ let
         if builtins.length parts > 1 then builtins.elemAt parts 1 else "";
       fetchParts = lib.splitString "(fetch" afterExtra;
       fetchBlocks = lib.tail fetchParts;
-      extractBlock = block:
+      extractBlock =
+        block:
         let
           url = extractUrl block;
           checksum = extractChecksum block;
         in
-        if url != null && checksum != null then
-          makeFetch pkgName url checksum
-        else
-          null;
+        if url != null && checksum != null then makeFetch pkgName url checksum else null;
     in
-    if hasExtra then
-      builtins.filter (x: x != null) (map extractBlock fetchBlocks)
-    else
-      [ ];
+    if hasExtra then builtins.filter (x: x != null) (map extractBlock fetchBlocks) else [ ];
 
   # List and process all .pkg files
   lockFiles = builtins.readDir lockDir;
   pkgFiles = lib.filterAttrs (name: _: lib.hasSuffix ".pkg" name) lockFiles;
-  parsed = lib.mapAttrs (name: _:
+  parsed = lib.mapAttrs (
+    name: _:
     let
       content = readPkg name;
       pkgName = lib.removeSuffix ".pkg" name;

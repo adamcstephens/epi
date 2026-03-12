@@ -1,2 +1,1 @@
-let tests =
-  []
+let tests = []

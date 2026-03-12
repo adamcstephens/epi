@@ -5,13 +5,10 @@ type t = {
 }
 
 let empty = { target = None; mounts = None; disk_size = None }
-
 let config_path = Filename.concat ".epi" "config.toml"
 
 let getenv_nonempty name =
-  match Sys.getenv_opt name with
-  | Some "" | None -> None
-  | Some v -> Some v
+  match Sys.getenv_opt name with Some "" | None -> None | Some v -> Some v
 
 let user_config_path () =
   match getenv_nonempty "EPI_CONFIG_FILE" with
@@ -42,20 +39,19 @@ let resolve_path ~base path =
     Filename.concat base (strip_dot_slash expanded)
   else expanded
 
-let resolve_mounts ~base paths =
-  List.map (resolve_path ~base) paths
+let resolve_mounts ~base paths = List.map (resolve_path ~base) paths
 
 let parse_config ~path ~base content =
   match Otoml.Parser.from_string_result content with
   | Error msg -> Error (Printf.sprintf "%s: %s" path msg)
   | Ok toml ->
-      let target = Otoml.Helpers.find_string_opt toml ["target"] in
+      let target = Otoml.Helpers.find_string_opt toml [ "target" ] in
       let mounts =
-        match Otoml.Helpers.find_strings_opt toml ["mounts"] with
+        match Otoml.Helpers.find_strings_opt toml [ "mounts" ] with
         | Some paths -> Some (resolve_mounts ~base paths)
         | None -> None
       in
-      let disk_size = Otoml.Helpers.find_string_opt toml ["disk_size"] in
+      let disk_size = Otoml.Helpers.find_string_opt toml [ "disk_size" ] in
       Ok { target; mounts; disk_size }
 
 let load () =
@@ -63,12 +59,13 @@ let load () =
   else
     match Util.read_file config_path with
     | None -> Ok empty
-    | Some content -> parse_config ~path:config_path ~base:(Sys.getcwd ()) content
+    | Some content ->
+        parse_config ~path:config_path ~base:(Sys.getcwd ()) content
 
 let load_user () =
   match user_config_path () with
   | None -> Ok empty
-  | Some path ->
+  | Some path -> (
       let explicit = getenv_nonempty "EPI_CONFIG_FILE" <> None in
       if not (Sys.file_exists path) then
         if explicit then Error (Printf.sprintf "Config file not found: %s" path)
@@ -76,7 +73,8 @@ let load_user () =
       else
         match Util.read_file path with
         | None -> Ok empty
-        | Some content -> parse_config ~path ~base:(Filename.dirname path) content
+        | Some content ->
+            parse_config ~path ~base:(Filename.dirname path) content)
 
 type resolved = {
   resolved_target : string;
@@ -86,9 +84,18 @@ type resolved = {
 
 let merge_configs ~user ~project =
   {
-    target = (match project.target with Some _ -> project.target | None -> user.target);
-    mounts = (match project.mounts with Some _ -> project.mounts | None -> user.mounts);
-    disk_size = (match project.disk_size with Some _ -> project.disk_size | None -> user.disk_size);
+    target =
+      (match project.target with
+      | Some _ -> project.target
+      | None -> user.target);
+    mounts =
+      (match project.mounts with
+      | Some _ -> project.mounts
+      | None -> user.mounts);
+    disk_size =
+      (match project.disk_size with
+      | Some _ -> project.disk_size
+      | None -> user.disk_size);
   }
 
 let merge ~cli_target ~cli_mounts ~cli_disk_size config =
@@ -111,6 +118,11 @@ let merge ~cli_target ~cli_mounts ~cli_disk_size config =
   let disk_size =
     match cli_disk_size with
     | Some s -> s
-    | None -> (match config.disk_size with Some s -> s | None -> "40G")
+    | None -> ( match config.disk_size with Some s -> s | None -> "40G")
   in
-  Ok { resolved_target = target; resolved_mounts = mounts; resolved_disk_size = disk_size }
+  Ok
+    {
+      resolved_target = target;
+      resolved_mounts = mounts;
+      resolved_disk_size = disk_size;
+    }

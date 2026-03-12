@@ -30,8 +30,8 @@ let tests ~bin =
                 assert_success ~context:"implicit up" implicit;
                 let _, stdout_implicit, _ = implicit in
                 assert_contains ~context:"implicit up output" stdout_implicit
-                  "launch: provisioned instance=default target=github:org/repo#dev \
-                   unit_id=";
+                  "launch: provisioned instance=default \
+                   target=github:org/repo#dev unit_id=";
                 let launch_contents =
                   if Sys.file_exists launch_log then read_file launch_log
                   else ""
@@ -43,15 +43,11 @@ let tests ~bin =
                 let dev_a = find_state_runtime ~state_dir "dev-a" in
                 (match dev_a with
                 | Some (Some _, Some _, _, _, _) -> ()
-                | _ ->
-                    fail
-                      "expected runtime metadata with unit_id for dev-a");
+                | _ -> fail "expected runtime metadata with unit_id for dev-a");
                 let default = find_state_runtime ~state_dir "default" in
                 (match default with
                 | Some (Some _, Some _, _, _, _) -> ()
-                | _ ->
-                    fail
-                      "expected runtime metadata with unit_id for default");
+                | _ -> fail "expected runtime metadata with unit_id for default");
                 let status_default =
                   run_cli_with_env ~bin ~state_dir ~extra_env [ "status" ]
                 in
@@ -73,8 +69,8 @@ let tests ~bin =
                 let _, stdout, _ = result in
                 assert_contains ~context:"stage: target evaluation start" stdout
                   "vm: resolving target=.#nixosConfigurations.stage-test";
-                assert_contains ~context:"stage: launch preparation start" stdout
-                  "vm: evaluated target, building artifacts";
+                assert_contains ~context:"stage: launch preparation start"
+                  stdout "vm: evaluated target, building artifacts";
                 assert_contains ~context:"stage: VM launch start" stdout
                   "vm: starting VM instance=stage-test";
                 assert_contains ~context:"stage: provisioned message" stdout
@@ -115,7 +111,8 @@ let tests ~bin =
                 assert_success ~context:"list after failed up" listed;
                 let _, listed_out, _ = listed in
                 if contains listed_out "qa-1" then
-                  fail "instance was unexpectedly persisted after launch failure")));
+                  fail
+                    "instance was unexpectedly persisted after launch failure")));
     Alcotest.test_case "reports target resolution failures with target context"
       `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
@@ -130,8 +127,8 @@ let tests ~bin =
                   "target resolution failed";
                 assert_contains ~context:"resolution failure target" err
                   ".#nixosConfigurations.fail-resolve")));
-    Alcotest.test_case "validates launch inputs before VM launch"
-      `Quick (fun () ->
+    Alcotest.test_case "validates launch inputs before VM launch" `Quick
+      (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let failed =
@@ -149,9 +146,11 @@ let tests ~bin =
                   else ""
                 in
                 if String.length launch_contents > 0 then
-                  fail "cloud-hypervisor was invoked despite missing launch input")));
-    Alcotest.test_case "rejects mixed mutable disk and target-built boot artifacts"
-      `Quick (fun () ->
+                  fail
+                    "cloud-hypervisor was invoked despite missing launch input")));
+    Alcotest.test_case
+      "rejects mixed mutable disk and target-built boot artifacts" `Quick
+      (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let failed =
@@ -174,8 +173,8 @@ let tests ~bin =
                   fail
                     "cloud-hypervisor was invoked despite coherence validation \n\
                      failure")));
-    Alcotest.test_case "uses target-provided cmdline when available"
-      `Quick (fun () ->
+    Alcotest.test_case "uses target-provided cmdline when available" `Quick
+      (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let launched =
@@ -242,10 +241,13 @@ let tests ~bin =
                     "serial.sock"
                 in
                 with_delayed_unix_socket_server ~socket_path:serial_socket
-                  ~payload:"up-console\n" ~before_bind:wait_for_launch (fun () ->
+                  ~payload:"up-console\n" ~before_bind:wait_for_launch
+                  (fun () ->
                     let result =
                       run_cli_with_env ~bin ~state_dir ~extra_env
-                        [ "launch"; "dev-a"; "--target"; ".#dev-a"; "--console" ]
+                        [
+                          "launch"; "dev-a"; "--target"; ".#dev-a"; "--console";
+                        ]
                     in
                     assert_success ~context:"up console fresh" result;
                     let _, out, _ = result in
@@ -257,8 +259,8 @@ let tests ~bin =
                     in
                     assert_contains ~context:"up console launch invoked"
                       launch_contents "--serial"))));
-    Alcotest.test_case "--console attaches to already running instance"
-      `Quick (fun () ->
+    Alcotest.test_case "--console attaches to already running instance" `Quick
+      (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-up-console-running" (fun dir ->
@@ -273,7 +275,8 @@ let tests ~bin =
                           run_cli_with_env ~bin ~state_dir ~extra_env
                             [ "launch"; "dev-a"; "--target"; ".#dev-a" ]
                         in
-                        assert_success ~context:"launch for console test" launch_result;
+                        assert_success ~context:"launch for console test"
+                          launch_result;
                         (* Overwrite serial_socket to point to our mock server *)
                         let state_path =
                           Filename.concat
@@ -281,17 +284,26 @@ let tests ~bin =
                             "state.json"
                         in
                         let json = Yojson.Basic.from_file state_path in
-                        let updated = match json with
+                        let updated =
+                          match json with
                           | `Assoc fields ->
-                              let fields = List.map (fun (k, v) ->
-                                if k = "runtime" then
-                                  match v with
-                                  | `Assoc rt ->
-                                      (k, `Assoc (List.map (fun (rk, rv) ->
-                                        if rk = "serial_socket" then (rk, `String serial_socket)
-                                        else (rk, rv)) rt))
-                                  | _ -> (k, v)
-                                else (k, v)) fields
+                              let fields =
+                                List.map
+                                  (fun (k, v) ->
+                                    if k = "runtime" then
+                                      match v with
+                                      | `Assoc rt ->
+                                          ( k,
+                                            `Assoc
+                                              (List.map
+                                                 (fun (rk, rv) ->
+                                                   if rk = "serial_socket" then
+                                                     (rk, `String serial_socket)
+                                                   else (rk, rv))
+                                                 rt) )
+                                      | _ -> (k, v)
+                                    else (k, v))
+                                  fields
                               in
                               `Assoc fields
                           | other -> other
@@ -309,8 +321,8 @@ let tests ~bin =
                         in
                         assert_success ~context:"up console running" result;
                         let _, out, _ = result in
-                        assert_contains ~context:"up console running stdout"
-                          out "up-console-running";
+                        assert_contains ~context:"up console running stdout" out
+                          "up-console-running";
                         let launch_contents =
                           if Sys.file_exists launch_log then
                             read_file launch_log
@@ -319,15 +331,15 @@ let tests ~bin =
                         (* The launch log should only have one entry from the
                            first launch, not a second one *)
                         let lines =
-                          String.split_on_char '\n' (String.trim launch_contents)
+                          String.split_on_char '\n'
+                            (String.trim launch_contents)
                           |> List.filter (fun s -> s <> "")
                         in
                         if List.length lines > 1 then
                           fail
-                            "expected up --console to skip VM provisioning \
-                             for running instance")))));
-    Alcotest.test_case "over stale instance stops old slice"
-      `Quick (fun () ->
+                            "expected up --console to skip VM provisioning for \
+                             running instance")))));
+    Alcotest.test_case "over stale instance stops old slice" `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
@@ -341,8 +353,10 @@ let tests ~bin =
                   | _ -> fail "expected unit_id in state after first up"
                 in
                 (* Stop the VM service to make it stale *)
-                ignore (stop_unit (vm_unit_name ~instance_name:"stale-relaunch"
-                    ~unit_id:old_unit_id));
+                ignore
+                  (stop_unit
+                     (vm_unit_name ~instance_name:"stale-relaunch"
+                        ~unit_id:old_unit_id));
                 let result2 =
                   run_cli_with_env ~bin ~state_dir ~extra_env
                     [ "launch"; "stale-relaunch"; "--target"; ".#dev" ]
@@ -355,8 +369,7 @@ let tests ~bin =
                 in
                 if old_unit_id = new_unit_id then
                   fail "expected a new unit_id after relaunch")));
-    Alcotest.test_case "output includes the SSH port"
-      `Quick (fun () ->
+    Alcotest.test_case "output includes the SSH port" `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =

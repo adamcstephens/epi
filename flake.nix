@@ -21,25 +21,28 @@
             system = "x86_64-linux";
             modules = [
               ./nix/nixos/epi.nix
-              ({pkgs, ...}: {
-                epi.enable = true;
-                epi.hooks.guest-init."00-hello.sh" = pkgs.writeShellScript "hello" ''
-                  echo "epi-hook: guest-init hello from nix config"
-                '';
-                epi.hooks.post-launch."00-marker.sh" = pkgs.writeShellScript "post-launch-marker" ''
-                  touch "$EPI_STATE_DIR/$EPI_INSTANCE/nix-post-launch-ran"
-                '';
-                epi.hooks.pre-stop."00-marker.sh" = pkgs.writeShellScript "pre-stop-marker" ''
-                  touch "$EPI_STATE_DIR/$EPI_INSTANCE/nix-pre-stop-ran"
-                '';
-                nix.settings = {
-                  extra-experimental-features = "nix-command flakes";
-                };
-              })
+              (
+                { pkgs, ... }:
+                {
+                  epi.enable = true;
+                  epi.hooks.guest-init."00-hello.sh" = pkgs.writeShellScript "hello" ''
+                    echo "epi-hook: guest-init hello from nix config"
+                  '';
+                  epi.hooks.post-launch."00-marker.sh" = pkgs.writeShellScript "post-launch-marker" ''
+                    touch "$EPI_STATE_DIR/$EPI_INSTANCE/nix-post-launch-ran"
+                  '';
+                  epi.hooks.pre-stop."00-marker.sh" = pkgs.writeShellScript "pre-stop-marker" ''
+                    touch "$EPI_STATE_DIR/$EPI_INSTANCE/nix-pre-stop-ran"
+                  '';
+                  nix.settings = {
+                    extra-experimental-features = "nix-command flakes";
+                  };
+                }
+              )
             ];
           };
 
-};
+        };
 
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
 
@@ -55,6 +58,8 @@
                 pkgs.cloud-hypervisor
                 pkgs.gptfdisk
                 pkgs.jq
+                pkgs.just
+                pkgs.nixfmt
                 pkgs.qemu-utils
                 pkgs.passt
                 pkgs.virtiofsd

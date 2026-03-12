@@ -67,7 +67,7 @@ let resolve_no_wait no_wait_flag =
 let resolve_wait_timeout wait_timeout_opt =
   match wait_timeout_opt with
   | Some t -> t
-  | None ->
+  | None -> (
       match Sys.getenv_opt "EPI_WAIT_TIMEOUT_SECONDS" with
       | Some s -> (
           match int_of_string_opt (String.trim s) with
@@ -75,9 +75,10 @@ let resolve_wait_timeout wait_timeout_opt =
           | _ ->
               fail
                 (Printf.sprintf
-                   "Invalid EPI_WAIT_TIMEOUT_SECONDS=%S. Expected a positive integer."
+                   "Invalid EPI_WAIT_TIMEOUT_SECONDS=%S. Expected a positive \
+                    integer."
                    s))
-      | None -> 120
+      | None -> 120)
 
 let resolve_instance_name instance_name_opt =
   match instance_name_opt with
@@ -91,27 +92,31 @@ let resolve_instance_target ~command_name instance_name_opt =
   | None when instance_name_opt = None ->
       fail
         (Printf.sprintf
-           "Instance '%s' was not found. Run `epi launch --target <flake#config>` \
-            to create it, or pass an instance name (for example: `epi %s \
-            <instance>`)."
+           "Instance '%s' was not found. Run `epi launch --target \
+            <flake#config>` to create it, or pass an instance name (for \
+            example: `epi %s <instance>`)."
            Instance_store.default_instance_name command_name)
   | None ->
       fail
         (Printf.sprintf
            "Instance '%s' was not found. Run `epi list` to see known \
-            instances, or create it with `epi launch %s --target <flake#config>`."
+            instances, or create it with `epi launch %s --target \
+            <flake#config>`."
            instance_name instance_name)
 
 let instance_is_running ~instance_name runtime =
-  match Instance_store.vm_unit_name ~instance_name ~unit_id:runtime.Instance_store.unit_id with
+  match
+    Instance_store.vm_unit_name ~instance_name
+      ~unit_id:runtime.Instance_store.unit_id
+  with
   | Ok unit_name -> Process.unit_is_active unit_name
   | Error _ -> false
 
 let stop_instance ~instance_name runtime =
   let unit_id = runtime.Instance_store.unit_id in
   (match Instance_store.vm_unit_name ~instance_name ~unit_id with
-   | Ok vm_unit -> ignore (Process.stop_unit vm_unit)
-   | Error _ -> ());
+  | Ok vm_unit -> ignore (Process.stop_unit vm_unit)
+  | Error _ -> ());
   match Instance_store.slice_name ~instance_name ~unit_id with
   | Ok slice -> Process.stop_unit slice
   | Error _ -> false
@@ -131,50 +136,69 @@ let attach_console_for_running_instance ~instance_name ~options runtime =
     | Ok () -> ()
     | Error error -> fail (Console.pp_console_error error)
 
-let provision_and_report ~command_name ~attach_console ~console_options
-    ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target =
-  match Vm_launch.provision ~rebuild ~mount_paths ~disk_size
-          ~instance_name ~target () with
+let provision_and_report ~command_name ~attach_console ~console_options ~rebuild
+    ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target =
+  match
+    Vm_launch.provision ~rebuild ~mount_paths ~disk_size ~instance_name ~target
+      ()
+  with
   | Error error -> fail (Vm_launch.pp_provision_error error)
   | Ok runtime ->
       Instance_store.set_provisioned ~instance_name ~target ~runtime;
-      if not no_wait then (
-        match runtime.Instance_store.ssh_port with
-        | Some ssh_port ->
-            Printf.printf "vm: waiting for SSH (timeout %ds)...\n%!" wait_timeout;
-            (match Vm_launch.wait_for_ssh ~ssh_port
-                     ~ssh_key_path:runtime.Instance_store.ssh_key_path
-                     ~timeout_seconds:wait_timeout with
-            | Ok () ->
-                Printf.printf "vm: SSH ready\n%!";
-                let username =
-                  match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
-                in
-                let nix_hooks =
-                  match Target.load_descriptor_cache (Target.canonicalize_target target) with
-                  | Some desc -> desc.Target.hooks.post_launch
-                  | None -> []
-                in
-                let hooks = Hooks.discover ~instance_name ~nix_hooks "post-launch" in
-                if hooks <> [] then (
-                  Printf.printf "hooks: running %d post-launch hook(s)\n%!" (List.length hooks);
-                  let env = Hooks.{
-                    instance_name;
-                    ssh_port;
-                    ssh_key_path = runtime.Instance_store.ssh_key_path;
-                    ssh_user = username;
-                    state_dir = Instance_store.state_dir ();
-                  } in
-                  match Hooks.execute ~env hooks with
-                  | Ok () -> Printf.printf "hooks: post-launch hooks complete\n%!"
-                  | Error msg -> fail (Printf.sprintf "post-launch hook failed: %s" msg))
-            | Error error -> fail (Vm_launch.pp_provision_error error))
-        | None -> ());
+      (if not no_wait then
+         match runtime.Instance_store.ssh_port with
+         | Some ssh_port -> (
+             Printf.printf "vm: waiting for SSH (timeout %ds)...\n%!"
+               wait_timeout;
+             match
+               Vm_launch.wait_for_ssh ~ssh_port
+                 ~ssh_key_path:runtime.Instance_store.ssh_key_path
+                 ~timeout_seconds:wait_timeout
+             with
+             | Ok () ->
+                 Printf.printf "vm: SSH ready\n%!";
+                 let username =
+                   match Sys.getenv_opt "USER" with
+                   | Some u -> u
+                   | None -> "user"
+                 in
+                 let nix_hooks =
+                   match
+                     Target.load_descriptor_cache
+                       (Target.canonicalize_target target)
+                   with
+                   | Some desc -> desc.Target.hooks.post_launch
+                   | None -> []
+                 in
+                 let hooks =
+                   Hooks.discover ~instance_name ~nix_hooks "post-launch"
+                 in
+                 if hooks <> [] then (
+                   Printf.printf "hooks: running %d post-launch hook(s)\n%!"
+                     (List.length hooks);
+                   let env =
+                     Hooks.
+                       {
+                         instance_name;
+                         ssh_port;
+                         ssh_key_path = runtime.Instance_store.ssh_key_path;
+                         ssh_user = username;
+                         state_dir = Instance_store.state_dir ();
+                       }
+                   in
+                   match Hooks.execute ~env hooks with
+                   | Ok () ->
+                       Printf.printf "hooks: post-launch hooks complete\n%!"
+                   | Error msg ->
+                       fail (Printf.sprintf "post-launch hook failed: %s" msg))
+             | Error error -> fail (Vm_launch.pp_provision_error error))
+         | None -> ());
       if attach_console then
         attach_console_for_running_instance ~instance_name
           ~options:console_options runtime
       else (
-        Printf.printf "%s: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
+        Printf.printf
+          "%s: provisioned instance=%s target=%s unit_id=%s serial=%s\n"
           command_name instance_name target runtime.Instance_store.unit_id
           runtime.serial_socket;
         match runtime.Instance_store.ssh_port with
@@ -193,8 +217,7 @@ let launch_command =
      let+ instance_name =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
      and+ target =
-       Arg.named_opt [ "target" ] Param.string
-         ~docv:"FLAKE#CONFIG"
+       Arg.named_opt [ "target" ] Param.string ~docv:"FLAKE#CONFIG"
          ~doc:
            "Flake target in <flake-ref>#<config-name> form, for example .#dev."
      and+ attach_console =
@@ -208,47 +231,49 @@ let launch_command =
            "Force re-evaluation and rebuild of the target, bypassing any \
             cached descriptor."
      and+ mount_paths =
-       Arg.named_multi [ "mount" ] Param.string
-         ~docv:"PATH"
+       Arg.named_multi [ "mount" ] Param.string ~docv:"PATH"
          ~doc:
            "Mount a host directory into the guest at the same path using \
             virtiofsd. Can be repeated for multiple directories."
      and+ disk_size =
-       Arg.named_opt [ "disk-size" ] Param.string
-         ~docv:"SIZE"
+       Arg.named_opt [ "disk-size" ] Param.string ~docv:"SIZE"
          ~doc:
            "Target size of the writable disk overlay (e.g. 40G, 50G). Only \
             applies when a new overlay is created. Defaults to 40G."
      and+ no_wait =
        Arg.flag [ "no-wait" ]
          ~doc:
-           "Return immediately after the VM process starts without waiting \
-            for SSH connectivity."
+           "Return immediately after the VM process starts without waiting for \
+            SSH connectivity."
      and+ wait_timeout =
-       Arg.named_opt [ "wait-timeout" ] Param.int
-         ~docv:"SECONDS"
+       Arg.named_opt [ "wait-timeout" ] Param.int ~docv:"SECONDS"
          ~doc:
            "Maximum seconds to wait for SSH connectivity (default 120). \
             Overrides EPI_WAIT_TIMEOUT_SECONDS."
      in
-     let user_config = match Config.load_user () with
-       | Ok c -> c
-       | Error msg -> fail msg
+     let user_config =
+       match Config.load_user () with Ok c -> c | Error msg -> fail msg
      in
-     let project_config = match Config.load () with
-       | Ok c -> c
-       | Error msg -> fail msg
+     let project_config =
+       match Config.load () with Ok c -> c | Error msg -> fail msg
      in
-     let config = Config.merge_configs ~user:user_config ~project:project_config in
+     let config =
+       Config.merge_configs ~user:user_config ~project:project_config
+     in
      let cli_mounts =
        let cwd = Sys.getcwd () in
        List.map (Config.resolve_path ~base:cwd) mount_paths
      in
-     let merged = match Config.merge ~cli_target:target ~cli_mounts ~cli_disk_size:disk_size config with
+     let merged =
+       match
+         Config.merge ~cli_target:target ~cli_mounts ~cli_disk_size:disk_size
+           config
+       with
        | Ok m -> m
        | Error msg -> fail msg
      in
-     let target = match Target.of_string merged.Config.resolved_target with
+     let target =
+       match Target.of_string merged.Config.resolved_target with
        | Ok t -> Target.to_string t
        | Error (`Msg msg) -> fail msg
      in
@@ -262,8 +287,9 @@ let launch_command =
      | Some runtime when instance_is_running ~instance_name runtime ->
          if attach_console then (
            Printf.printf
-             "launch: instance=%s target=%s already-running unit_id=%s, attaching \
-              console\n%!"
+             "launch: instance=%s target=%s already-running unit_id=%s, \
+              attaching console\n\
+              %!"
              instance_name target runtime.unit_id;
            attach_console_for_running_instance ~instance_name
              ~options:console_options runtime)
@@ -274,11 +300,13 @@ let launch_command =
      | Some stale_runtime ->
          ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
-         provision_and_report ~command_name:"launch" ~attach_console ~console_options
-           ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target
+         provision_and_report ~command_name:"launch" ~attach_console
+           ~console_options ~rebuild ~no_wait ~wait_timeout ~mount_paths
+           ~disk_size ~instance_name ~target
      | None ->
-         provision_and_report ~command_name:"launch" ~attach_console ~console_options
-           ~rebuild ~no_wait ~wait_timeout ~mount_paths ~disk_size ~instance_name ~target)
+         provision_and_report ~command_name:"launch" ~attach_console
+           ~console_options ~rebuild ~no_wait ~wait_timeout ~mount_paths
+           ~disk_size ~instance_name ~target)
 
 let lifecycle_command ~name ~summary =
   Command.make ~summary
@@ -312,33 +340,41 @@ let ssh_command =
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
-           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
+           (Printf.sprintf
+              "Instance '%s' is not running. Start it with: epi start"
               instance_name)
      | Some runtime when not (instance_is_running ~instance_name runtime) ->
          fail
-           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
+           (Printf.sprintf
+              "Instance '%s' is not running. Start it with: epi start"
               instance_name)
      | Some runtime -> (
          match runtime.Instance_store.ssh_port with
          | None ->
              fail
                (Printf.sprintf
-                  "Instance '%s' has no SSH port. Try stopping and restarting it."
+                  "Instance '%s' has no SSH port. Try stopping and restarting \
+                   it."
                   instance_name)
          | Some port ->
              let username =
-               match Sys.getenv_opt "USER" with
-               | Some u -> u
-               | None -> "user"
+               match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
              in
              let port_str = string_of_int port in
              let target = username ^ "@127.0.0.1" in
              let args =
-               [| "ssh"; "-p"; port_str;
-                  "-i"; runtime.Instance_store.ssh_key_path;
-                  "-o"; "StrictHostKeyChecking=no";
-                  "-o"; "UserKnownHostsFile=/dev/null";
-                  target |]
+               [|
+                 "ssh";
+                 "-p";
+                 port_str;
+                 "-i";
+                 runtime.Instance_store.ssh_key_path;
+                 "-o";
+                 "StrictHostKeyChecking=no";
+                 "-o";
+                 "UserKnownHostsFile=/dev/null";
+                 target;
+               |]
              in
              Unix.execvp "ssh" args))
 
@@ -353,50 +389,64 @@ let exec_command =
     (let open Command.Std in
      let+ args =
        Arg.pos_all Param.string ~docv:"[INSTANCE] -- COMMAND [ARGS...]"
-         ~doc:
-           "Optional instance name, then `--`, then the command to execute."
+         ~doc:"Optional instance name, then `--`, then the command to execute."
      in
      let instance_name, cmd_args =
        match args with
-       | [] -> fail "exec requires a command. Usage: epi exec [INSTANCE] -- COMMAND [ARGS...]"
+       | [] ->
+           fail
+             "exec requires a command. Usage: epi exec [INSTANCE] -- COMMAND \
+              [ARGS...]"
        | first :: rest -> (
            match Instance_store.find first with
            | Some _ when rest <> [] -> (first, rest)
-           | Some _ -> fail "exec requires a command. Usage: epi exec [INSTANCE] -- COMMAND [ARGS...]"
+           | Some _ ->
+               fail
+                 "exec requires a command. Usage: epi exec [INSTANCE] -- \
+                  COMMAND [ARGS...]"
            | None -> (Instance_store.default_instance_name, args))
      in
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
-           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
+           (Printf.sprintf
+              "Instance '%s' is not running. Start it with: epi start"
               instance_name)
      | Some runtime when not (instance_is_running ~instance_name runtime) ->
          fail
-           (Printf.sprintf "Instance '%s' is not running. Start it with: epi start"
+           (Printf.sprintf
+              "Instance '%s' is not running. Start it with: epi start"
               instance_name)
      | Some runtime -> (
          match runtime.Instance_store.ssh_port with
          | None ->
              fail
                (Printf.sprintf
-                  "Instance '%s' has no SSH port. Try stopping and restarting it."
+                  "Instance '%s' has no SSH port. Try stopping and restarting \
+                   it."
                   instance_name)
          | Some port ->
              let username =
-               match Sys.getenv_opt "USER" with
-               | Some u -> u
-               | None -> "user"
+               match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
              in
              let port_str = string_of_int port in
              let target = username ^ "@127.0.0.1" in
              let args =
                Array.concat
                  [
-                   [| "ssh"; "-T"; "-p"; port_str;
-                      "-i"; runtime.Instance_store.ssh_key_path;
-                      "-o"; "StrictHostKeyChecking=no";
-                      "-o"; "UserKnownHostsFile=/dev/null";
-                      target |];
+                   [|
+                     "ssh";
+                     "-T";
+                     "-p";
+                     port_str;
+                     "-i";
+                     runtime.Instance_store.ssh_key_path;
+                     "-o";
+                     "StrictHostKeyChecking=no";
+                     "-o";
+                     "UserKnownHostsFile=/dev/null";
+                     target;
+                   |];
                    Array.of_list cmd_args;
                  ]
              in
@@ -433,8 +483,7 @@ let terminate_instance_runtime ~instance_name runtime =
 let stop_command =
   Command.make ~summary:"Stop an instance."
     ~readme:(fun () ->
-      "Stop a running instance.\n\
-       If INSTANCE is omitted, `default` is used.")
+      "Stop a running instance.\nIf INSTANCE is omitted, `default` is used.")
     (let open Command.Std in
      let+ instance_name_opt =
        Arg.pos_opt ~pos:0 Param.string ~docv:"INSTANCE" ~doc:"Instance name."
@@ -443,8 +492,8 @@ let stop_command =
      match Instance_store.find_runtime instance_name with
      | None ->
          fail
-           (Printf.sprintf
-              "Instance '%s' is not running. Nothing to stop." instance_name)
+           (Printf.sprintf "Instance '%s' is not running. Nothing to stop."
+              instance_name)
      | Some runtime when not (instance_is_running ~instance_name runtime) ->
          Instance_store.clear_runtime instance_name;
          Printf.printf
@@ -456,26 +505,36 @@ let stop_command =
          in
          let nix_hooks =
            match Instance_store.find instance_name with
-           | Some target ->
-               (match Target.load_descriptor_cache (Target.canonicalize_target target) with
-                | Some desc -> desc.Target.hooks.pre_stop
-                | None -> [])
+           | Some target -> (
+               match
+                 Target.load_descriptor_cache
+                   (Target.canonicalize_target target)
+               with
+               | Some desc -> desc.Target.hooks.pre_stop
+               | None -> [])
            | None -> []
          in
          let hooks = Hooks.discover ~instance_name ~nix_hooks "pre-stop" in
          if hooks <> [] then (
-           Printf.printf "hooks: running %d pre-stop hook(s)\n%!" (List.length hooks);
-           let ssh_port = Option.value ~default:0 runtime.Instance_store.ssh_port in
-           let env = Hooks.{
-             instance_name;
-             ssh_port;
-             ssh_key_path = runtime.Instance_store.ssh_key_path;
-             ssh_user = username;
-             state_dir = Instance_store.state_dir ();
-           } in
+           Printf.printf "hooks: running %d pre-stop hook(s)\n%!"
+             (List.length hooks);
+           let ssh_port =
+             Option.value ~default:0 runtime.Instance_store.ssh_port
+           in
+           let env =
+             Hooks.
+               {
+                 instance_name;
+                 ssh_port;
+                 ssh_key_path = runtime.Instance_store.ssh_key_path;
+                 ssh_user = username;
+                 state_dir = Instance_store.state_dir ();
+               }
+           in
            match Hooks.execute ~env hooks with
            | Ok () -> Printf.printf "hooks: pre-stop hooks complete\n%!"
-           | Error msg -> Printf.eprintf "warning: pre-stop hook failed: %s\n%!" msg);
+           | Error msg ->
+               Printf.eprintf "warning: pre-stop hook failed: %s\n%!" msg);
          match terminate_instance_runtime ~instance_name runtime with
          | Ok () ->
              Instance_store.clear_runtime instance_name;
@@ -488,7 +547,8 @@ let start_command =
       "Start a stopped instance using its stored target.\n\
        If INSTANCE is omitted, `default` is used.\n\n\
        Unlike `launch`, no --target is required — the target from the previous\n\
-       `launch` is reused. Use `launch` to create a new instance or change its target.\n\n\
+       `launch` is reused. Use `launch` to create a new instance or change its \
+       target.\n\n\
        Examples:\n\
       \  epi start\n\
       \  epi start dev-a\n\
@@ -503,11 +563,10 @@ let start_command =
      and+ no_wait =
        Arg.flag [ "no-wait" ]
          ~doc:
-           "Return immediately after the VM process starts without waiting \
-            for SSH connectivity."
+           "Return immediately after the VM process starts without waiting for \
+            SSH connectivity."
      and+ wait_timeout =
-       Arg.named_opt [ "wait-timeout" ] Param.int
-         ~docv:"SECONDS"
+       Arg.named_opt [ "wait-timeout" ] Param.int ~docv:"SECONDS"
          ~doc:
            "Maximum seconds to wait for SSH connectivity (default 120). \
             Overrides EPI_WAIT_TIMEOUT_SECONDS."
@@ -538,25 +597,27 @@ let start_command =
      | Some runtime when instance_is_running ~instance_name runtime ->
          if attach_console then (
            Printf.printf
-             "start: instance=%s already-running unit_id=%s, attaching console\n%!"
+             "start: instance=%s already-running unit_id=%s, attaching console\n\
+              %!"
              instance_name runtime.unit_id;
            attach_console_for_running_instance ~instance_name
              ~options:console_options runtime)
          else
-           Printf.printf "start: instance=%s already-running unit_id=%s serial=%s\n"
+           Printf.printf
+             "start: instance=%s already-running unit_id=%s serial=%s\n"
              instance_name runtime.unit_id runtime.serial_socket
      | Some stale_runtime ->
          ignore (stop_instance ~instance_name stale_runtime);
          Instance_store.clear_runtime instance_name;
-         provision_and_report ~command_name:"start" ~attach_console ~console_options
-           ~rebuild:false ~no_wait ~wait_timeout
-           ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G"
-           ~instance_name ~target
+         provision_and_report ~command_name:"start" ~attach_console
+           ~console_options ~rebuild:false ~no_wait ~wait_timeout
+           ~mount_paths:(Instance_store.load_mounts instance_name)
+           ~disk_size:"40G" ~instance_name ~target
      | None ->
-         provision_and_report ~command_name:"start" ~attach_console ~console_options
-           ~rebuild:false ~no_wait ~wait_timeout
-           ~mount_paths:(Instance_store.load_mounts instance_name) ~disk_size:"40G"
-           ~instance_name ~target)
+         provision_and_report ~command_name:"start" ~attach_console
+           ~console_options ~rebuild:false ~no_wait ~wait_timeout
+           ~mount_paths:(Instance_store.load_mounts instance_name)
+           ~disk_size:"40G" ~instance_name ~target)
 
 let rm_command =
   Command.make ~summary:"Remove an instance from state and runtime."
@@ -580,8 +641,8 @@ let rm_command =
          if not force then
            fail
              (Printf.sprintf
-                "Instance '%s' is running (unit_id=%s). Stop it first or use `epi \
-                 rm --force %s`."
+                "Instance '%s' is running (unit_id=%s). Stop it first or use \
+                 `epi rm --force %s`."
                 instance_name runtime.unit_id instance_name)
          else
            match terminate_instance_runtime ~instance_name runtime with
@@ -626,7 +687,8 @@ let cmd =
     ~summary:"Manage development VM instances from Nix flake targets."
     ~readme:(fun () ->
       "Instance names identify VMs (`default`, `dev-a`, etc.), while --target \
-       identifies flake inputs (<flake-ref>#<config-name>) used during `launch`.\n\n\
+       identifies flake inputs (<flake-ref>#<config-name>) used during \
+       `launch`.\n\n\
        Examples:\n\
       \  epi launch --target .#default\n\
       \  epi launch dev-a --target github:org/repo#dev-a\n\
@@ -662,7 +724,8 @@ let cmd =
                (match runtime.Instance_store.ssh_port with
                | Some port -> Printf.printf "SSH port: %d\n" port
                | None -> ());
-               Printf.printf "Serial:   %s\n" runtime.Instance_store.serial_socket;
+               Printf.printf "Serial:   %s\n"
+                 runtime.Instance_store.serial_socket;
                Printf.printf "Disk:     %s\n" runtime.Instance_store.disk;
                Printf.printf "Unit ID:  %s\n" runtime.Instance_store.unit_id
            | _ ->

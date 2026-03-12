@@ -58,34 +58,43 @@ let tests =
             write_script (Filename.concat dir "03-third.sh");
             let scripts = Hooks.discover_scripts dir in
             Alcotest.(check int) "count" 3 (List.length scripts);
-            Alcotest.(check bool) "first" true
+            Alcotest.(check bool)
+              "first" true
               (String.ends_with ~suffix:"01-first.sh" (List.nth scripts 0));
-            Alcotest.(check bool) "second" true
+            Alcotest.(check bool)
+              "second" true
               (String.ends_with ~suffix:"02-second.sh" (List.nth scripts 1));
-            Alcotest.(check bool) "third" true
+            Alcotest.(check bool)
+              "third" true
               (String.ends_with ~suffix:"03-third.sh" (List.nth scripts 2))));
-    Alcotest.test_case "discover_scripts: skips non-executable with warning" `Quick (fun () ->
+    Alcotest.test_case "discover_scripts: skips non-executable with warning"
+      `Quick (fun () ->
         with_temp_dir "hooks-noexec" (fun dir ->
             write_script (Filename.concat dir "good.sh");
             write_non_executable (Filename.concat dir "bad.sh");
             let scripts = Hooks.discover_scripts dir in
             Alcotest.(check int) "count" 1 (List.length scripts);
-            Alcotest.(check bool) "good.sh" true
+            Alcotest.(check bool)
+              "good.sh" true
               (String.ends_with ~suffix:"good.sh" (List.hd scripts))));
-    Alcotest.test_case "discover_scripts: accepts any executable, skips dotfiles" `Quick (fun () ->
+    Alcotest.test_case
+      "discover_scripts: accepts any executable, skips dotfiles" `Quick
+      (fun () ->
         with_temp_dir "hooks-nonsh" (fun dir ->
             write_script (Filename.concat dir "hook.sh");
             write_script (Filename.concat dir "setup-db");
             write_script (Filename.concat dir ".hidden");
             let scripts = Hooks.discover_scripts dir in
             Alcotest.(check int) "count" 2 (List.length scripts)));
-    Alcotest.test_case "discover_scripts: ignores subdirectories" `Quick (fun () ->
+    Alcotest.test_case "discover_scripts: ignores subdirectories" `Quick
+      (fun () ->
         with_temp_dir "hooks-subdir" (fun dir ->
             write_script (Filename.concat dir "hook.sh");
             Unix.mkdir (Filename.concat dir "subdir") 0o755;
             let scripts = Hooks.discover_scripts dir in
             Alcotest.(check int) "count" 1 (List.length scripts)));
-    Alcotest.test_case "discover_from_dir: top-level and instance" `Quick (fun () ->
+    Alcotest.test_case "discover_from_dir: top-level and instance" `Quick
+      (fun () ->
         with_temp_dir "hooks-instance" (fun dir ->
             write_script (Filename.concat dir "all.sh");
             mkdir_p (Filename.concat dir "dev");
@@ -94,21 +103,30 @@ let tests =
             write_script (Filename.concat dir "staging/other.sh");
             let scripts = Hooks.discover_from_dir ~instance_name:"dev" dir in
             Alcotest.(check int) "count" 2 (List.length scripts);
-            Alcotest.(check bool) "first is top-level" true
+            Alcotest.(check bool)
+              "first is top-level" true
               (String.ends_with ~suffix:"all.sh" (List.nth scripts 0));
-            Alcotest.(check bool) "second is instance" true
+            Alcotest.(check bool)
+              "second is instance" true
               (String.ends_with ~suffix:"dev/specific.sh" (List.nth scripts 1))));
-    Alcotest.test_case "discover_from_dir: instance subdir ignored for other instance" `Quick (fun () ->
+    Alcotest.test_case
+      "discover_from_dir: instance subdir ignored for other instance" `Quick
+      (fun () ->
         with_temp_dir "hooks-other" (fun dir ->
             write_script (Filename.concat dir "all.sh");
             mkdir_p (Filename.concat dir "dev");
             write_script (Filename.concat dir "dev/specific.sh");
-            let scripts = Hooks.discover_from_dir ~instance_name:"staging" dir in
+            let scripts =
+              Hooks.discover_from_dir ~instance_name:"staging" dir
+            in
             Alcotest.(check int) "count" 1 (List.length scripts)));
-    Alcotest.test_case "discover: user then project layer ordering" `Quick (fun () ->
+    Alcotest.test_case "discover: user then project layer ordering" `Quick
+      (fun () ->
         with_temp_dir "hooks-layers" (fun dir ->
             let user_dir = Filename.concat dir "user/epi/hooks/post-launch.d" in
-            let project_dir = Filename.concat dir "project/.epi/hooks/post-launch.d" in
+            let project_dir =
+              Filename.concat dir "project/.epi/hooks/post-launch.d"
+            in
             mkdir_p user_dir;
             mkdir_p project_dir;
             write_script (Filename.concat user_dir "user-hook.sh");
@@ -121,34 +139,48 @@ let tests =
             Fun.protect
               ~finally:(fun () ->
                 (match old_xdg with
-                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
-                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                | None -> Unix.putenv "XDG_CONFIG_HOME" "");
                 Sys.chdir old_cwd)
               (fun () ->
-                let scripts = Hooks.discover ~instance_name:"default" "post-launch" in
+                let scripts =
+                  Hooks.discover ~instance_name:"default" "post-launch"
+                in
                 Alcotest.(check int) "count" 2 (List.length scripts);
-                Alcotest.(check bool) "user first" true
+                Alcotest.(check bool)
+                  "user first" true
                   (String.ends_with ~suffix:"user-hook.sh" (List.nth scripts 0));
-                Alcotest.(check bool) "project second" true
-                  (String.ends_with ~suffix:"project-hook.sh" (List.nth scripts 1)))));
+                Alcotest.(check bool)
+                  "project second" true
+                  (String.ends_with ~suffix:"project-hook.sh"
+                     (List.nth scripts 1)))));
     Alcotest.test_case "execute: env vars set" `Quick (fun () ->
         with_temp_dir "hooks-exec" (fun dir ->
             let script_path = Filename.concat dir "check-env" in
             let out_path = Filename.concat dir "output" in
             let oc = open_out script_path in
-            Printf.fprintf oc "#!/bin/sh\necho \"$EPI_INSTANCE:$EPI_SSH_PORT:$EPI_SSH_USER\" > %s\n" out_path;
+            Printf.fprintf oc
+              "#!/bin/sh\n\
+               echo \"$EPI_INSTANCE:$EPI_SSH_PORT:$EPI_SSH_USER\" > %s\n"
+              out_path;
             close_out oc;
             Unix.chmod script_path 0o755;
-            let env = Hooks.{
-              instance_name = "dev";
-              ssh_port = 12345;
-              ssh_key_path = "/tmp/key";
-              ssh_user = "alice";
-              state_dir = "/tmp/state";
-            } in
-            let result = Hooks.execute ~env [script_path] in
+            let env =
+              Hooks.
+                {
+                  instance_name = "dev";
+                  ssh_port = 12345;
+                  ssh_key_path = "/tmp/key";
+                  ssh_user = "alice";
+                  state_dir = "/tmp/state";
+                }
+            in
+            let result = Hooks.execute ~env [ script_path ] in
             Alcotest.(check bool) "ok" true (Result.is_ok result);
-            let content = In_channel.with_open_text out_path In_channel.input_all |> String.trim in
+            let content =
+              In_channel.with_open_text out_path In_channel.input_all
+              |> String.trim
+            in
             Alcotest.(check string) "env output" "dev:12345:alice" content));
     Alcotest.test_case "execute: failure stops chain" `Quick (fun () ->
         with_temp_dir "hooks-fail" (fun dir ->
@@ -163,23 +195,39 @@ let tests =
             Printf.fprintf oc "#!/bin/sh\ntouch %s\n" marker;
             close_out oc;
             Unix.chmod ok_script 0o755;
-            let env = Hooks.{
-              instance_name = "dev"; ssh_port = 1; ssh_key_path = "";
-              ssh_user = "x"; state_dir = "";
-            } in
-            let result = Hooks.execute ~env [fail_script; ok_script] in
+            let env =
+              Hooks.
+                {
+                  instance_name = "dev";
+                  ssh_port = 1;
+                  ssh_key_path = "";
+                  ssh_user = "x";
+                  state_dir = "";
+                }
+            in
+            let result = Hooks.execute ~env [ fail_script; ok_script ] in
             Alcotest.(check bool) "error" true (Result.is_error result);
-            Alcotest.(check bool) "second not run" false (Sys.file_exists marker)));
+            Alcotest.(check bool)
+              "second not run" false (Sys.file_exists marker)));
     Alcotest.test_case "execute: empty list is no-op" `Quick (fun () ->
-        let env = Hooks.{
-          instance_name = "dev"; ssh_port = 1; ssh_key_path = "";
-          ssh_user = "x"; state_dir = "";
-        } in
+        let env =
+          Hooks.
+            {
+              instance_name = "dev";
+              ssh_port = 1;
+              ssh_key_path = "";
+              ssh_user = "x";
+              state_dir = "";
+            }
+        in
         let result = Hooks.execute ~env [] in
         Alcotest.(check bool) "ok" true (Result.is_ok result));
-    Alcotest.test_case "discover_guest: collects from guest-init.d" `Quick (fun () ->
+    Alcotest.test_case "discover_guest: collects from guest-init.d" `Quick
+      (fun () ->
         with_temp_dir "hooks-guest" (fun dir ->
-            let project_dir = Filename.concat dir "project/.epi/hooks/guest-init.d" in
+            let project_dir =
+              Filename.concat dir "project/.epi/hooks/guest-init.d"
+            in
             mkdir_p project_dir;
             write_script (Filename.concat project_dir "setup");
             let old_xdg = Sys.getenv_opt "XDG_CONFIG_HOME" in
@@ -189,13 +237,14 @@ let tests =
             Fun.protect
               ~finally:(fun () ->
                 (match old_xdg with
-                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
-                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                | None -> Unix.putenv "XDG_CONFIG_HOME" "");
                 Sys.chdir old_cwd)
               (fun () ->
                 let scripts = Hooks.discover_guest ~instance_name:"default" in
                 Alcotest.(check int) "count" 1 (List.length scripts);
-                Alcotest.(check bool) "is setup" true
+                Alcotest.(check bool)
+                  "is setup" true
                   (String.ends_with ~suffix:"setup" (List.hd scripts)))));
     Alcotest.test_case "discover: no dirs returns empty" `Quick (fun () ->
         with_temp_dir "hooks-nodirs" (fun dir ->
@@ -206,16 +255,22 @@ let tests =
             Fun.protect
               ~finally:(fun () ->
                 (match old_xdg with
-                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
-                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                | None -> Unix.putenv "XDG_CONFIG_HOME" "");
                 Sys.chdir old_cwd)
               (fun () ->
-                let scripts = Hooks.discover ~instance_name:"default" "post-launch" in
+                let scripts =
+                  Hooks.discover ~instance_name:"default" "post-launch"
+                in
                 Alcotest.(check int) "count" 0 (List.length scripts))));
-    Alcotest.test_case "discover: nix-config hooks appended at lowest precedence" `Quick (fun () ->
+    Alcotest.test_case
+      "discover: nix-config hooks appended at lowest precedence" `Quick
+      (fun () ->
         with_temp_dir "hooks-nix" (fun dir ->
             let user_dir = Filename.concat dir "user/epi/hooks/post-launch.d" in
-            let project_dir = Filename.concat dir "project/.epi/hooks/post-launch.d" in
+            let project_dir =
+              Filename.concat dir "project/.epi/hooks/post-launch.d"
+            in
             mkdir_p user_dir;
             mkdir_p project_dir;
             write_script (Filename.concat user_dir "01-user.sh");
@@ -229,20 +284,27 @@ let tests =
             Fun.protect
               ~finally:(fun () ->
                 (match old_xdg with
-                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
-                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                | None -> Unix.putenv "XDG_CONFIG_HOME" "");
                 Sys.chdir old_cwd)
               (fun () ->
-                let scripts = Hooks.discover ~instance_name:"default"
-                    ~nix_hooks:[nix_hook] "post-launch" in
+                let scripts =
+                  Hooks.discover ~instance_name:"default"
+                    ~nix_hooks:[ nix_hook ] "post-launch"
+                in
                 Alcotest.(check int) "count" 3 (List.length scripts);
-                Alcotest.(check bool) "user first" true
+                Alcotest.(check bool)
+                  "user first" true
                   (String.ends_with ~suffix:"01-user.sh" (List.nth scripts 0));
-                Alcotest.(check bool) "project second" true
+                Alcotest.(check bool)
+                  "project second" true
                   (String.ends_with ~suffix:"02-project.sh" (List.nth scripts 1));
-                Alcotest.(check bool) "nix last" true
+                Alcotest.(check bool)
+                  "nix last" true
                   (String.ends_with ~suffix:"nix-hook.sh" (List.nth scripts 2)))));
-    Alcotest.test_case "discover: nix-config hooks work with no file-based hooks" `Quick (fun () ->
+    Alcotest.test_case
+      "discover: nix-config hooks work with no file-based hooks" `Quick
+      (fun () ->
         with_temp_dir "hooks-nix-only" (fun dir ->
             let nix_hook = Filename.concat dir "nix-hook.sh" in
             write_script nix_hook;
@@ -253,13 +315,16 @@ let tests =
             Fun.protect
               ~finally:(fun () ->
                 (match old_xdg with
-                 | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
-                 | None -> Unix.putenv "XDG_CONFIG_HOME" "");
+                | Some v -> Unix.putenv "XDG_CONFIG_HOME" v
+                | None -> Unix.putenv "XDG_CONFIG_HOME" "");
                 Sys.chdir old_cwd)
               (fun () ->
-                let scripts = Hooks.discover ~instance_name:"default"
-                    ~nix_hooks:[nix_hook] "post-launch" in
+                let scripts =
+                  Hooks.discover ~instance_name:"default"
+                    ~nix_hooks:[ nix_hook ] "post-launch"
+                in
                 Alcotest.(check int) "count" 1 (List.length scripts);
-                Alcotest.(check bool) "is nix hook" true
+                Alcotest.(check bool)
+                  "is nix hook" true
                   (String.ends_with ~suffix:"nix-hook.sh" (List.hd scripts)))));
   ]

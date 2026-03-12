@@ -3,8 +3,8 @@ open Mock_runtime
 
 let tests ~bin =
   [
-    Alcotest.test_case "stop clears runtime and reports success"
-      `Quick (fun () ->
+    Alcotest.test_case "stop clears runtime and reports success" `Quick
+      (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
@@ -22,27 +22,27 @@ let tests ~bin =
                 in
                 assert_success ~context:"stop" down_result;
                 let entry_after = find_state_runtime ~state_dir "stop-test" in
-                (match entry_after with
+                match entry_after with
                 | None -> ()
-                | _ ->
-                    fail
-                      "expected runtime to be cleared after stop"))));
-    Alcotest.test_case "pre-stop hook runs before stopping"
-      `Quick (fun () ->
+                | _ -> fail "expected runtime to be cleared after stop")));
+    Alcotest.test_case "pre-stop hook runs before stopping" `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 with_temp_dir "epi-hooks" (fun hooks_dir ->
-                    let hook_point_dir = Filename.concat hooks_dir "epi/hooks/pre-stop.d" in
+                    let hook_point_dir =
+                      Filename.concat hooks_dir "epi/hooks/pre-stop.d"
+                    in
                     let rec mkdir_p path =
                       if path = "." || path = "/" then ()
                       else if Sys.file_exists path then ()
-                      else (mkdir_p (Filename.dirname path); Unix.mkdir path 0o755)
+                      else (
+                        mkdir_p (Filename.dirname path);
+                        Unix.mkdir path 0o755)
                     in
                     mkdir_p hook_point_dir;
                     let marker = Filename.concat hooks_dir "pre-stop-ran" in
                     let hook_script = Filename.concat hook_point_dir "mark" in
-                    write_file hook_script
-                      ("#!/bin/sh\ntouch " ^ marker ^ "\n");
+                    write_file hook_script ("#!/bin/sh\ntouch " ^ marker ^ "\n");
                     make_executable hook_script;
                     let extra_env =
                       ("XDG_CONFIG_HOME", hooks_dir) :: extra_env
