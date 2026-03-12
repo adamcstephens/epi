@@ -20,6 +20,9 @@ val save_mounts : string -> string list -> unit
 val load_mounts : string -> string list
 val set : instance_name:string -> target:string -> unit
 
+val set_launching :
+  instance_name:string -> target:string -> unit_id:string -> unit
+
 val set_provisioned :
   instance_name:string -> target:string -> runtime:runtime -> unit
 
