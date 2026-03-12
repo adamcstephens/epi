@@ -85,7 +85,65 @@ let with_mock_env dir f =
     \  prev=\"$arg\"\n\
      done\n\
      exec sleep 30\n";
-  List.iter (fun p -> Unix.chmod p 0o755) [resolver; cloud_hypervisor; xorriso; passt];
+  let mock_systemd_dir = Filename.concat dir "mock-systemd" in
+  Unix.mkdir mock_systemd_dir 0o755;
+  let systemd_run = Filename.concat dir "systemd-run.sh" in
+  write_file systemd_run
+    ("#!/usr/bin/env sh\n\
+      UNIT=\"\"\n\
+      for arg in \"$@\"; do\n\
+     \  case \"$arg\" in\n\
+     \    --unit=*) UNIT=\"${arg#--unit=}\" ;;\n\
+     \  esac\n\
+      done\n\
+      while [ \"$1\" != \"--\" ] && [ $# -gt 0 ]; do shift; done\n\
+      shift\n\
+      \"$@\" >/dev/null 2>&1 &\n\
+      PID=$!\n\
+      if [ -n \"$UNIT\" ]; then\n\
+     \  echo \"$PID\" > \"" ^ mock_systemd_dir ^ "/$UNIT.pid\"\n\
+      fi\n\
+      exit 0\n");
+  let systemctl = Filename.concat dir "systemctl.sh" in
+  write_file systemctl
+    ("#!/usr/bin/env sh\n\
+      shift\n\
+      ACTION=\"$1\"\n\
+      UNIT=\"$2\"\n\
+      MOCK_DIR=\"" ^ mock_systemd_dir ^ "\"\n\
+      case \"$ACTION\" in\n\
+     \  is-active)\n\
+     \    for f in \"$MOCK_DIR\"/*.pid; do\n\
+     \      [ -f \"$f\" ] || continue\n\
+     \      base=$(basename \"$f\" .pid)\n\
+     \      case \"$UNIT\" in\n\
+     \        *\"$base\"*)\n\
+     \          if kill -0 $(cat \"$f\") 2>/dev/null; then\n\
+     \            echo active\n\
+     \            exit 0\n\
+     \          fi\n\
+     \          ;;\n\
+     \      esac\n\
+     \    done\n\
+     \    echo inactive\n\
+     \    exit 3\n\
+     \    ;;\n\
+     \  stop)\n\
+     \    for f in \"$MOCK_DIR\"/*.pid; do\n\
+     \      [ -f \"$f\" ] || continue\n\
+     \      base=$(basename \"$f\" .pid)\n\
+     \      case \"$UNIT\" in\n\
+     \        *\"$base\"*)\n\
+     \          kill $(cat \"$f\") 2>/dev/null\n\
+     \          rm -f \"$f\"\n\
+     \          ;;\n\
+     \      esac\n\
+     \    done\n\
+     \    exit 0\n\
+     \    ;;\n\
+      esac\n\
+      exit 0\n");
+  List.iter (fun p -> Unix.chmod p 0o755) [resolver; cloud_hypervisor; xorriso; passt; systemd_run; systemctl];
   let cache_dir = Filename.concat dir "cache" in
   Unix.mkdir cache_dir 0o755;
   let state_dir = Filename.concat dir "state" in
@@ -97,10 +155,12 @@ let with_mock_env dir f =
     with_env "EPI_CLOUD_HYPERVISOR_BIN" cloud_hypervisor (fun () ->
       with_env "EPI_XORRISO_BIN" xorriso (fun () ->
         with_env "EPI_PASST_BIN" passt (fun () ->
-          with_env "EPI_CACHE_DIR" cache_dir (fun () ->
-            with_env "EPI_STATE_DIR" state_dir (fun () ->
-              with_env "EPI_SSH_DIR" ssh_dir (fun () ->
-                f ~state_dir ~cache_dir)))))))
+          with_env "EPI_SYSTEMD_RUN_BIN" systemd_run (fun () ->
+            with_env "EPI_SYSTEMCTL_BIN" systemctl (fun () ->
+              with_env "EPI_CACHE_DIR" cache_dir (fun () ->
+                with_env "EPI_STATE_DIR" state_dir (fun () ->
+                  with_env "EPI_SSH_DIR" ssh_dir (fun () ->
+                    f ~state_dir ~cache_dir)))))))))
 
 let stop_instance instance_name =
   match Instance_store.find_runtime instance_name with

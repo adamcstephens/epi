@@ -55,73 +55,38 @@ let tests ~bin =
                   "EPI_PASST_BIN")));
     Alcotest.test_case "is invoked with -t port:22 forwarding argument"
       `Quick (fun () ->
-        with_temp_dir "epi-passt-args-test" (fun dir ->
-            let passt_log = Filename.concat dir "passt-args.log" in
-            let kernel = Filename.concat dir "vmlinuz" in
-            let disk = Filename.concat dir "disk.img" in
-            let initrd = Filename.concat dir "initrd.img" in
-            let resolver = Filename.concat dir "resolver.sh" in
-            let cloud_hypervisor = Filename.concat dir "cloud-hypervisor.sh" in
-            write_file kernel "kernel";
-            write_file disk "disk";
-            write_file initrd "initrd";
-            write_file resolver
-              ("#!/usr/bin/env sh\nprintf '{\"kernel\": \"" ^ kernel
-             ^ "\", \"disk\": \"" ^ disk ^ "\", \"initrd\": \"" ^ initrd
-             ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n");
-            write_file cloud_hypervisor
-              ("#!/usr/bin/env sh\nexec sleep 30\n");
-            let xorriso = Filename.concat dir "xorriso.sh" in
-            write_file xorriso
-              "#!/usr/bin/env sh\n\
-               OUTPUT=\"\"\n\
-               while [ $# -gt 0 ]; do\n\
-              \  case \"$1\" in\n\
-              \    -output) OUTPUT=\"$2\"; shift 2 ;;\n\
-              \    *) shift ;;\n\
-              \  esac\n\
-               done\n\
-               if [ -n \"$OUTPUT\" ]; then echo mock > \"$OUTPUT\"; fi\n\
-               exit 0\n";
-            let passt = Filename.concat dir "passt.sh" in
-            write_file passt
-              ("#!/usr/bin/env sh\n\
-                echo \"$*\" >> \"" ^ passt_log ^ "\"\n\
-                prev=\"\"\n\
-                for arg in \"$@\"; do\n\
-               \  if [ \"$prev\" = \"--socket\" ]; then\n\
-               \    touch \"$arg\"\n\
-               \  fi\n\
-               \  prev=\"$arg\"\n\
-                done\n\
-                exec sleep 30\n");
-            make_executable resolver;
-            make_executable cloud_hypervisor;
-            make_executable xorriso;
-            make_executable passt;
-            let cache_dir = Filename.concat dir "cache" in
-            Unix.mkdir cache_dir 0o755;
-            let extra_env =
-              [
-                ("EPI_TARGET_RESOLVER_CMD", resolver);
-                ("EPI_CLOUD_HYPERVISOR_BIN", cloud_hypervisor);
-                ("EPI_XORRISO_BIN", xorriso);
-                ("EPI_PASST_BIN", passt);
-                ("EPI_MOCK_VM_SLEEP", "30");
-                ("EPI_CACHE_DIR", cache_dir);
-                ("EPI_NO_WAIT", "1");
-              ]
-            in
-            with_state_dir (fun state_dir ->
-                let result =
-                  run_cli_with_env ~bin ~state_dir ~extra_env
-                    [ "launch"; "passt-args"; "--target"; ".#dev" ]
+        with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
+            with_temp_dir "epi-passt-args-test" (fun dir ->
+                let passt_log = Filename.concat dir "passt-args.log" in
+                let passt = Filename.concat dir "passt.sh" in
+                write_file passt
+                  ("#!/usr/bin/env sh\n\
+                    echo \"$*\" >> \"" ^ passt_log ^ "\"\n\
+                    prev=\"\"\n\
+                    for arg in \"$@\"; do\n\
+                   \  if [ \"$prev\" = \"--socket\" ]; then\n\
+                   \    touch \"$arg\"\n\
+                   \  fi\n\
+                   \  prev=\"$arg\"\n\
+                    done\n\
+                    exec sleep 30\n");
+                make_executable passt;
+                let extra_env =
+                  List.filter
+                    (fun (key, _) -> not (String.equal key "EPI_PASST_BIN"))
+                    extra_env
+                  @ [ ("EPI_PASST_BIN", passt) ]
                 in
-                assert_success ~context:"passt args up" result;
-                let passt_args =
-                  if Sys.file_exists passt_log then read_file passt_log
-                  else ""
-                in
-                assert_contains ~context:"passt -t flag" passt_args "-t";
-                assert_contains ~context:"passt :22 target" passt_args ":22")));
+                with_state_dir (fun state_dir ->
+                    let result =
+                      run_cli_with_env ~bin ~state_dir ~extra_env
+                        [ "launch"; "passt-args"; "--target"; ".#dev" ]
+                    in
+                    assert_success ~context:"passt args up" result;
+                    let passt_args =
+                      if Sys.file_exists passt_log then read_file passt_log
+                      else ""
+                    in
+                    assert_contains ~context:"passt -t flag" passt_args "-t";
+                    assert_contains ~context:"passt :22 target" passt_args ":22"))));
   ]

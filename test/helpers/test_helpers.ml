@@ -159,7 +159,10 @@ let with_state_dir f =
 
 let make_executable path = Unix.chmod path 0o755
 
-let systemctl_bin = "/run/current-system/sw/bin/systemctl"
+let systemctl_bin () =
+  match Sys.getenv_opt "EPI_SYSTEMCTL_BIN" with
+  | Some bin -> bin
+  | None -> "/run/current-system/sw/bin/systemctl"
 
 let run_process ~prog ~args =
   let argv = Array.of_list (prog :: args) in
@@ -186,7 +189,7 @@ let escape_unit_name name =
 
 let stop_unit unit_name =
   let status, _, _ =
-    run_process ~prog:systemctl_bin ~args:[ "--user"; "stop"; unit_name ]
+    run_process ~prog:(systemctl_bin ()) ~args:[ "--user"; "stop"; unit_name ]
   in
   status = 0
 
