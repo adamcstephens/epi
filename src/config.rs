@@ -96,7 +96,9 @@ pub fn resolve(
     let target = cli_target
         .map(|s| s.to_string())
         .or(config.target)
-        .ok_or_else(|| anyhow::anyhow!("no target specified (use --target or set in .epi/config.toml)"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("no target specified (use --target or set in .epi/config.toml)")
+        })?;
 
     let mounts = if cli_mounts.is_empty() {
         config.mounts.unwrap_or_default()
@@ -230,9 +232,7 @@ disk_size = "50G"
         );
 
         // CLI target overrides
-        let target = Some(".#fromcli")
-            .map(|s| s.to_string())
-            .or(config.target);
+        let target = Some(".#fromcli").map(|s| s.to_string()).or(config.target);
         assert_eq!(target.unwrap(), ".#fromcli");
 
         // CLI mounts override when non-empty

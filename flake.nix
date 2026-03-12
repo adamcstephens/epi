@@ -67,6 +67,7 @@
                 pkgs.cargo
                 pkgs.rustc
                 pkgs.rust-analyzer
+                pkgs.rustfmt
               ];
             };
 

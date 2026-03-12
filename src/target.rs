@@ -7,9 +7,9 @@ use crate::process;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HooksDescriptor {
-    #[serde(default)]
+    #[serde(default, alias = "post-launch")]
     pub post_launch: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "pre-stop")]
     pub pre_stop: Vec<String>,
 }
 
@@ -25,7 +25,7 @@ pub struct Descriptor {
     pub cpus: u32,
     #[serde(default = "default_memory_mib")]
     pub memory_mib: u32,
-    #[serde(default)]
+    #[serde(default, alias = "configuredUsers")]
     pub configured_users: Vec<String>,
     #[serde(default)]
     pub hooks: HooksDescriptor,
@@ -40,7 +40,7 @@ fn default_cpus() -> u32 {
 }
 
 fn default_memory_mib() -> u32 {
-    512
+    1024
 }
 
 impl Default for HooksDescriptor {
@@ -50,6 +50,23 @@ impl Default for HooksDescriptor {
             pre_stop: vec![],
         }
     }
+}
+
+/// Expand tilde in the flake-ref portion of a target string
+pub fn expand_tilde(target: &str) -> String {
+    if let Some((flake, config)) = target.split_once('#') {
+        if let Some(rest) = flake.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                return format!("{home}/{rest}#{config}");
+            }
+        }
+        if flake == "~" {
+            if let Ok(home) = std::env::var("HOME") {
+                return format!("{home}#{config}");
+            }
+        }
+    }
+    target.to_string()
 }
 
 /// Validate target format: must contain '#'
@@ -91,10 +108,7 @@ pub fn resolve_descriptor(target: &str) -> Result<Descriptor> {
     let canonical = canonicalize(target);
 
     // Check target exists
-    let check = process::run(
-        "nix",
-        &["eval", &canonical, "--apply", "x: true"],
-    )?;
+    let check = process::run("nix", &["eval", &canonical, "--apply", "x: true"])?;
     if !check.success() {
         bail!(
             "target resolution failed for {target} (exit {}): {}",
@@ -256,10 +270,7 @@ mod tests {
 
     #[test]
     fn canonicalize_adds_prefix() {
-        assert_eq!(
-            canonicalize(".#dev"),
-            ".#nixosConfigurations.dev"
-        );
+        assert_eq!(canonicalize(".#dev"), ".#nixosConfigurations.dev");
     }
 
     #[test]
@@ -334,7 +345,7 @@ mod tests {
         let json = r#"{"kernel": "/k", "disk": "/d"}"#;
         let desc: Descriptor = serde_json::from_str(json).unwrap();
         assert_eq!(desc.cpus, 1);
-        assert_eq!(desc.memory_mib, 512);
+        assert_eq!(desc.memory_mib, 1024);
         assert_eq!(desc.cmdline, "console=ttyS0 root=/dev/vda2 ro");
         assert!(desc.initrd.is_none());
         assert!(desc.configured_users.is_empty());
@@ -361,6 +372,32 @@ mod tests {
         assert_eq!(desc.initrd.unwrap(), "/nix/store/abc/initrd");
         assert_eq!(desc.configured_users.len(), 2);
         assert_eq!(desc.hooks.post_launch.len(), 1);
+    }
+
+    #[test]
+    fn descriptor_deserialize_camel_case_aliases() {
+        let json = r#"{
+            "kernel": "/k",
+            "disk": "/d",
+            "configuredUsers": ["root", "admin"],
+            "hooks": {
+                "post-launch": ["/nix/store/hook1"],
+                "pre-stop": ["/nix/store/hook2"]
+            }
+        }"#;
+        let desc: Descriptor = serde_json::from_str(json).unwrap();
+        assert_eq!(desc.configured_users, vec!["root", "admin"]);
+        assert_eq!(desc.hooks.post_launch, vec!["/nix/store/hook1"]);
+        assert_eq!(desc.hooks.pre_stop, vec!["/nix/store/hook2"]);
+    }
+
+    #[test]
+    fn expand_tilde_in_target() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(expand_tilde("~/repo#config"), format!("{home}/repo#config"));
+        assert_eq!(expand_tilde("~#config"), format!("{home}#config"));
+        assert_eq!(expand_tilde(".#config"), ".#config");
+        assert_eq!(expand_tilde("/abs/path#config"), "/abs/path#config");
     }
 
     #[test]

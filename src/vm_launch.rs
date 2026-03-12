@@ -34,14 +34,29 @@ fn launch_vm(
     disk_size: &str,
 ) -> Result<Runtime> {
     let unit_id = process::generate_unit_id();
+    let slice = instance_store::slice_name(instance_name, &unit_id)?;
+
+    let result = launch_vm_inner(instance_name, desc, mounts, disk_size, &unit_id, &slice);
+    if result.is_err() {
+        let _ = process::stop_unit(&slice);
+    }
+    result
+}
+
+fn launch_vm_inner(
+    instance_name: &str,
+    desc: &Descriptor,
+    mounts: &[String],
+    disk_size: &str,
+    unit_id: &str,
+    slice: &str,
+) -> Result<Runtime> {
     let inst_dir = instance_store::ensure_instance_dir(instance_name)?
         .canonicalize()
         .context("canonicalizing instance dir")?;
 
     // Check disk lock
-    if let Some((owner, owner_id)) =
-        instance_store::find_running_owner_by_disk(&desc.disk)?
-    {
+    if let Some((owner, owner_id)) = instance_store::find_running_owner_by_disk(&desc.disk)? {
         bail!(
             "disk {} is locked by instance {owner} (unit {owner_id})",
             desc.disk
@@ -61,26 +76,37 @@ fn launch_vm(
 
     // Generate seed ISO
     let seed_iso = inst_dir.join("epidata.iso");
-    generate_seed_iso(instance_name, &ssh_key_path, mounts, &seed_iso)?;
+    generate_seed_iso(
+        instance_name,
+        &ssh_key_path,
+        mounts,
+        &desc.configured_users,
+        &seed_iso,
+    )?;
 
     // Clean stale sockets
     let serial_socket = inst_dir.join("serial.sock");
-    if serial_socket.exists() { fs::remove_file(&serial_socket)?; }
+    if serial_socket.exists() {
+        fs::remove_file(&serial_socket)?;
+    }
     let serial_socket_str = serial_socket.to_string_lossy().to_string();
 
-    let slice = instance_store::slice_name(instance_name, &unit_id)?;
-    let vm_unit = instance_store::vm_unit_name(instance_name, &unit_id)?;
+    let vm_unit = instance_store::vm_unit_name(instance_name, unit_id)?;
 
     // Start passt for networking
     let passt_unit = format!("epi-{instance_name}_{unit_id}_passt.service");
     let passt_socket = inst_dir.join("passt.sock");
-    if passt_socket.exists() { fs::remove_file(&passt_socket)?; }
+    if passt_socket.exists() {
+        fs::remove_file(&passt_socket)?;
+    }
     start_passt(
         &passt_unit,
-        &slice,
+        slice,
         &passt_socket.to_string_lossy(),
         ssh_port,
     )?;
+
+    let mut helper_units = vec![passt_unit.clone()];
 
     // Start virtiofsd for each mount
     let mut fs_args: Vec<String> = vec![];
@@ -89,21 +115,22 @@ fn launch_vm(
         if !mount_dir.is_dir() {
             bail!("mount path is not a directory: {mount_path}");
         }
-        let abs_mount = mount_dir.canonicalize()
+        let abs_mount = mount_dir
+            .canonicalize()
             .with_context(|| format!("canonicalizing mount path: {mount_path}"))?;
         let vfsd_unit = format!("epi-{instance_name}_{unit_id}_virtiofsd{i}.service");
         let vfsd_socket = inst_dir.join(format!("virtiofsd-{i}.sock"));
-        if vfsd_socket.exists() { fs::remove_file(&vfsd_socket)?; }
+        if vfsd_socket.exists() {
+            fs::remove_file(&vfsd_socket)?;
+        }
         start_virtiofsd(
             &vfsd_unit,
-            &slice,
+            slice,
             &vfsd_socket.to_string_lossy(),
             &abs_mount.to_string_lossy(),
         )?;
-        fs_args.push(format!(
-            "tag=hostfs-{i},socket={}",
-            vfsd_socket.display()
-        ));
+        helper_units.push(vfsd_unit);
+        fs_args.push(format!("tag=hostfs-{i},socket={}", vfsd_socket.display()));
     }
 
     // Build cloud-hypervisor command
@@ -112,18 +139,30 @@ fn launch_vm(
     let mem_arg = format!("size={}M,shared=on", desc.memory_mib);
     let cpu_arg = format!("boot={}", desc.cpus);
     let serial_arg = format!("socket={serial_socket_str}");
-    let net_arg = format!("vhost_user=true,socket={},vhost_mode=client", passt_socket.display());
+    let net_arg = format!(
+        "vhost_user=true,socket={},vhost_mode=client",
+        passt_socket.display()
+    );
     let cmdline = &desc.cmdline;
 
     let mut ch_args: Vec<String> = vec![
-        "--kernel".to_string(), desc.kernel.clone(),
-        "--disk".to_string(), format!("path={disk_str},image_type=qcow2,backing_files=on"), format!("path={seed_str},readonly=on"),
-        "--cpus".to_string(), cpu_arg,
-        "--memory".to_string(), mem_arg,
-        "--serial".to_string(), serial_arg,
-        "--console".to_string(), "off".to_string(),
-        "--cmdline".to_string(), cmdline.clone(),
-        "--net".to_string(), net_arg,
+        "--kernel".to_string(),
+        desc.kernel.clone(),
+        "--disk".to_string(),
+        format!("path={disk_str},image_type=qcow2,backing_files=on"),
+        format!("path={seed_str},readonly=on"),
+        "--cpus".to_string(),
+        cpu_arg,
+        "--memory".to_string(),
+        mem_arg,
+        "--serial".to_string(),
+        serial_arg,
+        "--console".to_string(),
+        "off".to_string(),
+        "--cmdline".to_string(),
+        cmdline.clone(),
+        "--net".to_string(),
+        net_arg,
     ];
 
     if let Some(ref initrd) = desc.initrd {
@@ -138,11 +177,19 @@ fn launch_vm(
 
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
+    // Generate ExecStopPost commands to stop helper units when VM exits
+    let systemctl = process::systemctl_bin();
+    let exec_stop_posts: Vec<String> = helper_units
+        .iter()
+        .map(|u| format!("{systemctl} --user stop {u}"))
+        .collect();
+    let exec_stop_post_refs: Vec<&str> = exec_stop_posts.iter().map(|s| s.as_str()).collect();
+
     // Launch VM as systemd service
     let result = process::run_service(
         &vm_unit,
-        &slice,
-        &[], // exec_stop_posts could be added for cleanup
+        slice,
+        &exec_stop_post_refs,
         "cloud-hypervisor",
         &ch_refs,
     )?;
@@ -167,7 +214,7 @@ fn launch_vm(
     }
 
     let runtime = Runtime {
-        unit_id,
+        unit_id: unit_id.to_string(),
         serial_socket: serial_socket_str,
         disk: disk_str,
         ssh_port: Some(ssh_port),
@@ -185,22 +232,27 @@ pub fn wait_for_ssh(ssh_port: u16, ssh_key_path: &str, timeout_seconds: u64) -> 
 
     loop {
         if start.elapsed() >= timeout {
-            bail!(
-                "SSH not reachable after {timeout_seconds}s — instance may still be booting"
-            );
+            bail!("SSH not reachable after {timeout_seconds}s — instance may still be booting");
         }
 
         let port_str = ssh_port.to_string();
         let out = process::run(
             "ssh",
             &[
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "IdentitiesOnly=yes",
-                "-o", "ConnectTimeout=5",
-                "-i", ssh_key_path,
-                "-p", &port_str,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-i",
+                ssh_key_path,
+                "-p",
+                &port_str,
                 &target,
                 "true",
             ],
@@ -225,9 +277,12 @@ fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -
             "qemu-img",
             &[
                 "create",
-                "-f", "qcow2",
-                "-b", source,
-                "-F", "raw",
+                "-f",
+                "qcow2",
+                "-b",
+                source,
+                "-F",
+                "raw",
                 &dest.to_string_lossy(),
             ],
         )?;
@@ -239,15 +294,41 @@ fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -
     }
 
     // Resize if needed
-    let out = process::run(
-        "qemu-img",
-        &["resize", &dest.to_string_lossy(), disk_size],
-    )?;
+    let dest_str = dest.to_string_lossy();
+    let out = process::run("qemu-img", &["resize", &dest_str, disk_size])?;
     if !out.success() {
         bail!("qemu-img resize failed: {}", out.stderr);
     }
 
+    // Grow GPT partition table to fill resized disk
+    grow_partition(&dest_str);
+
     Ok(())
+}
+
+fn grow_partition(path: &str) {
+    let result = process::run(
+        "sgdisk",
+        &[
+            "-e",
+            "-d",
+            "1",
+            "-n",
+            "1:0:0",
+            "-t",
+            "1:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
+            path,
+        ],
+    );
+    match result {
+        Ok(out) if !out.success() => {
+            eprintln!("vm: sgdisk partition grow failed: {}", out.stderr);
+        }
+        Err(e) => {
+            eprintln!("vm: sgdisk partition grow failed: {e}");
+        }
+        _ => {}
+    }
 }
 
 fn generate_ssh_key(path: &std::path::Path) -> Result<()> {
@@ -257,9 +338,12 @@ fn generate_ssh_key(path: &std::path::Path) -> Result<()> {
     let out = process::run(
         "ssh-keygen",
         &[
-            "-t", "ed25519",
-            "-f", &path.to_string_lossy(),
-            "-N", "",
+            "-t",
+            "ed25519",
+            "-f",
+            &path.to_string_lossy(),
+            "-N",
+            "",
             "-q",
         ],
     )?;
@@ -279,6 +363,7 @@ fn generate_seed_iso(
     instance_name: &str,
     ssh_key_path: &std::path::Path,
     mounts: &[String],
+    configured_users: &[String],
     iso_path: &std::path::Path,
 ) -> Result<()> {
     let staging = iso_path.parent().unwrap().join("epidata");
@@ -293,13 +378,17 @@ fn generate_seed_iso(
 
     // Build epi.json
     let username = std::env::var("USER").unwrap_or_else(|_| "epi".to_string());
+    let mut user_obj = serde_json::json!({
+        "name": username,
+        "ssh_authorized_keys": [pub_key]
+    });
+    if !configured_users.contains(&username) {
+        let uid = nix::unistd::getuid().as_raw();
+        user_obj["uid"] = serde_json::json!(uid);
+    }
     let epi_json = serde_json::json!({
         "hostname": instance_name,
-        "user": {
-            "name": username,
-            "uid": 1000,
-            "ssh_authorized_keys": [pub_key]
-        },
+        "user": user_obj,
         "mounts": mounts
     });
 
@@ -323,10 +412,14 @@ fn generate_seed_iso(
     let out = process::run(
         "xorriso",
         &[
-            "-as", "mkisofs",
-            "-o", &iso_path.to_string_lossy(),
-            "-V", "epidata",
-            "-R", "-J",
+            "-as",
+            "mkisofs",
+            "-o",
+            &iso_path.to_string_lossy(),
+            "-V",
+            "epidata",
+            "-R",
+            "-J",
             &staging.to_string_lossy(),
         ],
     )?;
@@ -340,12 +433,7 @@ fn generate_seed_iso(
     Ok(())
 }
 
-fn start_passt(
-    unit_name: &str,
-    slice: &str,
-    socket_path: &str,
-    ssh_port: u16,
-) -> Result<()> {
+fn start_passt(unit_name: &str, slice: &str, socket_path: &str, ssh_port: u16) -> Result<()> {
     let tcp_fwd = format!("{ssh_port}:22");
     let out = process::run_helper(
         unit_name,
@@ -354,8 +442,10 @@ fn start_passt(
         &[
             "--foreground",
             "--vhost-user",
-            "--socket-path", socket_path,
-            "--tcp-ports", &tcp_fwd,
+            "--socket-path",
+            socket_path,
+            "--tcp-ports",
+            &tcp_fwd,
         ],
     )?;
     if !out.success() {
@@ -376,8 +466,10 @@ fn start_virtiofsd(
         slice,
         "virtiofsd",
         &[
-            "--socket-path", socket_path,
-            "--shared-dir", shared_dir,
+            "--socket-path",
+            socket_path,
+            "--shared-dir",
+            shared_dir,
             "--announce-submounts",
         ],
     )?;

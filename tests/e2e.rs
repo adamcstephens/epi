@@ -60,12 +60,18 @@ fn ssh_exec(runtime: &instance_store::Runtime, cmd: &str) -> process::Output {
     process::run(
         "ssh",
         &[
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-            "-o", "BatchMode=yes",
-            "-i", &runtime.ssh_key_path,
-            "-p", &port,
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            "BatchMode=yes",
+            "-i",
+            &runtime.ssh_key_path,
+            "-p",
+            &port,
             "root@127.0.0.1",
             "--",
             cmd,
@@ -193,10 +199,7 @@ fn e2e_hooks() {
 
     // Set up a project-level post-launch hook
     let hooks_dir = TempDir::new().unwrap();
-    let hook_dir = hooks_dir
-        .path()
-        .join("post-launch.d")
-        .join(&name);
+    let hook_dir = hooks_dir.path().join("post-launch.d").join(&name);
     fs::create_dir_all(&hook_dir).unwrap();
 
     let log_file = hooks_dir.path().join("hook.log");
