@@ -4,6 +4,14 @@ use std::os::unix::process::CommandExt;
 
 use epi::{config, console, hooks, instance_store, process, target, vm_launch};
 
+fn ssh_user() -> String {
+    std::env::var("USER").unwrap_or_else(|_| "user".to_string())
+}
+
+fn ssh_target() -> String {
+    format!("{}@127.0.0.1", ssh_user())
+}
+
 /// Manage development VM instances from Nix flake targets.
 #[derive(Parser)]
 #[command(name = "epi", version)]
@@ -270,7 +278,7 @@ fn cmd_launch(
                 instance_name: instance.to_string(),
                 ssh_port,
                 ssh_key_path: ssh_key_path.clone(),
-                ssh_user: "root".to_string(),
+                ssh_user: ssh_user(),
                 state_dir: instance_store::state_dir().to_string_lossy().to_string(),
             };
             hooks::execute(&env, &hook_scripts)?;
@@ -342,7 +350,7 @@ fn cmd_stop(instance: &str) -> Result<()> {
                         instance_name: instance.to_string(),
                         ssh_port,
                         ssh_key_path: rt.ssh_key_path.clone(),
-                        ssh_user: "root".to_string(),
+                        ssh_user: ssh_user(),
                         state_dir: instance_store::state_dir().to_string_lossy().to_string(),
                     };
                     hooks::execute(&env, &hook_scripts)?;
@@ -449,7 +457,7 @@ fn cmd_ssh(instance: &str) -> Result<()> {
             "-o", "LogLevel=ERROR",
             "-i", &runtime.ssh_key_path,
             "-p", &ssh_port.to_string(),
-            "root@127.0.0.1",
+            &ssh_target(),
         ])
         .exec();
 
@@ -475,7 +483,7 @@ fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
         "-o".to_string(), "LogLevel=ERROR".to_string(),
         "-i".to_string(), runtime.ssh_key_path.clone(),
         "-p".to_string(), ssh_port.to_string(),
-        "root@127.0.0.1".to_string(),
+        ssh_target(),
         "--".to_string(),
     ];
     args.extend_from_slice(command);

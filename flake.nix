@@ -50,9 +50,6 @@
 
         perSystem =
           { pkgs, ... }:
-          let
-            ocamlPackages = pkgs.ocaml-ng.ocamlPackages_latest;
-          in
           {
             devShells.default = pkgs.mkShell {
               packages = [
@@ -69,15 +66,8 @@
 
                 pkgs.cargo
                 pkgs.rustc
-              ]
-              ++ (with ocamlPackages; [
-                dune_3
-                ocaml
-                ocamlformat
-                ocaml-lsp
-                odig
-                utop
-              ]);
+                pkgs.rust-analyzer
+              ];
             };
 
             packages = rec {

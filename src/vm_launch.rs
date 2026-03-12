@@ -34,7 +34,9 @@ fn launch_vm(
     disk_size: &str,
 ) -> Result<Runtime> {
     let unit_id = process::generate_unit_id();
-    let inst_dir = instance_store::ensure_instance_dir(instance_name)?;
+    let inst_dir = instance_store::ensure_instance_dir(instance_name)?
+        .canonicalize()
+        .context("canonicalizing instance dir")?;
 
     // Check disk lock
     if let Some((owner, owner_id)) =
@@ -61,8 +63,9 @@ fn launch_vm(
     let seed_iso = inst_dir.join("epidata.iso");
     generate_seed_iso(instance_name, &ssh_key_path, mounts, &seed_iso)?;
 
-    // Serial socket
+    // Clean stale sockets
     let serial_socket = inst_dir.join("serial.sock");
+    if serial_socket.exists() { fs::remove_file(&serial_socket)?; }
     let serial_socket_str = serial_socket.to_string_lossy().to_string();
 
     let slice = instance_store::slice_name(instance_name, &unit_id)?;
@@ -71,6 +74,7 @@ fn launch_vm(
     // Start passt for networking
     let passt_unit = format!("epi-{instance_name}_{unit_id}_passt.service");
     let passt_socket = inst_dir.join("passt.sock");
+    if passt_socket.exists() { fs::remove_file(&passt_socket)?; }
     start_passt(
         &passt_unit,
         &slice,
@@ -81,16 +85,20 @@ fn launch_vm(
     // Start virtiofsd for each mount
     let mut fs_args: Vec<String> = vec![];
     for (i, mount_path) in mounts.iter().enumerate() {
-        if !Path::new(mount_path).is_dir() {
+        let mount_dir = Path::new(mount_path);
+        if !mount_dir.is_dir() {
             bail!("mount path is not a directory: {mount_path}");
         }
+        let abs_mount = mount_dir.canonicalize()
+            .with_context(|| format!("canonicalizing mount path: {mount_path}"))?;
         let vfsd_unit = format!("epi-{instance_name}_{unit_id}_virtiofsd{i}.service");
         let vfsd_socket = inst_dir.join(format!("virtiofsd-{i}.sock"));
+        if vfsd_socket.exists() { fs::remove_file(&vfsd_socket)?; }
         start_virtiofsd(
             &vfsd_unit,
             &slice,
             &vfsd_socket.to_string_lossy(),
-            mount_path,
+            &abs_mount.to_string_lossy(),
         )?;
         fs_args.push(format!(
             "tag=hostfs-{i},socket={}",
@@ -101,19 +109,19 @@ fn launch_vm(
     // Build cloud-hypervisor command
     let disk_str = disk_path.to_string_lossy().to_string();
     let seed_str = seed_iso.to_string_lossy().to_string();
-    let mem_arg = format!("size={}M", desc.memory_mib);
+    let mem_arg = format!("size={}M,shared=on", desc.memory_mib);
     let cpu_arg = format!("boot={}", desc.cpus);
     let serial_arg = format!("socket={serial_socket_str}");
-    let net_arg = format!("vhost_user=true,socket={}", passt_socket.display());
+    let net_arg = format!("vhost_user=true,socket={},vhost_mode=client", passt_socket.display());
     let cmdline = &desc.cmdline;
 
     let mut ch_args: Vec<String> = vec![
         "--kernel".to_string(), desc.kernel.clone(),
-        "--disk".to_string(), format!("path={disk_str}"),
-        "--disk".to_string(), format!("path={seed_str},readonly=on"),
+        "--disk".to_string(), format!("path={disk_str},image_type=qcow2,backing_files=on"), format!("path={seed_str},readonly=on"),
         "--cpus".to_string(), cpu_arg,
         "--memory".to_string(), mem_arg,
         "--serial".to_string(), serial_arg,
+        "--console".to_string(), "off".to_string(),
         "--cmdline".to_string(), cmdline.clone(),
         "--net".to_string(), net_arg,
     ];
@@ -123,9 +131,9 @@ fn launch_vm(
         ch_args.push(initrd.clone());
     }
 
-    for fs in &fs_args {
+    if !fs_args.is_empty() {
         ch_args.push("--fs".to_string());
-        ch_args.push(fs.clone());
+        ch_args.extend(fs_args);
     }
 
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
@@ -150,7 +158,12 @@ fn launch_vm(
     // Brief pause to catch immediate exits
     std::thread::sleep(Duration::from_millis(150));
     if !process::unit_is_active(&vm_unit)? {
-        bail!("VM exited immediately after launch — check console-log for details");
+        let journal = process::journal_for_unit(&vm_unit).unwrap_or_default();
+        if journal.is_empty() {
+            bail!("VM exited immediately after launch (no journal output)");
+        } else {
+            bail!("VM exited immediately after launch:\n{journal}");
+        }
     }
 
     let runtime = Runtime {
@@ -167,6 +180,8 @@ fn launch_vm(
 pub fn wait_for_ssh(ssh_port: u16, ssh_key_path: &str, timeout_seconds: u64) -> Result<()> {
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(timeout_seconds);
+    let username = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+    let target = format!("{username}@127.0.0.1");
 
     loop {
         if start.elapsed() >= timeout {
@@ -182,10 +197,11 @@ pub fn wait_for_ssh(ssh_port: u16, ssh_key_path: &str, timeout_seconds: u64) -> 
                 "-o", "BatchMode=yes",
                 "-o", "StrictHostKeyChecking=no",
                 "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "ConnectTimeout=2",
+                "-o", "IdentitiesOnly=yes",
+                "-o", "ConnectTimeout=5",
                 "-i", ssh_key_path,
                 "-p", &port_str,
-                "root@127.0.0.1",
+                &target,
                 "true",
             ],
         )?;
@@ -336,6 +352,7 @@ fn start_passt(
         slice,
         "passt",
         &[
+            "--foreground",
             "--vhost-user",
             "--socket-path", socket_path,
             "--tcp-ports", &tcp_fwd,
@@ -344,8 +361,7 @@ fn start_passt(
     if !out.success() {
         bail!("failed to start passt: {}", out.stderr);
     }
-    // Brief wait for socket creation
-    std::thread::sleep(Duration::from_millis(200));
+    wait_for_socket(socket_path, 2000)?;
     Ok(())
 }
 
@@ -368,8 +384,20 @@ fn start_virtiofsd(
     if !out.success() {
         bail!("failed to start virtiofsd: {}", out.stderr);
     }
-    std::thread::sleep(Duration::from_millis(100));
+    wait_for_socket(socket_path, 2000)?;
     Ok(())
+}
+
+fn wait_for_socket(path: &str, max_wait_ms: u64) -> Result<()> {
+    let step = Duration::from_millis(50);
+    let deadline = std::time::Instant::now() + Duration::from_millis(max_wait_ms);
+    while std::time::Instant::now() < deadline {
+        if Path::new(path).exists() {
+            return Ok(());
+        }
+        std::thread::sleep(step);
+    }
+    bail!("socket did not appear: {path}");
 }
 
 /// Stop all units for an instance
