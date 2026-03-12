@@ -125,6 +125,14 @@ pub fn run_service(
     run(&systemd_run_bin(), &refs)
 }
 
+pub fn journal_for_unit(unit_name: &str) -> Result<String> {
+    let out = run(
+        "journalctl",
+        &["--user", "--unit", unit_name, "--no-pager", "--output=cat"],
+    )?;
+    Ok(out.stdout)
+}
+
 pub fn unit_is_active(unit_name: &str) -> Result<bool> {
     let out = run(&systemctl_bin(), &["--user", "is-active", unit_name])?;
     Ok(out.stdout == "active")

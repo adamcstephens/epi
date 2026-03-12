@@ -1,15 +1,11 @@
 ## Code style
-- Follow ocaml-conventions skill
 - Avoid abstractions
 - Avoid wrapping single expressions in standalone functions
 - Prefer explicit namespace references
-- Prefer `result` or `option` over bare `unit` return types at module boundaries (`.mli` files)
-- Never return `unit` from I/O functions that can fail
 - Format code with `just format`
 
 ## Dependencies
-- OCaml deps are in `_build` — read code from there, not via ocamlfind or the web
-- Never pull OCaml deps from nixpkgs, only use dune pkg
+- Rust deps are in `.cargo-home` — read code from there for correct versions without needing the internet.
 
 ## Testing
 - Always execute red/green TDD
@@ -42,7 +38,5 @@
 - Created at `.worktrees/<name>/`
 - Must create from HEAD if .jj directory exists
 - Must create a branch on initialization
-- Always pass `--root .` to dune commands (build, exec, test, pkg lock)
-  - Without it, dune finds the outermost `dune-workspace` and fails
 - Build, explore, and run commands in the worktree directory — never the parent
 - Search/read files using the worktree path
