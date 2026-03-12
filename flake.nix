@@ -87,15 +87,7 @@
                 inherit epi-unwrapped;
               };
 
-              epi-unwrapped = pkgs.pkgsMusl.callPackage ./nix/package.nix {
-                ocamlPackages = pkgs.pkgsMusl.ocaml-ng.ocamlPackages_latest;
-                inherit (pkgs)
-                  curl
-                  fetchurl
-                  makeSetupHook
-                  writeText
-                  ;
-              };
+              epi-unwrapped = pkgs.callPackage ./nix/rust-package.nix { };
             };
           };
       }
