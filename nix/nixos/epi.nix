@@ -28,12 +28,11 @@ let
       EPIDATA=$(blkid -L epidata 2>/dev/null) || exit 0
       [ -b "$EPIDATA" ] || exit 0
 
-      TMPDIR=$(mktemp -d)
-      trap 'umount "$TMPDIR" 2>/dev/null || true; rmdir "$TMPDIR" 2>/dev/null || true' EXIT
+      MOUNT_DIR="/run/epi-init/epidata"
+      mkdir -p "$MOUNT_DIR"
+      mount -o ro "$EPIDATA" "$MOUNT_DIR" || exit 0
 
-      mount -o ro "$EPIDATA" "$TMPDIR" || exit 0
-
-      EPI_JSON="$TMPDIR/epi.json"
+      EPI_JSON="$MOUNT_DIR/epi.json"
       [ -f "$EPI_JSON" ] || exit 0
 
       # Read fields from epi.json
@@ -69,26 +68,53 @@ let
         mount -t virtiofs "hostfs-$i" "$MOUNT_PATH"
         chown "$USERNAME:" "$MOUNT_PATH"
       done
+    '';
+  };
+  epiInitHooks = pkgs.writeShellApplication {
+    name = "epi-init-hooks";
 
-      # Guest hooks: run on first boot only
+    bashOptions = [
+      "errexit"
+      "pipefail"
+    ];
+
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.util-linux
+      pkgs.jq
+    ];
+
+    text = ''
+      export PATH="/run/wrappers/bin:$PATH"
+
+      EPI_JSON="/run/epi-init/epidata/epi.json"
+      [ -f "$EPI_JSON" ] || exit 0
+
       HOOK_GUARD="/var/lib/epi-init-done"
-      if [ ! -f "$HOOK_GUARD" ]; then
-        HOOKS_DIR="$TMPDIR/hooks"
-        if [ -d "$HOOKS_DIR" ]; then
-          for hook in "$HOOKS_DIR"/*; do
-            [ -f "$hook" ] && [ -x "$hook" ] || continue
-            echo "epi-init: running guest hook $(basename "$hook")"
-            su - "$USERNAME" -c "$hook" || echo "epi-init: hook $(basename "$hook") failed (exit $?)"
-          done
-        fi
-        ${lib.concatStrings (
-          lib.mapAttrsToList (name: path: ''
-            echo "epi-init: running nix guest hook ${name}"
-            su - "$USERNAME" -c "${path}" || echo "epi-init: nix guest hook ${name} failed (exit $?)"
-          '') cfg.hooks.guest-init
-        )}
-        touch "$HOOK_GUARD"
+      [ ! -f "$HOOK_GUARD" ] || exit 0
+
+      USERNAME=$(jq -r '.user.name' "$EPI_JSON")
+
+      HOOKS_DIR="/run/epi-init/epidata/hooks"
+      if [ -d "$HOOKS_DIR" ]; then
+        for hook in "$HOOKS_DIR"/*; do
+          [ -f "$hook" ] && [ -x "$hook" ] || continue
+          echo "epi-init-hooks: running guest hook $(basename "$hook")"
+          su - "$USERNAME" -c "$hook" || echo "epi-init-hooks: hook $(basename "$hook") failed (exit $?)"
+        done
       fi
+
+      ${lib.concatStrings (
+        lib.mapAttrsToList (name: path: ''
+          echo "epi-init-hooks: running nix guest hook ${name}"
+          su - "$USERNAME" -c "${path}" || echo "epi-init-hooks: nix guest hook ${name} failed (exit $?)"
+        '') cfg.hooks.guest-init
+      )}
+
+      touch "$HOOK_GUARD"
+
+      umount /run/epi-init/epidata 2>/dev/null || true
+      rmdir /run/epi-init/epidata 2>/dev/null || true
     '';
   };
 in
@@ -205,12 +231,29 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = lib.getExe epiInit;
+        RuntimeDirectory = "epi-init";
       };
       after = [ "local-fs.target" ];
       before = [
         "multi-user.target"
         "sshd.service"
       ];
+      wantedBy = [ "multi-user.target" ];
+    };
+
+    systemd.services.epi-init-hooks = {
+      description = "epi guest initialization hooks";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = lib.getExe epiInitHooks;
+      };
+      after = [
+        "epi-init.service"
+        "network-online.target"
+      ];
+      wants = [ "network-online.target" ];
+      before = [ "multi-user.target" ];
       wantedBy = [ "multi-user.target" ];
     };
 

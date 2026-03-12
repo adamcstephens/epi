@@ -6,7 +6,10 @@ let user_hooks_dir () =
   in
   Filename.concat (Filename.concat dir "epi") "hooks"
 
-let project_hooks_dir () = Filename.concat ".epi" "hooks"
+let project_hooks_dir () =
+  match Sys.getenv_opt "EPI_PROJECT_HOOKS_DIR" with
+  | Some dir -> dir
+  | None -> Filename.concat ".epi" "hooks"
 
 let discover_scripts dir =
   if not (Sys.file_exists dir && Sys.is_directory dir) then []
@@ -64,6 +67,7 @@ let execute ~env scripts =
             ("EPI_SSH_KEY", env.ssh_key_path);
             ("EPI_SSH_USER", env.ssh_user);
             ("EPI_STATE_DIR", env.state_dir);
+            ("EPI_BIN", Sys.executable_name);
           ]
       in
       let rec run_all = function
