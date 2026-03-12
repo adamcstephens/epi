@@ -43,3 +43,10 @@ val descriptor_paths_exist : descriptor -> bool
 val cache_dir : unit -> string
 val validate_descriptor_coherence : descriptor -> (unit, string) result
 val load_descriptor_cache : string -> descriptor option
+
+module type Resolver = sig
+  val resolve_descriptor : string -> (descriptor, resolution_error) result
+  val resolve_descriptor_cached : rebuild:bool -> string -> (cache_result, resolution_error) result
+end
+
+module Real_resolver : Resolver

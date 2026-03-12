@@ -12,7 +12,7 @@ let with_cleanup ~instance_name runtime f =
 let provision_and_wait ?(rebuild = false) ~instance_name ~target ~mount_paths () =
   match
     Epi.Vm_launch.provision ~rebuild ~mount_paths ~disk_size:"40G"
-      ~instance_name ~target
+      ~instance_name ~target ()
   with
   | Error err ->
     Alcotest.fail (Epi.Vm_launch.pp_provision_error err)

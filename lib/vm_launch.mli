@@ -24,6 +24,24 @@ type provision_error =
   | Systemd_session_unavailable of { target : string; details : string }
   | Ssh_wait_timeout of { timeout_seconds : int }
 
+module type Runner = sig
+  val launch_vm :
+    mount_paths:string list ->
+    disk_size:string ->
+    instance_name:string ->
+    target:string ->
+    Target.descriptor ->
+    (Instance_store.runtime, provision_error) result
+
+  val wait_for_ssh :
+    ssh_port:int ->
+    ssh_key_path:string ->
+    timeout_seconds:int ->
+    (unit, provision_error) result
+end
+
+module Real_runner : Runner
+
 val generate_epi_json :
   instance_name:string ->
   username:string ->
@@ -49,11 +67,14 @@ val generate_ssh_key :
   (string * string, provision_error) result
 
 val provision :
+  ?resolver:(module Target.Resolver) ->
+  ?runner:(module Runner) ->
   rebuild:bool ->
   mount_paths:string list ->
   disk_size:string ->
   instance_name:string ->
   target:string ->
+  unit ->
   (Instance_store.runtime, provision_error) result
 
 val wait_for_ssh :

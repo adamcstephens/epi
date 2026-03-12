@@ -477,6 +477,22 @@ let launch_detached ~mount_paths ~disk_size ~instance_name ~target (descriptor :
       Ok { Instance_store.unit_id; serial_socket; disk = launch_disk;
            ssh_port = Some ssh_port; ssh_key_path }
 
+module type Runner = sig
+  val launch_vm :
+    mount_paths:string list ->
+    disk_size:string ->
+    instance_name:string ->
+    target:string ->
+    Target.descriptor ->
+    (Instance_store.runtime, provision_error) result
+
+  val wait_for_ssh :
+    ssh_port:int ->
+    ssh_key_path:string ->
+    timeout_seconds:int ->
+    (unit, provision_error) result
+end
+
 let wait_for_ssh ~ssh_port ~ssh_key_path ~timeout_seconds =
   let username =
     match Sys.getenv_opt "USER" with Some u -> u | None -> "user"
@@ -507,12 +523,19 @@ let wait_for_ssh ~ssh_port ~ssh_key_path ~timeout_seconds =
   in
   loop ()
 
-let provision ~rebuild ~mount_paths ~disk_size ~instance_name ~target =
+module Real_runner : Runner = struct
+  let launch_vm = launch_detached
+  let wait_for_ssh = wait_for_ssh
+end
+
+let provision ?(resolver = (module Target.Real_resolver : Target.Resolver)) ?(runner = (module Real_runner : Runner)) ~rebuild ~mount_paths ~disk_size ~instance_name ~target () =
   let ( let* ) = Result.bind in
+  let module Resolver = (val resolver : Target.Resolver) in
+  let module Runner = (val runner : Runner) in
   let target = Target.canonicalize_target target in
   Printf.printf "vm: resolving target=%s\n%!" target;
   let* descriptor =
-    match Target.resolve_descriptor_cached ~rebuild target with
+    match Resolver.resolve_descriptor_cached ~rebuild target with
     | Error { details; exit_code; _ } ->
         Error (Target_resolution_failed { target; details; exit_code })
     | Ok (Target.Cached descriptor) ->
@@ -527,7 +550,7 @@ let provision ~rebuild ~mount_paths ~disk_size ~instance_name ~target =
     |> Result.map_error (fun details -> Descriptor_validation_failed { target; details })
   in
   Printf.printf "vm: starting VM instance=%s\n%!" instance_name;
-  launch_detached ~mount_paths ~disk_size ~instance_name ~target descriptor
+  Runner.launch_vm ~mount_paths ~disk_size ~instance_name ~target descriptor
 
 let pp_provision_error = function
   | Target_resolution_failed { target; details; exit_code = Some exit_code } ->

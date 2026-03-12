@@ -329,6 +329,11 @@ let descriptor_paths_exist descriptor =
 
 type cache_result = Cached of descriptor | Resolved of descriptor
 
+module type Resolver = sig
+  val resolve_descriptor : string -> (descriptor, resolution_error) result
+  val resolve_descriptor_cached : rebuild:bool -> string -> (cache_result, resolution_error) result
+end
+
 let resolve_descriptor_cached ~rebuild target =
   let path = cache_path target in
   if rebuild && Sys.file_exists path then Sys.remove path;
@@ -341,3 +346,8 @@ let resolve_descriptor_cached ~rebuild target =
       | Ok descriptor ->
           save_descriptor_cache target descriptor;
           Ok (Resolved descriptor))
+
+module Real_resolver : Resolver = struct
+  let resolve_descriptor = resolve_descriptor
+  let resolve_descriptor_cached = resolve_descriptor_cached
+end
