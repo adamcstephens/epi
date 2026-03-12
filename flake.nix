@@ -24,6 +24,8 @@
               (
                 { pkgs, ... }:
                 {
+                  system.stateVersion = "25.11";
+
                   epi.enable = true;
                   epi.hooks.guest-init."00-hello.sh" = pkgs.writeShellScript "hello" ''
                     echo "epi-hook: guest-init hello from nix config"
