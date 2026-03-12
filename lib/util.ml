@@ -23,4 +23,3 @@ let contains text snippet =
       else loop (i + 1)
     in
     loop 0
-

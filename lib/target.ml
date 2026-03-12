@@ -12,10 +12,7 @@ let of_string target =
   | [ _flake_ref; _config_name ] -> Ok target
   | _ -> Error (`Msg "--target must use <flake-ref>#<config-name>")
 
-type hooks_config = {
-  post_launch : string list;
-  pre_stop : string list;
-}
+type hooks_config = { post_launch : string list; pre_stop : string list }
 
 type descriptor = {
   kernel : string;
@@ -30,11 +27,14 @@ type descriptor = {
 
 let default_cmdline = "console=ttyS0 root=/dev/vda2 ro"
 
-
 let descriptor_of_json json =
   let open Yojson.Basic.Util in
-  let str key default = json |> member key |> to_string_option |> Option.value ~default in
-  let int key default = json |> member key |> to_int_option |> Option.value ~default in
+  let str key default =
+    json |> member key |> to_string_option |> Option.value ~default
+  in
+  let int key default =
+    json |> member key |> to_int_option |> Option.value ~default
+  in
   let kernel = str "kernel" "" in
   let disk = str "disk" "" in
   let initrd = json |> member "initrd" |> to_string_option in
@@ -58,8 +58,10 @@ let descriptor_of_json json =
   let hooks =
     match json |> member "hooks" with
     | `Assoc _ as hooks_json ->
-        { post_launch = parse_hook_set hooks_json "post-launch";
-          pre_stop = parse_hook_set hooks_json "pre-stop" }
+        {
+          post_launch = parse_hook_set hooks_json "post-launch";
+          pre_stop = parse_hook_set hooks_json "pre-stop";
+        }
     | _ -> { post_launch = []; pre_stop = [] }
   in
   { kernel; disk; initrd; cmdline; cpus; memory_mib; configured_users; hooks }
@@ -123,9 +125,7 @@ let canonicalize_target target =
 
 let check_target_exists target =
   let result =
-    Process.run ~prog:"nix"
-      ~args:[ "eval"; target; "--apply"; "x: true" ]
-      ()
+    Process.run ~prog:"nix" ~args:[ "eval"; target; "--apply"; "x: true" ] ()
   in
   if result.status <> 0 then
     Error
@@ -140,7 +140,7 @@ let resolve_descriptor target =
   let target = expand_flake_ref_tilde target in
   let target = canonicalize_target target in
   match Sys.getenv_opt "EPI_TARGET_RESOLVER_CMD" with
-  | Some resolver_cmd ->
+  | Some resolver_cmd -> (
       let env = Process.env_with [ ("EPI_TARGET", target) ] in
       let process_result =
         Process.run ~env ~prog:"/bin/sh" ~args:[ "-c"; resolver_cmd ] ()
@@ -154,15 +154,20 @@ let resolve_descriptor target =
                else process_result.stderr);
             exit_code = Some process_result.status;
           }
-      else (
+      else
         match Yojson.Basic.from_string process_result.stdout with
         | json -> Ok (descriptor_of_json json)
         | exception Yojson.Json_error msg ->
-            Error { target; details = "invalid JSON output: " ^ msg; exit_code = None })
+            Error
+              {
+                target;
+                details = "invalid JSON output: " ^ msg;
+                exit_code = None;
+              })
   | None -> (
       match check_target_exists target with
       | Error _ as e -> e
-      | Ok () ->
+      | Ok () -> (
           let process_result =
             Process.run ~prog:"nix"
               ~args:[ "eval"; "--json"; target ^ ".config.epi" ]
@@ -177,11 +182,16 @@ let resolve_descriptor target =
                    else process_result.stderr);
                 exit_code = Some process_result.status;
               }
-          else (
+          else
             match Yojson.Basic.from_string process_result.stdout with
             | json -> Ok (descriptor_of_json json)
             | exception Yojson.Json_error msg ->
-                Error { target; details = "invalid JSON output: " ^ msg; exit_code = None }))
+                Error
+                  {
+                    target;
+                    details = "invalid JSON output: " ^ msg;
+                    exit_code = None;
+                  }))
 
 let build_target_artifact_if_missing ~target ~label =
   match split_target target with
@@ -191,8 +201,7 @@ let build_target_artifact_if_missing ~target ~label =
         match label with
         | "kernel" ->
             flake_ref ^ "#" ^ config_name ^ ".config.system.build.kernel"
-        | "disk" ->
-            flake_ref ^ "#" ^ config_name ^ ".config.system.build.image"
+        | "disk" -> flake_ref ^ "#" ^ config_name ^ ".config.system.build.image"
         | "initrd" ->
             flake_ref ^ "#" ^ config_name
             ^ ".config.system.build.initialRamdisk"
@@ -263,12 +272,14 @@ let validate_descriptor ~target descriptor =
   let ( let* ) = Result.bind in
   let* () = validate_file ~target ~label:"kernel" descriptor.kernel in
   let* () = validate_file ~target ~label:"disk" descriptor.disk in
-  let* () = match descriptor.initrd with
+  let* () =
+    match descriptor.initrd with
     | Some initrd_path -> validate_file ~target ~label:"initrd" initrd_path
     | None -> Ok ()
   in
   if descriptor.cpus <= 0 then Error "missing launch input: cpus must be > 0"
-  else if descriptor.memory_mib <= 0 then Error "missing launch input: memory_mib must be > 0"
+  else if descriptor.memory_mib <= 0 then
+    Error "missing launch input: memory_mib must be > 0"
   else validate_descriptor_coherence descriptor
 
 let cache_dir () =
@@ -296,22 +307,30 @@ let cache_path target =
 let descriptor_to_json descriptor =
   let hooks_fields =
     (match descriptor.hooks.post_launch with
-     | [] -> []
-     | paths -> [("post-launch", `List (List.map (fun s -> `String s) paths))])
+      | [] -> []
+      | paths ->
+          [ ("post-launch", `List (List.map (fun s -> `String s) paths)) ])
     @
-    (match descriptor.hooks.pre_stop with
-     | [] -> []
-     | paths -> [("pre-stop", `List (List.map (fun s -> `String s) paths))])
+    match descriptor.hooks.pre_stop with
+    | [] -> []
+    | paths -> [ ("pre-stop", `List (List.map (fun s -> `String s) paths)) ]
   in
-  `Assoc ([
-    ("kernel", `String descriptor.kernel);
-    ("disk", `String descriptor.disk);
-    ("initrd", match descriptor.initrd with Some s -> `String s | None -> `Null);
-    ("cmdline", `String descriptor.cmdline);
-    ("cpus", `Int descriptor.cpus);
-    ("memory_mib", `Int descriptor.memory_mib);
-    ("configuredUsers", `List (List.map (fun s -> `String s) descriptor.configured_users));
-  ] @ (match hooks_fields with [] -> [] | _ -> [("hooks", `Assoc hooks_fields)]))
+  `Assoc
+    ([
+       ("kernel", `String descriptor.kernel);
+       ("disk", `String descriptor.disk);
+       ( "initrd",
+         match descriptor.initrd with Some s -> `String s | None -> `Null );
+       ("cmdline", `String descriptor.cmdline);
+       ("cpus", `Int descriptor.cpus);
+       ("memory_mib", `Int descriptor.memory_mib);
+       ( "configuredUsers",
+         `List (List.map (fun s -> `String s) descriptor.configured_users) );
+     ]
+    @
+    match hooks_fields with
+    | [] -> []
+    | _ -> [ ("hooks", `Assoc hooks_fields) ])
 
 let save_descriptor_cache target descriptor =
   let path = cache_path target in
@@ -331,7 +350,9 @@ type cache_result = Cached of descriptor | Resolved of descriptor
 
 module type Resolver = sig
   val resolve_descriptor : string -> (descriptor, resolution_error) result
-  val resolve_descriptor_cached : rebuild:bool -> string -> (cache_result, resolution_error) result
+
+  val resolve_descriptor_cached :
+    rebuild:bool -> string -> (cache_result, resolution_error) result
 end
 
 let resolve_descriptor_cached ~rebuild target =

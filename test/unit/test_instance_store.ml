@@ -51,36 +51,37 @@ let tests =
             match Instance_store.find_runtime "roundtrip" with
             | Some r ->
                 Alcotest.(check string) "unit_id" "abcd1234" r.unit_id;
-                Alcotest.(check string) "serial_socket" "/tmp/test.sock"
-                  r.serial_socket;
+                Alcotest.(check string)
+                  "serial_socket" "/tmp/test.sock" r.serial_socket;
                 Alcotest.(check string) "disk" "/tmp/test.img" r.disk;
-                Alcotest.(check (option int)) "ssh_port" (Some 2222)
-                  r.ssh_port;
-                Alcotest.(check string) "ssh_key_path"
-                  "/tmp/test_key" r.ssh_key_path
+                Alcotest.(check (option int)) "ssh_port" (Some 2222) r.ssh_port;
+                Alcotest.(check string)
+                  "ssh_key_path" "/tmp/test_key" r.ssh_key_path
             | None -> Alcotest.fail "expected runtime to be found"));
     Alcotest.test_case "save and load target round-trips" `Quick (fun () ->
         with_state_dir (fun _dir ->
             Instance_store.set ~instance_name:"target-rt" ~target:".#myvm";
             match Instance_store.find "target-rt" with
-            | Some target ->
-                Alcotest.(check string) "target" ".#myvm" target
+            | Some target -> Alcotest.(check string) "target" ".#myvm" target
             | None -> Alcotest.fail "expected target to be found"));
     Alcotest.test_case "list with empty dir returns empty" `Quick (fun () ->
         with_state_dir (fun _dir ->
             let entries = Instance_store.list () in
             Alcotest.(check int) "count" 0 (List.length entries)));
-    Alcotest.test_case "list returns multiple instances sorted" `Quick (fun () ->
+    Alcotest.test_case "list returns multiple instances sorted" `Quick
+      (fun () ->
         with_state_dir (fun _dir ->
             Instance_store.set ~instance_name:"beta" ~target:".#beta";
             Instance_store.set ~instance_name:"alpha" ~target:".#alpha";
             Instance_store.set ~instance_name:"gamma" ~target:".#gamma";
             let entries = Instance_store.list () in
             let names = List.map fst entries in
-            Alcotest.(check (list string)) "sorted"
-              ["alpha"; "beta"; "gamma"] names));
-    Alcotest.test_case "clear_runtime removes runtime but keeps entry"
-      `Quick (fun () ->
+            Alcotest.(check (list string))
+              "sorted"
+              [ "alpha"; "beta"; "gamma" ]
+              names));
+    Alcotest.test_case "clear_runtime removes runtime but keeps entry" `Quick
+      (fun () ->
         with_state_dir (fun _dir ->
             let runtime : Instance_store.runtime =
               {
@@ -107,8 +108,8 @@ let tests =
             match Instance_store.find "remove-me" with
             | None -> ()
             | Some _ -> Alcotest.fail "expected entry to be removed"));
-    Alcotest.test_case "runtime with ssh_port as None round-trips"
-      `Quick (fun () ->
+    Alcotest.test_case "runtime with ssh_port as None round-trips" `Quick
+      (fun () ->
         with_state_dir (fun _dir ->
             let runtime : Instance_store.runtime =
               {
@@ -124,8 +125,8 @@ let tests =
             match Instance_store.find_runtime "none-opts" with
             | Some r ->
                 Alcotest.(check (option int)) "ssh_port" None r.ssh_port;
-                Alcotest.(check string) "ssh_key_path" "/tmp/none_key"
-                  r.ssh_key_path
+                Alcotest.(check string)
+                  "ssh_key_path" "/tmp/none_key" r.ssh_key_path
             | None -> Alcotest.fail "expected runtime to be found"));
     Alcotest.test_case "runtime without ssh_key_path returns None (stale)"
       `Quick (fun () ->
@@ -144,5 +145,7 @@ let tests =
             close_out oc;
             match Instance_store.find_runtime "stale-key" with
             | None -> ()
-            | Some _ -> Alcotest.fail "expected stale runtime without ssh_key_path to return None"));
+            | Some _ ->
+                Alcotest.fail
+                  "expected stale runtime without ssh_key_path to return None"));
   ]

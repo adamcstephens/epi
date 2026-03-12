@@ -25,7 +25,8 @@ let env_with additions =
 let escape_unit_name name =
   let result = run ~prog:"systemd-escape" ~args:[ name ] () in
   if result.status = 0 then Ok result.stdout
-  else Error (Printf.sprintf "systemd-escape failed for %S: %s" name result.stderr)
+  else
+    Error (Printf.sprintf "systemd-escape failed for %S: %s" name result.stderr)
 
 let generate_unit_id () =
   let buf = Buffer.create 16 in
@@ -50,8 +51,7 @@ let systemctl_bin () =
   | None -> "/run/current-system/sw/bin/systemctl"
 
 let setenv_args () =
-  Unix.environment ()
-  |> Array.to_list
+  Unix.environment () |> Array.to_list
   |> List.filter_map (fun entry ->
       match String.index_opt entry '=' with
       | Some _ -> Some ("--setenv=" ^ entry)
@@ -60,12 +60,8 @@ let setenv_args () =
 let run_helper ~unit_name ~slice ~prog ~args () =
   run ~prog:(systemd_run_bin ())
     ~args:
-      ([ "--user"; "--collect";
-         "--unit=" ^ unit_name;
-         "--slice=" ^ slice ]
-       @ setenv_args ()
-       @ [ "--" ]
-       @ (prog :: args))
+      ([ "--user"; "--collect"; "--unit=" ^ unit_name; "--slice=" ^ slice ]
+      @ setenv_args () @ [ "--" ] @ (prog :: args))
     ()
 
 let run_service ~unit_name ~slice ~exec_stop_posts ~prog ~args () =
@@ -74,21 +70,24 @@ let run_service ~unit_name ~slice ~exec_stop_posts ~prog ~args () =
   in
   run ~prog:(systemd_run_bin ())
     ~args:
-      ([ "--user"; "--collect";
+      ([
+         "--user";
+         "--collect";
          "--unit=" ^ unit_name;
          "--slice=" ^ slice;
-         "--property=Type=exec" ]
-       @ stop_props
-       @ setenv_args ()
-       @ [ "--" ]
-       @ (prog :: args))
+         "--property=Type=exec";
+       ]
+      @ stop_props @ setenv_args () @ [ "--" ] @ (prog :: args))
     ()
 
-
 let unit_is_active unit_name =
-  let result = run ~prog:(systemctl_bin ()) ~args:[ "--user"; "is-active"; unit_name ] () in
+  let result =
+    run ~prog:(systemctl_bin ()) ~args:[ "--user"; "is-active"; unit_name ] ()
+  in
   result.status = 0
 
 let stop_unit unit_name =
-  let result = run ~prog:(systemctl_bin ()) ~args:[ "--user"; "stop"; unit_name ] () in
+  let result =
+    run ~prog:(systemctl_bin ()) ~args:[ "--user"; "stop"; unit_name ] ()
+  in
   result.status = 0

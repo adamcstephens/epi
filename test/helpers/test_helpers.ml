@@ -13,20 +13,17 @@ let contains text snippet =
 let read_file path = In_channel.with_open_text path In_channel.input_all
 
 let run_cli_with_env ~bin ~state_dir ~extra_env args =
-  let overrides =
-    ("EPI_STATE_DIR", state_dir) :: extra_env
-  in
-  let override_keys =
-    List.map (fun (key, _) -> key ^ "=") overrides
-  in
+  let overrides = ("EPI_STATE_DIR", state_dir) :: extra_env in
+  let override_keys = List.map (fun (key, _) -> key ^ "=") overrides in
   let base_env =
-    Unix.environment ()
-    |> Array.to_list
+    Unix.environment () |> Array.to_list
     |> List.filter (fun entry ->
-        not (List.exists (fun prefix ->
-            String.length entry >= String.length prefix
-            && String.sub entry 0 (String.length prefix) = prefix)
-          override_keys))
+        not
+          (List.exists
+             (fun prefix ->
+               String.length entry >= String.length prefix
+               && String.sub entry 0 (String.length prefix) = prefix)
+             override_keys))
     |> Array.of_list
   in
   let env_entries =
@@ -77,21 +74,30 @@ let write_state_entry ~state_dir ~instance_name ~target ?unit_id ?serial_socket
     ?disk ?ssh_port ?ssh_key_path () =
   let instance_dir = Filename.concat state_dir instance_name in
   if not (Sys.file_exists instance_dir) then Unix.mkdir instance_dir 0o755;
-  let fields = [("target", `String target)] in
-  let fields = match unit_id with
+  let fields = [ ("target", `String target) ] in
+  let fields =
+    match unit_id with
     | Some id ->
         let rt_fields =
-          [("unit_id", `String id)]
-          @ (match serial_socket with Some s -> [("serial_socket", `String s)] | None -> [])
-          @ (match disk with Some d -> [("disk", `String d)] | None -> [])
-          @ (match ssh_port with Some p -> [("ssh_port", `Int p)] | None -> [])
-          @ (match ssh_key_path with Some p -> [("ssh_key_path", `String p)] | None -> [])
+          [ ("unit_id", `String id) ]
+          @ (match serial_socket with
+            | Some s -> [ ("serial_socket", `String s) ]
+            | None -> [])
+          @ (match disk with Some d -> [ ("disk", `String d) ] | None -> [])
+          @ (match ssh_port with
+            | Some p -> [ ("ssh_port", `Int p) ]
+            | None -> [])
+          @
+          match ssh_key_path with
+          | Some p -> [ ("ssh_key_path", `String p) ]
+          | None -> []
         in
-        fields @ [("runtime", `Assoc rt_fields)]
+        fields @ [ ("runtime", `Assoc rt_fields) ]
     | None -> fields
   in
   let json = `Assoc fields in
-  write_file (Filename.concat instance_dir "state.json")
+  write_file
+    (Filename.concat instance_dir "state.json")
     (Yojson.Basic.pretty_to_string json ^ "\n")
 
 let find_state_runtime ~state_dir instance_name =
@@ -104,13 +110,18 @@ let find_state_runtime ~state_dir instance_name =
     | `Assoc fields -> (
         match List.assoc_opt "runtime" fields with
         | Some (`Assoc rt_fields) ->
-            let get key = match List.assoc_opt key rt_fields with
+            let get key =
+              match List.assoc_opt key rt_fields with
               | Some (`String s) -> Some s
               | Some (`Int i) -> Some (string_of_int i)
               | _ -> None
             in
-            Some (get "unit_id", get "serial_socket", get "disk",
-                  get "ssh_port", get "ssh_key_path")
+            Some
+              ( get "unit_id",
+                get "serial_socket",
+                get "disk",
+                get "ssh_port",
+                get "ssh_key_path" )
         | _ -> None)
     | _ -> None
     | exception Yojson.Json_error _ -> None
@@ -141,21 +152,20 @@ let with_temp_dir prefix f =
       if Sys.is_directory path then (
         Sys.readdir path
         |> Array.iter (fun name -> remove_tree (Filename.concat path name));
-        (try Unix.rmdir path with Unix.Unix_error (Unix.ENOTEMPTY, _, _) ->
+        try Unix.rmdir path
+        with Unix.Unix_error (Unix.ENOTEMPTY, _, _) -> (
           (* A background systemd service may have created files after readdir.
              Re-walk and retry once. *)
           Sys.readdir path
           |> Array.iter (fun name -> remove_tree (Filename.concat path name));
-          (try Unix.rmdir path with Unix.Unix_error _ -> ())))
-      else (try Sys.remove path with Sys_error _ -> ())
+          try Unix.rmdir path with Unix.Unix_error _ -> ()))
+      else try Sys.remove path with Sys_error _ -> ()
   in
   Fun.protect ~finally:(fun () -> remove_tree dir) (fun () -> f dir)
 
 let with_state_dir f =
   with_temp_dir "epi-cli-test" (fun dir ->
-    Fun.protect
-      ~finally:(fun () -> ())
-      (fun () -> f dir))
+      Fun.protect ~finally:(fun () -> ()) (fun () -> f dir))
 
 let make_executable path = Unix.chmod path 0o755
 
@@ -183,7 +193,9 @@ let run_process ~prog ~args =
   (status, stdout, stderr)
 
 let escape_unit_name name =
-  let status, stdout, stderr = run_process ~prog:"systemd-escape" ~args:[ name ] in
+  let status, stdout, stderr =
+    run_process ~prog:"systemd-escape" ~args:[ name ]
+  in
   if status = 0 then stdout
   else failwith (Printf.sprintf "systemd-escape failed for %S: %s" name stderr)
 

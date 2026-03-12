@@ -3,8 +3,7 @@ open Mock_runtime
 
 let tests ~bin =
   [
-    Alcotest.test_case "removes stopped instances from state"
-      `Quick (fun () ->
+    Alcotest.test_case "removes stopped instances from state" `Quick (fun () ->
         with_state_dir (fun state_dir ->
             write_state_entry ~state_dir ~instance_name:"dev-a"
               ~target:".#dev-a" ();
@@ -24,8 +23,9 @@ let tests ~bin =
                     [ "launch"; "dev-a"; "--target"; ".#dev-a" ]
                 in
                 assert_success ~context:"launch for rm test" launch_result;
-                let rejected = run_cli_with_env ~bin ~state_dir ~extra_env
-                  [ "rm"; "dev-a" ] in
+                let rejected =
+                  run_cli_with_env ~bin ~state_dir ~extra_env [ "rm"; "dev-a" ]
+                in
                 assert_failure ~context:"rm running without force" rejected;
                 let _, _, err = rejected in
                 assert_contains ~context:"rm running rejection message" err
@@ -51,8 +51,7 @@ let tests ~bin =
                   "rm: removed instance=dev-a";
                 assert_missing_state_entry ~context:"rm force state cleanup"
                   ~state_dir "dev-a")));
-    Alcotest.test_case "rm stale instance succeeds"
-      `Quick (fun () ->
+    Alcotest.test_case "rm stale instance succeeds" `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let result =
@@ -66,7 +65,8 @@ let tests ~bin =
                   | _ -> fail "expected unit_id in state after up"
                 in
                 (* Stop the VM to make the runtime stale *)
-                ignore (stop_unit (vm_unit_name ~instance_name:"stale-rm" ~unit_id));
+                ignore
+                  (stop_unit (vm_unit_name ~instance_name:"stale-rm" ~unit_id));
                 let rm_result =
                   run_cli_with_env ~bin ~state_dir ~extra_env
                     [ "rm"; "stale-rm" ]

@@ -27,34 +27,39 @@ let with_mock_runtime f =
          \  exit 0\n\
           fi\n\
           if [ \"$EPI_TARGET\" = \".#nixosConfigurations.mutable-disk\" ]; then\n\
-         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ mutable_disk
+         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \""
+       ^ mutable_disk ^ "\", \"initrd\": \"" ^ initrd
+       ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
+         \  exit 0\n\
+          fi\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.custom-cmdline\" ]; \
+          then\n\
+         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
+       ^ "\", \"initrd\": \"" ^ initrd
+       ^ "\", \"cmdline\": \"console=ttyS0 root=/dev/vda1 ro\", \"cpus\": 2, \
+          \"memory_mib\": 1024}'\n\
+         \  exit 0\n\
+          fi\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.owner\" ] || [ \
+          \"$EPI_TARGET\" = \".#nixosConfigurations.qa\" ]; then\n\
+         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
        ^ "\", \"initrd\": \"" ^ initrd
        ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
          \  exit 0\n\
           fi\n\
-          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.custom-cmdline\" ]; then\n\
+          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.user-configured\" ]; \
+          then\n\
          \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
        ^ "\", \"initrd\": \"" ^ initrd
-       ^ "\", \"cmdline\": \"console=ttyS0 root=/dev/vda1 ro\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
-         \  exit 0\n\
-          fi\n\
-          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.owner\" ] || [ \"$EPI_TARGET\" = \".#nixosConfigurations.qa\" ]; then\n\
-         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
-       ^ "\", \"initrd\": \"" ^ initrd
-       ^ "\", \"cpus\": 2, \"memory_mib\": 1024}'\n\
-         \  exit 0\n\
-          fi\n\
-          if [ \"$EPI_TARGET\" = \".#nixosConfigurations.user-configured\" ]; then\n\
-         \  printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"" ^ disk
-       ^ "\", \"initrd\": \"" ^ initrd
-       ^ "\", \"cpus\": 2, \"memory_mib\": 1024, \"configuredUsers\": [\"root\", \"'\"$USER\"'\"]}'\n\
+       ^ "\", \"cpus\": 2, \"memory_mib\": 1024, \"configuredUsers\": \
+          [\"root\", \"'\"$USER\"'\"]}'\n\
          \  exit 0\n\
           fi\n\
           SAFE_TARGET=$(echo \"$EPI_TARGET\" | tr '/:' '__')\n\
-          TARGET_DISK=\"" ^ dir ^ "/disk-${SAFE_TARGET}.img\"\n\
-          cp -n \"" ^ disk ^ "\" \"$TARGET_DISK\" 2>/dev/null || true\n\
-          printf '{\"kernel\": \"" ^ kernel ^ "\", \"disk\": \"'\"$TARGET_DISK\"'\", \"initrd\": \"" ^ initrd
-       ^ "\", \"cpus\": 2, \"memory_mib\": 1536}'\n");
+          TARGET_DISK=\"" ^ dir ^ "/disk-${SAFE_TARGET}.img\"\ncp -n \"" ^ disk
+       ^ "\" \"$TARGET_DISK\" 2>/dev/null || true\nprintf '{\"kernel\": \""
+       ^ kernel ^ "\", \"disk\": \"'\"$TARGET_DISK\"'\", \"initrd\": \""
+       ^ initrd ^ "\", \"cpus\": 2, \"memory_mib\": 1536}'\n");
       write_file cloud_hypervisor
         ("#!/usr/bin/env sh\necho \"$*\" >> \"" ^ launch_log
        ^ "\"\n\
@@ -69,19 +74,19 @@ let with_mock_runtime f =
           exec sleep \"${EPI_MOCK_VM_SLEEP:-30}\"\n");
       let xorriso = Filename.concat dir "xorriso.sh" in
       write_file xorriso
-        ("#!/usr/bin/env sh\n\
-          # Mock xorriso: create a fake ISO file at -output path\n\
-          OUTPUT=\"\"\n\
-          while [ $# -gt 0 ]; do\n\
-         \  case \"$1\" in\n\
-         \    -output) OUTPUT=\"$2\"; shift 2 ;;\n\
-         \    *) shift ;;\n\
-         \  esac\n\
-          done\n\
-          if [ -n \"$OUTPUT\" ]; then\n\
-         \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
-          fi\n\
-          exit 0\n");
+        "#!/usr/bin/env sh\n\
+         # Mock xorriso: create a fake ISO file at -output path\n\
+         OUTPUT=\"\"\n\
+         while [ $# -gt 0 ]; do\n\
+        \  case \"$1\" in\n\
+        \    -output) OUTPUT=\"$2\"; shift 2 ;;\n\
+        \    *) shift ;;\n\
+        \  esac\n\
+         done\n\
+         if [ -n \"$OUTPUT\" ]; then\n\
+        \  echo \"mock-iso-content\" > \"$OUTPUT\"\n\
+         fi\n\
+         exit 0\n";
       let passt = Filename.concat dir "passt.sh" in
       write_file passt
         "#!/usr/bin/env sh\n\
@@ -110,16 +115,13 @@ let with_mock_runtime f =
           \"$@\" >/dev/null 2>&1 &\n\
           PID=$!\n\
           if [ -n \"$UNIT\" ]; then\n\
-         \  echo \"$PID\" > \"" ^ mock_systemd_dir ^ "/$UNIT.pid\"\n\
-          fi\n\
-          exit 0\n");
+         \  echo \"$PID\" > \"" ^ mock_systemd_dir
+       ^ "/$UNIT.pid\"\nfi\nexit 0\n");
       let systemctl = Filename.concat dir "systemctl.sh" in
       write_file systemctl
-        ("#!/usr/bin/env sh\n\
-          shift\n\
-          ACTION=\"$1\"\n\
-          UNIT=\"$2\"\n\
-          MOCK_DIR=\"" ^ mock_systemd_dir ^ "\"\n\
+        ("#!/usr/bin/env sh\nshift\nACTION=\"$1\"\nUNIT=\"$2\"\nMOCK_DIR=\""
+       ^ mock_systemd_dir
+       ^ "\"\n\
           case \"$ACTION\" in\n\
          \  is-active)\n\
          \    for f in \"$MOCK_DIR\"/*.pid; do\n\
@@ -155,7 +157,8 @@ let with_mock_runtime f =
       let virtiofsd = Filename.concat dir "virtiofsd.sh" in
       write_file virtiofsd
         "#!/usr/bin/env sh\n\
-         # Mock virtiofsd: find --socket-path arg, touch the socket file, stay alive\n\
+         # Mock virtiofsd: find --socket-path arg, touch the socket file, stay \
+         alive\n\
          prev=\"\"\n\
          for arg in \"$@\"; do\n\
         \  if [ \"$prev\" = \"--socket-path\" ]; then\n\

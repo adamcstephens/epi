@@ -3,8 +3,7 @@ open Mock_runtime
 
 let tests ~bin =
   [
-    Alcotest.test_case "shows empty and multi-instance state"
-      `Quick (fun () ->
+    Alcotest.test_case "shows empty and multi-instance state" `Quick (fun () ->
         with_mock_runtime (fun ~extra_env ~launch_log:_ ~disk:_ ->
             with_state_dir (fun state_dir ->
                 let empty =

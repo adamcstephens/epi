@@ -101,7 +101,8 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
             if read_stdin && Unix.isatty stdin_fd then (
               let term = Unix.tcgetattr stdin_fd in
               Unix.tcsetattr stdin_fd Unix.TCSAFLUSH
-                { term with
+                {
+                  term with
                   Unix.c_echo = false;
                   Unix.c_icanon = false;
                   Unix.c_isig = false;
@@ -144,7 +145,7 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
                         | Some seconds -> seconds
                         | None -> 0.0)));
               let read_stdin =
-                if read_stdin && List.exists (( = ) stdin_fd) ready then
+                if read_stdin && List.exists (( = ) stdin_fd) ready then (
                   let buf = Bytes.create 4096 in
                   match Unix.read stdin_fd buf 0 (Bytes.length buf) with
                   | 0 ->
@@ -159,29 +160,25 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
                       let flush_from = ref 0 in
                       let i = ref 0 in
                       while !i < n do
-                        if Bytes.get buf !i = '\x14' then (
-                          if !i + 1 < n then (
+                        if Bytes.get buf !i = '\x14' then
+                          if !i + 1 < n then
                             if
                               Bytes.get buf (!i + 1) = 'q'
                               || Bytes.get buf (!i + 1) = 'Q'
                             then (
-                              write_all socket buf !flush_from
-                                (!i - !flush_from);
+                              write_all socket buf !flush_from (!i - !flush_from);
                               raise Exit)
-                            else
-                              i := !i + 1)
+                            else i := !i + 1
                           else (
-                            write_all socket buf !flush_from
-                              (!i - !flush_from);
+                            write_all socket buf !flush_from (!i - !flush_from);
                             saw_prefix := true;
                             flush_from := n;
-                            i := n))
-                        else
-                          i := !i + 1
+                            i := n)
+                        else i := !i + 1
                       done;
                       if !flush_from < n then
                         write_all socket buf !flush_from (n - !flush_from);
-                      true
+                      true)
                 else read_stdin
               in
               let socket_open =
@@ -207,7 +204,8 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
               close_socket ();
               Printf.printf "\r\n[console detached]\n%!";
               Ok ()
-          | Failure message when Util.contains message "console timeout reached" ->
+          | Failure message when Util.contains message "console timeout reached"
+            ->
               restore_termios ();
               close_capture_channel capture_channel_opt;
               close_socket ();
@@ -235,8 +233,8 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
 let pp_console_error = function
   | Instance_not_running { instance_name } ->
       Printf.sprintf
-        "Instance '%s' is not running. Run `epi launch %s --target <flake#config>` \
-         or `epi start %s` if the instance already exists."
+        "Instance '%s' is not running. Run `epi launch %s --target \
+         <flake#config>` or `epi start %s` if the instance already exists."
         instance_name instance_name instance_name
   | Serial_endpoint_unavailable { instance_name; endpoint; details } ->
       Printf.sprintf

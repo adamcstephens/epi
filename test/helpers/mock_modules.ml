@@ -19,17 +19,17 @@ let default_runtime : Epi.Instance_store.runtime =
     ssh_key_path = "/tmp/mock-key";
   }
 
-let make_mock_resolver
-    ?(resolve = fun _target -> Ok default_descriptor)
-    ?(resolve_cached = None)
-    () : (module Epi.Target.Resolver) =
+let make_mock_resolver ?(resolve = fun _target -> Ok default_descriptor)
+    ?(resolve_cached = None) () : (module Epi.Target.Resolver) =
   let resolve_fn = resolve in
-  let resolve_cached_fn = match resolve_cached with
+  let resolve_cached_fn =
+    match resolve_cached with
     | Some f -> f
-    | None -> fun ~rebuild:_ target ->
-        match resolve_fn target with
-        | Ok d -> Ok (Epi.Target.Resolved d)
-        | Error e -> Error e
+    | None -> (
+        fun ~rebuild:_ target ->
+          match resolve_fn target with
+          | Ok d -> Ok (Epi.Target.Resolved d)
+          | Error e -> Error e)
   in
   (module struct
     let resolve_descriptor = resolve_fn
@@ -37,9 +37,11 @@ let make_mock_resolver
   end : Epi.Target.Resolver)
 
 let make_mock_runner
-    ?(launch = fun ~mount_paths:_ ~disk_size:_ ~instance_name:_ ~target:_ _descriptor -> Ok default_runtime)
-    ?(wait_ssh = fun ~ssh_port:_ ~ssh_key_path:_ ~timeout_seconds:_ -> Ok ())
-    () : (module Epi.Vm_launch.Runner) =
+    ?(launch =
+      fun ~mount_paths:_ ~disk_size:_ ~instance_name:_ ~target:_ _descriptor ->
+        Ok default_runtime)
+    ?(wait_ssh = fun ~ssh_port:_ ~ssh_key_path:_ ~timeout_seconds:_ -> Ok ()) ()
+    : (module Epi.Vm_launch.Runner) =
   let launch_fn = launch in
   let wait_ssh_fn = wait_ssh in
   (module struct

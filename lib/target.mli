@@ -3,10 +3,7 @@ type t
 val of_string : string -> (t, [ `Msg of string ]) result
 val to_string : t -> string
 
-type hooks_config = {
-  post_launch : string list;
-  pre_stop : string list;
-}
+type hooks_config = { post_launch : string list; pre_stop : string list }
 
 type descriptor = {
   kernel : string;
@@ -31,7 +28,10 @@ val default_cmdline : string
 val descriptor_of_json : Yojson.Basic.t -> descriptor
 val descriptor_to_json : descriptor -> Yojson.Basic.t
 val resolve_descriptor : string -> (descriptor, resolution_error) result
-val resolve_descriptor_cached : rebuild:bool -> string -> (cache_result, resolution_error) result
+
+val resolve_descriptor_cached :
+  rebuild:bool -> string -> (cache_result, resolution_error) result
+
 val validate_descriptor : target:string -> descriptor -> (unit, string) result
 val is_nix_store_path : string -> bool
 val ensure_store_realized : string -> unit
@@ -46,7 +46,9 @@ val load_descriptor_cache : string -> descriptor option
 
 module type Resolver = sig
   val resolve_descriptor : string -> (descriptor, resolution_error) result
-  val resolve_descriptor_cached : rebuild:bool -> string -> (cache_result, resolution_error) result
+
+  val resolve_descriptor_cached :
+    rebuild:bool -> string -> (cache_result, resolution_error) result
 end
 
 module Real_resolver : Resolver

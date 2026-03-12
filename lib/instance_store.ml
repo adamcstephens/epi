@@ -24,6 +24,7 @@ let state_dir () =
   make_absolute dir
 
 let instance_dir instance_name = Filename.concat (state_dir ()) instance_name
+
 let instance_path instance_name filename =
   Filename.concat (instance_dir instance_name) filename
 
@@ -36,11 +37,13 @@ let state_json_path instance_name = instance_path instance_name "state.json"
 
 let runtime_to_json (rt : runtime) =
   let fields =
-    [ ("unit_id", `String rt.unit_id);
+    [
+      ("unit_id", `String rt.unit_id);
       ("serial_socket", `String rt.serial_socket);
-      ("disk", `String rt.disk) ]
-    @ (match rt.ssh_port with Some p -> [("ssh_port", `Int p)] | None -> [])
-    @ [("ssh_key_path", `String rt.ssh_key_path)]
+      ("disk", `String rt.disk);
+    ]
+    @ (match rt.ssh_port with Some p -> [ ("ssh_port", `Int p) ] | None -> [])
+    @ [ ("ssh_key_path", `String rt.ssh_key_path) ]
   in
   `Assoc fields
 
@@ -50,13 +53,18 @@ let runtime_of_json json =
   let ssh_key_path = json |> member "ssh_key_path" |> to_string_option in
   match (unit_id, ssh_key_path) with
   | Some unit_id, Some ssh_key_path when unit_id <> "" && ssh_key_path <> "" ->
-      Some {
-        unit_id;
-        serial_socket = json |> member "serial_socket" |> to_string_option |> Option.value ~default:"";
-        disk = json |> member "disk" |> to_string_option |> Option.value ~default:"";
-        ssh_port = json |> member "ssh_port" |> to_int_option;
-        ssh_key_path;
-      }
+      Some
+        {
+          unit_id;
+          serial_socket =
+            json |> member "serial_socket" |> to_string_option
+            |> Option.value ~default:"";
+          disk =
+            json |> member "disk" |> to_string_option
+            |> Option.value ~default:"";
+          ssh_port = json |> member "ssh_port" |> to_int_option;
+          ssh_key_path;
+        }
   | _ -> None
 
 let load_state_json instance_name =
@@ -77,7 +85,9 @@ let save_state_json instance_name json =
   close_out channel
 
 let save_target instance_name target =
-  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let base =
+    match load_state_json instance_name with Some j -> j | None -> `Assoc []
+  in
   let fields = match base with `Assoc fs -> fs | _ -> [] in
   let fields = List.filter (fun (k, _) -> k <> "target") fields in
   save_state_json instance_name (`Assoc (("target", `String target) :: fields))
@@ -92,10 +102,13 @@ let load_target instance_name =
   | None -> None
 
 let save_runtime instance_name (rt : runtime) =
-  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let base =
+    match load_state_json instance_name with Some j -> j | None -> `Assoc []
+  in
   let fields = match base with `Assoc fs -> fs | _ -> [] in
   let fields = List.filter (fun (k, _) -> k <> "runtime") fields in
-  save_state_json instance_name (`Assoc (fields @ [("runtime", runtime_to_json rt)]))
+  save_state_json instance_name
+    (`Assoc (fields @ [ ("runtime", runtime_to_json rt) ]))
 
 let load_runtime instance_name =
   match load_state_json instance_name with
@@ -107,11 +120,13 @@ let load_runtime instance_name =
   | None -> None
 
 let save_mounts instance_name paths =
-  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let base =
+    match load_state_json instance_name with Some j -> j | None -> `Assoc []
+  in
   let fields = match base with `Assoc fs -> fs | _ -> [] in
   let fields = List.filter (fun (k, _) -> k <> "mounts") fields in
   let mounts = `List (List.map (fun p -> `String p) paths) in
-  save_state_json instance_name (`Assoc (fields @ [("mounts", mounts)]))
+  save_state_json instance_name (`Assoc (fields @ [ ("mounts", mounts) ]))
 
 let load_mounts instance_name =
   match load_state_json instance_name with
@@ -123,9 +138,13 @@ let load_mounts instance_name =
   | None -> []
 
 let set ~instance_name ~target =
-  let base = match load_state_json instance_name with Some j -> j | None -> `Assoc [] in
+  let base =
+    match load_state_json instance_name with Some j -> j | None -> `Assoc []
+  in
   let fields = match base with `Assoc fs -> fs | _ -> [] in
-  let fields = List.filter (fun (k, _) -> k <> "target" && k <> "runtime") fields in
+  let fields =
+    List.filter (fun (k, _) -> k <> "target" && k <> "runtime") fields
+  in
   save_state_json instance_name (`Assoc (("target", `String target) :: fields))
 
 let set_provisioned ~instance_name ~target ~runtime =
@@ -133,19 +152,16 @@ let set_provisioned ~instance_name ~target ~runtime =
   save_runtime instance_name runtime
 
 let find instance_name = load_target instance_name
-
 let find_runtime instance_name = load_runtime instance_name
 
 let list () =
   let dir = state_dir () in
   if not (Sys.file_exists dir) then []
   else
-    Sys.readdir dir
-    |> Array.to_list
+    Sys.readdir dir |> Array.to_list
     |> List.filter (fun name ->
         let d = Filename.concat dir name in
-        Sys.is_directory d
-        && Sys.file_exists (Filename.concat d "state.json"))
+        Sys.is_directory d && Sys.file_exists (Filename.concat d "state.json"))
     |> List.filter_map (fun name ->
         match load_target name with
         | Some target -> Some (name, target)
@@ -163,8 +179,7 @@ let remove_tree path =
   let rec walk p =
     if Sys.file_exists p then
       if Sys.is_directory p then (
-        Sys.readdir p
-        |> Array.iter (fun name -> walk (Filename.concat p name));
+        Sys.readdir p |> Array.iter (fun name -> walk (Filename.concat p name));
         Unix.rmdir p)
       else Sys.remove p
   in
@@ -196,16 +211,15 @@ let find_running_owner_by_disk disk =
   let dir = state_dir () in
   if not (Sys.file_exists dir) then None
   else
-    Sys.readdir dir
-    |> Array.to_list
-    |> List.filter (fun name ->
-        Sys.is_directory (Filename.concat dir name))
+    Sys.readdir dir |> Array.to_list
+    |> List.filter (fun name -> Sys.is_directory (Filename.concat dir name))
     |> List.find_map (fun name ->
         match load_runtime name with
         | Some ({ disk = runtime_disk; unit_id; _ } as instance_runtime)
           when String.equal runtime_disk disk
-               && (match vm_unit_name ~instance_name:name ~unit_id with
-                   | Ok unit_name -> Process.unit_is_active unit_name
-                   | Error _ -> false) ->
+               &&
+               match vm_unit_name ~instance_name:name ~unit_id with
+               | Ok unit_name -> Process.unit_is_active unit_name
+               | Error _ -> false ->
             Some (name, instance_runtime)
         | _ -> None)

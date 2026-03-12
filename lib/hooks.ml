@@ -11,11 +11,9 @@ let project_hooks_dir () = Filename.concat ".epi" "hooks"
 let discover_scripts dir =
   if not (Sys.file_exists dir && Sys.is_directory dir) then []
   else
-    Sys.readdir dir
-    |> Array.to_list
+    Sys.readdir dir |> Array.to_list
     |> List.filter (fun name ->
-        name.[0] <> '.'
-        && not (Sys.is_directory (Filename.concat dir name)))
+        name.[0] <> '.' && not (Sys.is_directory (Filename.concat dir name)))
     |> List.sort String.compare
     |> List.filter_map (fun name ->
         let path = Filename.concat dir name in
@@ -33,16 +31,18 @@ let discover_from_dir ~instance_name dir =
 
 let discover ~instance_name ?(nix_hooks = []) hook_point =
   let user_dir = Filename.concat (user_hooks_dir ()) (hook_point ^ ".d") in
-  let project_dir = Filename.concat (project_hooks_dir ()) (hook_point ^ ".d") in
-  List.iter (fun path ->
-    if Target.is_nix_store_path path then
-      Target.ensure_store_realized path) nix_hooks;
+  let project_dir =
+    Filename.concat (project_hooks_dir ()) (hook_point ^ ".d")
+  in
+  List.iter
+    (fun path ->
+      if Target.is_nix_store_path path then Target.ensure_store_realized path)
+    nix_hooks;
   discover_from_dir ~instance_name user_dir
   @ discover_from_dir ~instance_name project_dir
   @ nix_hooks
 
-let discover_guest ~instance_name =
-  discover ~instance_name "guest-init"
+let discover_guest ~instance_name = discover ~instance_name "guest-init"
 
 type hook_env = {
   instance_name : string;
@@ -57,13 +57,14 @@ let execute ~env scripts =
   | [] -> Ok ()
   | _ ->
       let process_env =
-        Process.env_with [
-          ("EPI_INSTANCE", env.instance_name);
-          ("EPI_SSH_PORT", string_of_int env.ssh_port);
-          ("EPI_SSH_KEY", env.ssh_key_path);
-          ("EPI_SSH_USER", env.ssh_user);
-          ("EPI_STATE_DIR", env.state_dir);
-        ]
+        Process.env_with
+          [
+            ("EPI_INSTANCE", env.instance_name);
+            ("EPI_SSH_PORT", string_of_int env.ssh_port);
+            ("EPI_SSH_KEY", env.ssh_key_path);
+            ("EPI_SSH_USER", env.ssh_user);
+            ("EPI_STATE_DIR", env.state_dir);
+          ]
       in
       let rec run_all = function
         | [] -> Ok ()
@@ -72,9 +73,10 @@ let execute ~env scripts =
               Process.run ~env:process_env ~prog:script ~args:[] ()
             in
             if result.status <> 0 then
-              Error (Printf.sprintf "hook %s failed with exit code %d: %s"
-                       script result.status
-                       (if result.stderr = "" then "<no stderr>" else result.stderr))
+              Error
+                (Printf.sprintf "hook %s failed with exit code %d: %s" script
+                   result.status
+                   (if result.stderr = "" then "<no stderr>" else result.stderr))
             else run_all rest
       in
       run_all scripts

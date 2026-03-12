@@ -5,7 +5,8 @@ let () =
     else Sys.argv.(1)
   in
   let alcotest_argv =
-    Array.append [| Sys.argv.(0) |]
+    Array.append
+      [| Sys.argv.(0) |]
       (Array.sub Sys.argv 2 (Array.length Sys.argv - 2))
   in
   Alcotest.run ~argv:alcotest_argv "epi"
