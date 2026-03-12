@@ -23,4 +23,7 @@ val attach_console :
   Instance_store.runtime ->
   (unit, console_error) result
 
+val console_log_path : string -> string
+val start_console_capture : instance_name:string -> serial_socket:string -> int
+val stop_console_capture : int -> unit
 val pp_console_error : console_error -> string

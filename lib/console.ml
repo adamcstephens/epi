@@ -56,7 +56,7 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
         `Ok
   in
   let open_capture_channel capture =
-    try Ok (open_out_gen [ Open_creat; Open_trunc; Open_wronly ] 0o644 capture)
+    try Ok (open_out_gen [ Open_creat; Open_append; Open_wronly ] 0o644 capture)
     with Sys_error details ->
       Error
         (Console_capture_failed
@@ -229,6 +229,50 @@ let attach_console ?(read_stdin = true) ?capture_path ?timeout_seconds
                      endpoint;
                      details = Unix.error_message error;
                    })))
+
+let console_log_path instance_name =
+  Instance_store.instance_path instance_name "console.log"
+
+let start_console_capture ~instance_name ~serial_socket =
+  let log_path = console_log_path instance_name in
+  let pid = Unix.fork () in
+  if pid <> 0 then pid
+  else
+    let exit_code = ref 0 in
+    (try
+       let socket = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+       match connect_serial_socket socket serial_socket 60 with
+       | Error _ ->
+           Unix.close socket;
+           exit_code := 1
+       | Ok () -> (
+           let log_fd =
+             Unix.openfile log_path
+               [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND ]
+               0o644
+           in
+           let buffer = Bytes.create 4096 in
+           try
+             while true do
+               let ready, _, _ = Unix.select [ socket ] [] [] 1.0 in
+               if ready <> [] then (
+                 let n = Unix.read socket buffer 0 (Bytes.length buffer) in
+                 if n = 0 then raise Exit;
+                 let _ = Unix.write log_fd buffer 0 n in
+                 Unix.fsync log_fd)
+             done
+           with _ ->
+             Unix.close log_fd;
+             Unix.close socket)
+     with _ -> ());
+    exit !exit_code
+
+let stop_console_capture pid =
+  (try Unix.kill pid Sys.sigterm with Unix.Unix_error _ -> ());
+  try
+    let _ = Unix.waitpid [] pid in
+    ()
+  with Unix.Unix_error _ -> ()
 
 let pp_console_error = function
   | Instance_not_running { instance_name } ->

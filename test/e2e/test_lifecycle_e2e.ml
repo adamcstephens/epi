@@ -20,6 +20,20 @@ let tests =
             let out = E2e_helpers.ssh_exec runtime [ "echo"; "ok" ] in
             Alcotest.(check string) "ssh works" "ok" (String.trim out);
 
+            let log_path =
+              Epi.Console.console_log_path instance_name
+            in
+            let log_exists = Sys.file_exists log_path in
+            Alcotest.(check bool) "console.log exists" true log_exists;
+            let log_content =
+              In_channel.with_open_text log_path In_channel.input_all
+            in
+            let has_kernel =
+              Epi.Util.contains log_content "Linux version"
+            in
+            Alcotest.(check bool)
+              "console.log contains kernel output" true has_kernel;
+
             E2e_helpers.check_disk_grew runtime;
 
             let init_status =
