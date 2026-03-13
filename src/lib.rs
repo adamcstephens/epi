@@ -1,3 +1,4 @@
+pub mod cloud_hypervisor;
 pub mod config;
 pub mod console;
 pub mod hooks;
