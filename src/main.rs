@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::os::unix::process::CommandExt;
 
-use epi::{config, console, hooks, instance_store, target, ui, vm_launch};
+use epi::{config, console, cp, hooks, instance_store, target, ui, vm_launch};
 
 fn ssh_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
@@ -144,6 +144,15 @@ enum Command {
         instance: String,
     },
 
+    /// Copy files between host and instance.
+    Cp {
+        /// Source path (local or <instance>:<path>)
+        source: String,
+
+        /// Destination path (local or <instance>:<path>)
+        dest: String,
+    },
+
     /// Show instance logs.
     Logs {
         /// Instance name
@@ -189,6 +198,7 @@ fn main() {
         Command::ConsoleLog { instance } => cmd_console_log(&instance),
         Command::Ssh { instance } => cmd_ssh(&instance),
         Command::Exec { instance, command } => cmd_exec(&instance, &command),
+        Command::Cp { source, dest } => cmd_cp(&source, &dest),
         Command::Rebuild { instance } => cmd_rebuild(&instance),
         Command::Logs { instance } => cmd_logs(&instance),
     };
@@ -573,6 +583,54 @@ fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
     let err = std::process::Command::new("ssh").args(&arg_refs).exec();
 
     bail!("failed to exec ssh: {err}");
+}
+
+fn cmd_cp(source: &str, dest: &str) -> Result<()> {
+    let spec = cp::parse_copy_spec(source, dest)?;
+
+    let (instance, remote_path, is_push) = match (&spec.source, &spec.dest) {
+        (cp::Endpoint::Local(_), cp::Endpoint::Remote { instance, path }) => {
+            (instance.as_str(), path.as_str(), true)
+        }
+        (cp::Endpoint::Remote { instance, path }, cp::Endpoint::Local(_)) => {
+            (instance.as_str(), path.as_str(), false)
+        }
+        _ => unreachable!("parse_copy_spec validates exactly one side is remote"),
+    };
+
+    let runtime = instance_store::find_runtime(instance)?
+        .ok_or_else(|| anyhow::anyhow!("instance {instance} is not running"))?;
+
+    let ssh_port = runtime
+        .ssh_port
+        .ok_or_else(|| anyhow::anyhow!("no SSH port for instance {instance}"))?;
+
+    let ssh_cmd = format!(
+        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i {} -p {}",
+        runtime.ssh_key_path, ssh_port
+    );
+
+    let remote = format!("{}@127.0.0.1:{}", ssh_user(), remote_path);
+
+    let (rsync_src, rsync_dest) = if is_push {
+        let local_path = match &spec.source {
+            cp::Endpoint::Local(p) => p.as_str(),
+            _ => unreachable!(),
+        };
+        (local_path.to_string(), remote)
+    } else {
+        let local_path = match &spec.dest {
+            cp::Endpoint::Local(p) => p.as_str(),
+            _ => unreachable!(),
+        };
+        (remote, local_path.to_string())
+    };
+
+    let err = std::process::Command::new("rsync")
+        .args(["-a", "--progress", "-e", &ssh_cmd, &rsync_src, &rsync_dest])
+        .exec();
+
+    bail!("failed to exec rsync: {err}");
 }
 
 fn cmd_rebuild(instance: &str) -> Result<()> {

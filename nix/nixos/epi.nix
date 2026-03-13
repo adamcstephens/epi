@@ -220,7 +220,7 @@ in
     system.extraDependencies =
       (lib.attrValues cfg.hooks.post-launch) ++ (lib.attrValues cfg.hooks.pre-stop);
 
-    environment.systemPackages = [ pkgs.jq ];
+    environment.systemPackages = [ pkgs.jq pkgs.rsync ];
 
     fileSystems."/" = {
       device = "/dev/disk/by-label/nixos";

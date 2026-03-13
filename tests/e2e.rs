@@ -485,3 +485,54 @@ fn e2e_vm_crash_stops_helpers() {
         "VM should be inactive after kill"
     );
 }
+
+#[test]
+#[ignore]
+fn e2e_cp_file_to_vm() {
+    let name = unique_name("cp");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+    let ssh_port = runtime.ssh_port.unwrap();
+
+    // Create a temp file to copy
+    let tmp_dir = TempDir::new().unwrap();
+    let src_file = tmp_dir.path().join("test-cp.txt");
+    fs::write(&src_file, "epi-cp-test-content").unwrap();
+
+    // Build rsync command matching cmd_cp's logic
+    let ssh_cmd = format!(
+        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i {} -p {}",
+        runtime.ssh_key_path, ssh_port
+    );
+    let remote_dest = format!("{}@127.0.0.1:/tmp/test-cp.txt", ssh_user());
+
+    let out = process::run(
+        "rsync",
+        &[
+            "--progress",
+            "-e",
+            &ssh_cmd,
+            &src_file.to_string_lossy(),
+            &remote_dest,
+        ],
+    )
+    .expect("rsync failed");
+
+    assert!(
+        out.success(),
+        "rsync failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+
+    // Verify the file arrived
+    let verify = ssh_exec(&runtime, "cat /tmp/test-cp.txt");
+    assert!(
+        verify.success(),
+        "cat failed (exit {}): {}",
+        verify.status,
+        verify.stderr
+    );
+    assert_eq!(verify.stdout, "epi-cp-test-content");
+}
