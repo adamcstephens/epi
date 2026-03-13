@@ -14,6 +14,7 @@ pub fn build_args(
     passt_socket: &str,
     fs_args: &[String],
     api_socket: Option<&str>,
+    mac: &str,
 ) -> Vec<String> {
     let mut args = vec![
         "--kernel".to_string(),
@@ -32,7 +33,7 @@ pub fn build_args(
         "--cmdline".to_string(),
         cmdline.to_string(),
         "--net".to_string(),
-        format!("vhost_user=true,socket={passt_socket},vhost_mode=client"),
+        format!("vhost_user=true,socket={passt_socket},vhost_mode=client,mac={mac}"),
     ];
 
     if let Some(initrd) = initrd {

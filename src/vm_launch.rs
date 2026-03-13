@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::net::TcpListener;
 use std::path::Path;
 use std::time::Duration;
@@ -9,6 +10,21 @@ use crate::instance_store::{self, Runtime};
 use crate::process;
 use crate::target::Descriptor;
 use crate::{hooks, target};
+
+/// Generate a deterministic MAC address from an instance name.
+///
+/// Uses the locally administered prefix `02:` and hashes the name
+/// to derive the remaining 5 octets.
+fn generate_mac(instance_name: &str) -> String {
+    let mut hasher = std::hash::DefaultHasher::new();
+    instance_name.hash(&mut hasher);
+    let h = hasher.finish();
+    let bytes = h.to_ne_bytes();
+    format!(
+        "02:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]
+    )
+}
 
 /// Provision a new VM: resolve target, validate, launch
 pub fn provision(
@@ -150,6 +166,8 @@ fn launch_vm_inner(
     let seed_str = seed_iso.to_string_lossy().to_string();
     let passt_socket_str = passt_socket.to_string_lossy().to_string();
 
+    let mac = generate_mac(instance_name);
+
     let ch_args = cloud_hypervisor::build_args(
         &desc.kernel,
         desc.initrd.as_deref(),
@@ -162,6 +180,7 @@ fn launch_vm_inner(
         &passt_socket_str,
         &fs_args,
         Some(&api_socket_str),
+        &mac,
     );
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
@@ -347,10 +366,20 @@ fn generate_seed_iso(
         let uid = nix::unistd::getuid().as_raw();
         user_obj["uid"] = serde_json::json!(uid);
     }
+    let canonical_mounts: Vec<String> = mounts
+        .iter()
+        .map(|m| {
+            Path::new(m)
+                .canonicalize()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| m.clone())
+        })
+        .collect();
+
     let epi_json = serde_json::json!({
         "hostname": instance_name,
         "user": user_obj,
-        "mounts": mounts
+        "mounts": canonical_mounts
     });
 
     fs::write(

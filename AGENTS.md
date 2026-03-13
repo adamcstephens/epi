@@ -1,5 +1,6 @@
 ## Agent workflow
 - Don't implement without an openspec change without asking.
+- Always use red/green TDD when implementing
 
 ## Code style
 - Avoid abstractions
@@ -9,16 +10,16 @@
 - Functions that can fail should return `Result`, not log-and-continue
 - Avoid unsafe code, ask before adding.
 - Format code with `just format`
+- Canonicalize relative paths to absolute paths as early as possible
 
 ## Dependencies
 - Rust deps are in `.cargo-home` — read code from there for correct versions without needing the internet.
 - *Always* ask before adding dependencies.
 
 ## Testing
-- Always execute red/green TDD
 - Ensure you run e2e tests at least once before finalizing
 - Quick tests: `just test` (runs unit + CLI integration concurrently)
-- Unit only: `just test-unit`
+- Unit only: `just test`
 - E2E (requires real VM): `just test-e2e`
 - When possible, manually test: e.g. `just run list`
 
