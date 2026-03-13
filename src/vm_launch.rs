@@ -301,13 +301,13 @@ fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -
     }
 
     // Grow GPT partition table to fill resized disk
-    grow_partition(&dest_str);
+    grow_partition(&dest_str)?;
 
     Ok(())
 }
 
-fn grow_partition(path: &str) {
-    let result = process::run(
+fn grow_partition(path: &str) -> Result<()> {
+    let out = process::run(
         "sgdisk",
         &[
             "-e",
@@ -319,16 +319,11 @@ fn grow_partition(path: &str) {
             "1:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
             path,
         ],
-    );
-    match result {
-        Ok(out) if !out.success() => {
-            eprintln!("vm: sgdisk partition grow failed: {}", out.stderr);
-        }
-        Err(e) => {
-            eprintln!("vm: sgdisk partition grow failed: {e}");
-        }
-        _ => {}
+    )?;
+    if !out.success() {
+        bail!("sgdisk partition grow failed: {}", out.stderr);
     }
+    Ok(())
 }
 
 fn generate_ssh_key(path: &std::path::Path) -> Result<()> {
@@ -366,7 +361,10 @@ fn generate_seed_iso(
     configured_users: &[String],
     iso_path: &std::path::Path,
 ) -> Result<()> {
-    let staging = iso_path.parent().unwrap().join("epidata");
+    let staging = iso_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("iso path has no parent directory"))?
+        .join("epidata");
     fs::create_dir_all(&staging)?;
 
     // Read public key
@@ -403,7 +401,9 @@ fn generate_seed_iso(
         let hooks_dir = staging.join("hooks");
         fs::create_dir_all(&hooks_dir)?;
         for hook in &guest_hooks {
-            let dest = hooks_dir.join(hook.file_name().unwrap());
+            let dest = hooks_dir.join(hook.file_name().ok_or_else(|| {
+                anyhow::anyhow!("hook path has no file name: {}", hook.display())
+            })?);
             fs::copy(hook, &dest)?;
         }
     }

@@ -2,6 +2,9 @@
 - Avoid abstractions
 - Avoid wrapping single expressions in standalone functions
 - Prefer explicit namespace references
+- No `unwrap()` outside of tests — propagate with `?` or `ok_or_else`
+- Keep `Option`/`Result` as long as possible — don't collapse to sentinel values (e.g. `unwrap_or(0)` then `> 0`)
+- Functions that can fail should return `Result`, not log-and-continue
 - Format code with `just format`
 
 ## Dependencies

@@ -10,20 +10,20 @@ use crate::instance_store;
 
 /// Connect to serial socket with retries
 fn connect_socket(path: &str, retries: u32, interval: Duration) -> Result<UnixStream> {
-    for i in 0..retries {
+    let mut last_err = None;
+    for _ in 0..retries {
         match UnixStream::connect(path) {
             Ok(stream) => return Ok(stream),
             Err(e) => {
-                if i == retries - 1 {
-                    bail!(
-                        "failed to connect to serial socket {path} after {retries} attempts: {e}"
-                    );
-                }
+                last_err = Some(e);
                 std::thread::sleep(interval);
             }
         }
     }
-    unreachable!()
+    bail!(
+        "failed to connect to serial socket {path} after {retries} attempts: {}",
+        last_err.expect("retries must be > 0")
+    )
 }
 
 /// Attach to an instance's serial console interactively
@@ -45,11 +45,9 @@ pub fn attach(
     let is_tty = std::io::stdin().is_terminal();
     let read_stdin = is_tty;
 
-    let mut capture_file = capture_path.map(|p| {
-        File::create(p)
-            .with_context(|| format!("creating capture file {p}"))
-            .unwrap()
-    });
+    let mut capture_file = capture_path
+        .map(|p| File::create(p).with_context(|| format!("creating capture file {p}")))
+        .transpose()?;
 
     let deadline = timeout_seconds.map(|t| Instant::now() + Duration::from_secs_f64(t));
 
