@@ -279,6 +279,8 @@ in
 
     security.sudo.wheelNeedsPassword = false;
 
+    services.logrotate.enable = false;
+
     services.openssh = {
       enable = true;
       settings.PasswordAuthentication = false;

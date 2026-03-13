@@ -91,9 +91,7 @@ pub fn attach(
         // Read from stdin via crossterm events
         if read_stdin && event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
-                if ctrl_t_pressed
-                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
-                {
+                if ctrl_t_pressed && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
                     eprintln!("\ndetached");
                     return Ok(());
                 }

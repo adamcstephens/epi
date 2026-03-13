@@ -1,3 +1,6 @@
+## Agent workflow
+- Don't implement without an openspec change without asking.
+
 ## Code style
 - Avoid abstractions
 - Avoid wrapping single expressions in standalone functions
