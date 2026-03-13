@@ -78,7 +78,7 @@
                 inherit epi-unwrapped;
               };
 
-              epi-unwrapped = pkgs.callPackage ./nix/rust-package.nix { };
+              epi-unwrapped = pkgs.callPackage ./nix/package.nix { };
             };
           };
       }

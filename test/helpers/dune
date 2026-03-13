@@ -1,4 +1,0 @@
-(library
- (name epi_test_helpers)
- (wrapped false)
- (libraries alcotest epi unix yojson))
