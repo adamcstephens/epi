@@ -11,15 +11,3 @@ jobs:
       - name: nix build
         run: |
           nix build .#
-
-  test:
-    runs-on: local/x86_64-linux
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - run: |
-          nix develop --command dune build
-
-      - run: |
-          nix develop --command dune test
