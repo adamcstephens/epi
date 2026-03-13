@@ -82,10 +82,19 @@ pub fn save_target(name: &str, target: &str) -> Result<()> {
 }
 
 pub fn set_launching(name: &str, target: &str, mounts: Vec<String>) -> Result<()> {
+    let canonical_mounts: Vec<String> = mounts
+        .iter()
+        .map(|m| {
+            std::path::Path::new(m)
+                .canonicalize()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| m.clone())
+        })
+        .collect();
     let state = InstanceState {
         target: target.to_string(),
         runtime: None,
-        mounts,
+        mounts: canonical_mounts,
     };
     save_state(name, &state)
 }

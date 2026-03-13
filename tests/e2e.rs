@@ -5,7 +5,7 @@
 //!
 //! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
 
-use epi::{console, hooks, instance_store, process, target, vm_launch};
+use epi::{config, console, hooks, instance_store, process, target, vm_launch};
 use std::fs;
 use std::sync::LazyLock;
 use tempfile::TempDir;
@@ -46,13 +46,31 @@ impl Drop for InstanceGuard {
     }
 }
 
-fn provision_and_wait(name: &str) -> instance_store::Runtime {
+fn default_resolved() -> config::Resolved {
     let (target_str, _) = &*DESCRIPTOR;
+    config::Resolved {
+        target: target_str.clone(),
+        mounts: vec![],
+        disk_size: "40G".to_string(),
+    }
+}
 
-    instance_store::set_launching(name, target_str, vec![]).expect("set_launching failed");
+fn provision_and_wait(name: &str) -> instance_store::Runtime {
+    provision_and_wait_with(name, default_resolved())
+}
 
-    let runtime =
-        vm_launch::provision(name, target_str, &[], "40G", false).expect("provision failed");
+fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_store::Runtime {
+    instance_store::set_launching(name, &resolved.target, resolved.mounts.clone())
+        .expect("set_launching failed");
+
+    let runtime = vm_launch::provision(
+        name,
+        &resolved.target,
+        &resolved.mounts,
+        &resolved.disk_size,
+        false,
+    )
+    .expect("provision failed");
 
     instance_store::set_provisioned(name, runtime.clone()).expect("set_provisioned failed");
 
@@ -339,6 +357,44 @@ fn e2e_clean_shutdown_stops_helpers() {
         !process::unit_is_active(&slice).unwrap(),
         "slice should be inactive after stop"
     );
+}
+
+#[test]
+#[ignore]
+fn e2e_stop_start_ssh() {
+    let name = unique_name("stopstart");
+    let _guard = InstanceGuard::new(&name);
+
+    // Use a relative mount path to exercise canonicalization —
+    // without the fix, "." gets written to epi.json as-is and the guest
+    // mounts virtiofs at "/" (cwd of epi-init), breaking networking.
+    let mut resolved = default_resolved();
+    resolved.mounts = vec![".".to_string()];
+
+    // First boot: provision and verify SSH
+    let runtime = provision_and_wait_with(&name, resolved.clone());
+    let out = ssh_exec(&runtime, "echo first-boot");
+    assert!(
+        out.success(),
+        "first-boot SSH failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "first-boot");
+
+    // Stop the VM
+    vm_launch::stop_instance(&name).expect("stop failed");
+
+    // Second boot: re-provision (reuses persistent disk) and verify SSH
+    let runtime2 = provision_and_wait_with(&name, resolved);
+    let out2 = ssh_exec(&runtime2, "echo second-boot");
+    assert!(
+        out2.success(),
+        "second-boot SSH failed (exit {}): {}",
+        out2.status,
+        out2.stderr
+    );
+    assert_eq!(out2.stdout, "second-boot");
 }
 
 #[test]

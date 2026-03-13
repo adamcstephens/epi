@@ -10,7 +10,7 @@ pub struct Config {
     pub disk_size: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Resolved {
     pub target: String,
     pub mounts: Vec<String>,
