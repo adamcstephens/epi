@@ -5,6 +5,9 @@ format:
     cargo fmt
     nixfmt **/*.nix
 
+lint:
+    cargo clippy
+
 run *args:
     cargo run -- {{ args }}
 

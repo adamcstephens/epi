@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::process;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HooksDescriptor {
     #[serde(default, alias = "post-launch")]
     pub post_launch: BTreeMap<String, String>,
@@ -61,28 +61,18 @@ impl HooksDescriptor {
     }
 }
 
-impl Default for HooksDescriptor {
-    fn default() -> Self {
-        Self {
-            post_launch: BTreeMap::new(),
-            pre_stop: BTreeMap::new(),
-            guest_init: BTreeMap::new(),
-        }
-    }
-}
-
 /// Expand tilde in the flake-ref portion of a target string
 pub fn expand_tilde(target: &str) -> String {
     if let Some((flake, config)) = target.split_once('#') {
-        if let Some(rest) = flake.strip_prefix("~/") {
-            if let Ok(home) = std::env::var("HOME") {
-                return format!("{home}/{rest}#{config}");
-            }
+        if let Some(rest) = flake.strip_prefix("~/")
+            && let Ok(home) = std::env::var("HOME")
+        {
+            return format!("{home}/{rest}#{config}");
         }
-        if flake == "~" {
-            if let Ok(home) = std::env::var("HOME") {
-                return format!("{home}#{config}");
-            }
+        if flake == "~"
+            && let Ok(home) = std::env::var("HOME")
+        {
+            return format!("{home}#{config}");
         }
     }
     target.to_string()
@@ -99,11 +89,10 @@ pub fn validate(target: &str) -> Result<()> {
 
 /// Canonicalize target by adding nixosConfigurations. prefix if needed
 pub fn canonicalize(target: &str) -> String {
-    if let Some((_flake, config)) = target.split_once('#') {
-        if !config.starts_with("nixosConfigurations.") {
-            let (flake, _) = target.split_once('#').unwrap();
-            return format!("{flake}#nixosConfigurations.{config}");
-        }
+    if let Some((flake, config)) = target.split_once('#')
+        && !config.starts_with("nixosConfigurations.")
+    {
+        return format!("{flake}#nixosConfigurations.{config}");
     }
     target.to_string()
 }
@@ -262,15 +251,15 @@ pub fn resolve_descriptor_cached(target: &str, rebuild: bool) -> Result<CacheRes
     }
 
     // Try loading from cache
-    if let Ok(content) = fs::read_to_string(&cache_path) {
-        if let Ok(desc) = serde_json::from_str::<Descriptor>(&content) {
-            // Verify cached paths still exist
-            let paths_exist = descriptor_store_paths(&desc)
-                .iter()
-                .all(|p| Path::new(p).exists());
-            if paths_exist {
-                return Ok(CacheResult::Cached(desc));
-            }
+    if let Ok(content) = fs::read_to_string(&cache_path)
+        && let Ok(desc) = serde_json::from_str::<Descriptor>(&content)
+    {
+        // Verify cached paths still exist
+        let paths_exist = descriptor_store_paths(&desc)
+            .iter()
+            .all(|p| Path::new(p).exists());
+        if paths_exist {
+            return Ok(CacheResult::Cached(desc));
         }
     }
 

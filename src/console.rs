@@ -76,11 +76,11 @@ pub fn attach(
     }
 
     loop {
-        if let Some(dl) = deadline {
-            if Instant::now() >= dl {
-                eprintln!("\nconsole timeout reached");
-                break;
-            }
+        if let Some(dl) = deadline
+            && Instant::now() >= dl
+        {
+            eprintln!("\nconsole timeout reached");
+            break;
         }
 
         // Read from socket

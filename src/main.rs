@@ -177,7 +177,7 @@ fn main() {
 }
 
 fn run(command: Command) -> Result<()> {
-    let result = match command {
+    match command {
         Command::Launch {
             instance,
             target,
@@ -191,18 +191,16 @@ fn run(command: Command) -> Result<()> {
             wait_timeout,
         } => {
             let instance = resolve_instance_name(instance)?;
-            cmd_launch(
-                &instance,
+            let mut resolved = config::resolve(
                 target.as_deref(),
-                console,
-                rebuild,
                 &mount,
                 disk_size.as_deref(),
                 cpus,
                 memory,
-                no_wait,
-                wait_timeout,
-            )
+            )?;
+            resolved.target = target::expand_tilde(&resolved.target);
+            target::validate(&resolved.target)?;
+            cmd_launch(&instance, &resolved, console, rebuild, no_wait, wait_timeout)
         }
         Command::Start {
             instance,
@@ -226,20 +224,14 @@ fn run(command: Command) -> Result<()> {
         Command::Cp { source, dest } => cmd_cp(&source, &dest),
         Command::Rebuild { instance } => cmd_rebuild(&resolve_instance_name(instance)?),
         Command::Logs { instance } => cmd_logs(&resolve_instance_name(instance)?),
-    };
-
-    result
+    }
 }
 
 fn cmd_launch(
     instance: &str,
-    cli_target: Option<&str>,
+    resolved: &config::Resolved,
     attach_console: bool,
     rebuild: bool,
-    cli_mounts: &[String],
-    cli_disk_size: Option<&str>,
-    cli_cpus: Option<u32>,
-    cli_memory: Option<u32>,
     no_wait: bool,
     wait_timeout: u64,
 ) -> Result<()> {
@@ -259,12 +251,6 @@ fn cmd_launch(
         ));
         let _ = vm_launch::stop_instance(instance);
     }
-
-    let mut resolved =
-        config::resolve(cli_target, cli_mounts, cli_disk_size, cli_cpus, cli_memory)?;
-    resolved.target = target::expand_tilde(&resolved.target);
-
-    target::validate(&resolved.target)?;
 
     let pre_existing = instance_store::find(instance)?.is_some();
     instance_store::set_launching(instance, &resolved.target, resolved.mounts.clone())?;
@@ -436,25 +422,24 @@ fn cmd_stop(instance: &str) -> Result<()> {
 
     // Run pre-stop hooks
     let state = instance_store::load_state(instance)?;
-    if let Some(ref st) = state {
-        if let Some(ref rt) = st.runtime {
-            if let Some(ssh_port) = rt.ssh_port {
-                let desc_hooks = target::resolve_descriptor_cached(&st.target, false)
-                    .map(|c| c.descriptor().hooks.pre_stop_scripts())
-                    .unwrap_or_default();
+    if let Some(ref st) = state
+        && let Some(ref rt) = st.runtime
+        && let Some(ssh_port) = rt.ssh_port
+    {
+        let desc_hooks = target::resolve_descriptor_cached(&st.target, false)
+            .map(|c| c.descriptor().hooks.pre_stop_scripts())
+            .unwrap_or_default();
 
-                let hook_scripts = hooks::discover(instance, &desc_hooks, "pre-stop")?;
-                if !hook_scripts.is_empty() {
-                    let env = hooks::HookEnv {
-                        instance_name: instance.to_string(),
-                        ssh_port,
-                        ssh_key_path: rt.ssh_key_path.clone(),
-                        ssh_user: ssh_user(),
-                        state_dir: instance_store::state_dir().to_string_lossy().to_string(),
-                    };
-                    hooks::execute(&env, &hook_scripts)?;
-                }
-            }
+        let hook_scripts = hooks::discover(instance, &desc_hooks, "pre-stop")?;
+        if !hook_scripts.is_empty() {
+            let env = hooks::HookEnv {
+                instance_name: instance.to_string(),
+                ssh_port,
+                ssh_key_path: rt.ssh_key_path.clone(),
+                ssh_user: ssh_user(),
+                state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+            };
+            hooks::execute(&env, &hook_scripts)?;
         }
     }
 
@@ -513,10 +498,7 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<16} {:<40} {:<14} {}",
-        "INSTANCE", "TARGET", "STATUS", "SSH"
-    );
+    println!("{:<16} {:<40} {:<14} SSH", "INSTANCE", "TARGET", "STATUS");
 
     for (name, target_str) in &instances {
         let running = instance_store::instance_is_running(name)?;
