@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug)]
@@ -48,6 +49,21 @@ pub fn generate_unit_id() -> String {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn find_executable(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+pub fn require_binary(name: &str, package_hint: &str) -> Result<()> {
+    match find_executable(name) {
+        Some(_) => Ok(()),
+        None => bail!("{name} not found in PATH — install {package_hint} to continue"),
+    }
 }
 
 pub fn escape_unit_name(name: &str) -> Result<String> {
@@ -188,5 +204,19 @@ mod tests {
     fn run_with_env_sets_vars() {
         let out = run_with_env("sh", &["-c", "echo $TEST_VAR"], &[("TEST_VAR", "works")]).unwrap();
         assert_eq!(out.stdout, "works");
+    }
+
+    #[test]
+    fn require_binary_succeeds_for_echo() {
+        require_binary("echo", "coreutils").unwrap();
+    }
+
+    #[test]
+    fn require_binary_fails_for_missing() {
+        let result = require_binary("nonexistent-binary-xyz", "fake-package");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("nonexistent-binary-xyz"));
+        assert!(msg.contains("fake-package"));
     }
 }

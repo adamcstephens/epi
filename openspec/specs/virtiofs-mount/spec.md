@@ -43,20 +43,20 @@ The system SHALL start one `virtiofsd` daemon per mount path before launching cl
 - **AND** the system waits for each socket to appear before launching cloud-hypervisor
 
 #### Scenario: virtiofsd stopped on instance down
-- **WHEN** user runs `epi down` on an instance that was started with one or more `--mount` flags
+- **WHEN** user runs `epi stop` on an instance that was started with one or more `--mount` flags
 - **THEN** all virtiofsd processes are terminated along with the VM and passt processes
 
 #### Scenario: virtiofsd binary not found
-- **WHEN** `--mount` is used but `virtiofsd` is not on `$PATH` and `EPI_VIRTIOFSD_BIN` is not set
-- **THEN** the system reports an error indicating virtiofsd is required and suggests setting `EPI_VIRTIOFSD_BIN`
+- **WHEN** `--mount` is used but `virtiofsd` is not found in PATH
+- **THEN** the system exits with an actionable error indicating virtiofsd is required and how to resolve it
 
 ### Requirement: Mount paths persist in host instance state
 
-When `epi launch` is called with one or more `--mount` paths, the system SHALL persist those paths in `~/.local/state/epi/<instance>/mounts` (one per line). When `epi start` restarts a stopped instance that has a `mounts` file, the system SHALL re-launch virtiofsd for each saved path before starting cloud-hypervisor.
+When `epi launch` is called with one or more `--mount` paths, the system SHALL persist those paths as a JSON array in the `mounts` field of `state.json`. When `epi start` restarts a stopped instance that has mount paths in `state.json`, the system SHALL re-launch virtiofsd for each saved path before starting cloud-hypervisor.
 
 #### Scenario: Mount paths saved on launch
 - **WHEN** user runs `epi launch --target .#config --mount /home/user/project`
-- **THEN** `/home/user/project` is written to `~/.local/state/epi/<instance>/mounts`
+- **THEN** `/home/user/project` is stored in the `mounts` array in `state.json`
 
 #### Scenario: virtiofsd restarted on epi start
 - **WHEN** user runs `epi start` on an instance that was originally launched with `--mount /home/user/project`

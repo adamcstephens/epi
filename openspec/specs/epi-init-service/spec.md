@@ -12,5 +12,4 @@ The NixOS guest image SHALL include an `epi-init.service` systemd oneshot servic
 #### Scenario: epi-init runs on subsequent boots
 - **WHEN** a VM reboots (not first boot)
 - **THEN** epi-init runs again, skips user creation (user already exists), sets hostname, re-mounts virtiofs filesystems
-- **AND** writes the username to `/run/epi-init/username`
 - **AND** does NOT execute guest hook scripts

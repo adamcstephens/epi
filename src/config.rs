@@ -36,16 +36,16 @@ fn resolve_path(path: &str, base: &Path) -> PathBuf {
     }
 }
 
-fn load_from(path: &Path) -> Result<Option<Config>> {
+fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<Config>> {
     if !path.exists() {
         return Ok(None);
     }
     let content = fs::read_to_string(path)?;
     let mut config: Config = toml::from_str(&content)?;
 
-    let base = path.parent().unwrap_or(Path::new("."));
+    let base = base_override.unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")));
 
-    // Resolve mount paths relative to config file location
+    // Resolve mount paths relative to base directory
     if let Some(ref mut mounts) = config.mounts {
         *mounts = mounts
             .iter()
@@ -57,20 +57,23 @@ fn load_from(path: &Path) -> Result<Option<Config>> {
 }
 
 pub fn load_project() -> Result<Option<Config>> {
-    load_from(Path::new(".epi/config.toml"))
+    load_from(Path::new(".epi/config.toml"), Some(Path::new(".")))
 }
 
 pub fn load_user() -> Result<Option<Config>> {
-    let path = if let Ok(p) = std::env::var("EPI_CONFIG_FILE") {
-        PathBuf::from(p)
+    let (path, explicit) = if let Ok(p) = std::env::var("EPI_CONFIG_FILE") {
+        (PathBuf::from(p), true)
     } else if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg).join("epi/config.toml")
+        (PathBuf::from(xdg).join("epi/config.toml"), false)
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".config/epi/config.toml")
+        (PathBuf::from(home).join(".config/epi/config.toml"), false)
     } else {
         return Ok(None);
     };
-    load_from(&path)
+    if explicit && !path.exists() {
+        anyhow::bail!("config file not found: {}", path.display());
+    }
+    load_from(&path, None)
 }
 
 fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {

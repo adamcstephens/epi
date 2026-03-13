@@ -1,6 +1,6 @@
 ### Requirement: CLI writes partial runtime before spawning processes
 
-The `Vm_launch` module SHALL write a partial runtime to `state.json` — containing at minimum the `unit_id` — after generating the unit ID and before spawning any systemd processes (passt, virtiofsd, cloud-hypervisor). The target SHALL also be persisted at this point. This ensures the instance is discoverable and its systemd slice can be reconstructed for cleanup even if the CLI is interrupted during launch.
+The `vm_launch` module SHALL write a partial runtime to `state.json` — containing at minimum the `unit_id` — after generating the unit ID and before spawning any systemd processes (passt, virtiofsd, cloud-hypervisor). The target SHALL also be persisted at this point. This ensures the instance is discoverable and its systemd slice can be reconstructed for cleanup even if the CLI is interrupted during launch.
 
 #### Scenario: State exists before first process spawn
 - **WHEN** `epi launch dev-a --target .#dev-a` is run
@@ -41,7 +41,7 @@ The `epi rm` command SHALL successfully clean up instances that have a partial r
 
 ### Requirement: Failed provision cleans up pre-spawn state
 
-If `Vm_launch.provision` fails after writing the partial runtime, the caller SHALL clean up the state. On provision failure for a fresh launch (no pre-existing instance), the state directory SHALL be removed. On provision failure for a relaunch over an existing instance, the partial runtime SHALL be cleared but the state directory preserved.
+If `vm_launch::provision` fails after writing the partial runtime, the caller SHALL clean up the state. On provision failure for a fresh launch (no pre-existing instance), the state directory SHALL be removed. On provision failure for a relaunch over an existing instance, the partial runtime SHALL be cleared but the state directory preserved.
 
 #### Scenario: Fresh launch failure removes state
 - **WHEN** `epi launch dev-a --target .#dev-a` fails during provisioning (e.g., passt fails to start)

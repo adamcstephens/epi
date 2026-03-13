@@ -1,10 +1,10 @@
 # exec-command Specification
 
 ## Purpose
-TBD - created by archiving change add-exec-subcommand. Update Purpose after archive.
+Define the exec subcommand for running commands inside VM instances via SSH.
 ## Requirements
 ### Requirement: Exec runs a command inside a running instance via SSH
-The CLI SHALL provide an `exec` command that accepts an optional positional instance name followed by `--` and a command with arguments. The command SHALL be executed inside the VM via SSH, and the CLI SHALL forward stdout and stderr from the remote process.
+The CLI SHALL provide an `exec` command that accepts an optional positional instance name followed by a command with arguments. The command uses clap's `last = true` argument handling; the `--` separator is conventional but not strictly enforced by the parser. The command SHALL be executed inside the VM via SSH, and the CLI SHALL forward stdout and stderr from the remote process.
 
 #### Scenario: Run a command on the default instance
 - **WHEN** a user runs `epi exec -- ls /tmp`
@@ -51,4 +51,3 @@ The CLI SHALL require at least one argument after `--`. If no command is provide
 - **WHEN** a user runs `epi exec`
 - **THEN** the CLI exits non-zero
 - **AND** the error indicates a command is required
-

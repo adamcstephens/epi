@@ -93,6 +93,9 @@ fn launch_vm_inner(
 
     let vm_unit = instance_store::vm_unit_name(instance_name, unit_id)?;
 
+    // Write partial runtime so unit_id is recoverable if we crash mid-spawn
+    instance_store::set_partial_runtime(instance_name, unit_id)?;
+
     // Start passt for networking
     let passt_unit = format!("epi-{instance_name}_{unit_id}_passt.service");
     let passt_socket = inst_dir.join("passt.sock");
@@ -271,6 +274,8 @@ fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -
         return Ok(());
     }
 
+    process::require_binary("qemu-img", "qemu-utils")?;
+
     if target::is_nix_store_path(source) {
         // Create copy-on-write overlay
         let out = process::run(
@@ -387,6 +392,7 @@ fn generate_seed_iso(
     }
 
     // Build ISO with xorriso
+    process::require_binary("xorriso", "xorriso")?;
     let out = process::run(
         "xorriso",
         &[
@@ -412,6 +418,7 @@ fn generate_seed_iso(
 }
 
 fn start_passt(unit_name: &str, slice: &str, socket_path: &str, ssh_port: u16) -> Result<()> {
+    process::require_binary("passt", "passt")?;
     let tcp_fwd = format!("{ssh_port}:22");
     let out = process::run_helper(
         unit_name,
@@ -439,6 +446,7 @@ fn start_virtiofsd(
     socket_path: &str,
     shared_dir: &str,
 ) -> Result<()> {
+    process::require_binary("virtiofsd", "virtiofsd")?;
     let out = process::run_helper(
         unit_name,
         slice,

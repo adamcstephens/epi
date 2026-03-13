@@ -4,7 +4,7 @@ Define the `start` subcommand that resumes an existing stopped VM instance witho
 ## Requirements
 
 ### Requirement: Start command resumes an existing stopped instance
-The CLI SHALL provide a `start` command that accepts an optional positional instance name. If the instance name is omitted, the CLI MUST use `default`. The command MUST look up the stored target from the instance store and relaunch the VM using that target. The command MUST NOT require a `--target` flag.
+The CLI SHALL provide a `start` command that accepts an optional positional instance name. If the instance name is omitted, the CLI MUST use `default`. The command MUST look up the stored target from the instance store and relaunch the VM using that target. The command MUST NOT require a `--target` flag. The `start` command does not accept a `--disk-size` flag — disk size is set only by the `launch` command.
 
 #### Scenario: Start an existing stopped instance
 - **WHEN** a user runs `epi start dev-a` and instance `dev-a` exists in the store but is not running
