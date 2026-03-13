@@ -53,15 +53,16 @@
           {
             devShells.default = pkgs.mkShell {
               packages = [
-                pkgs.xorriso
                 pkgs.cloud-hypervisor
                 pkgs.jq
                 pkgs.just
                 pkgs.nixfmt
-                pkgs.qemu-utils
-                pkgs.passt
-                pkgs.virtiofsd
                 pkgs.openssh
+                pkgs.passt
+                pkgs.qemu-utils
+                pkgs.rsync
+                pkgs.virtiofsd
+                pkgs.xorriso
 
                 pkgs.cargo
                 pkgs.rustc

@@ -5,6 +5,7 @@
   makeWrapper,
   passt,
   qemu-utils,
+  rsync,
   runCommand,
   virtiofsd,
   xorriso,
@@ -21,6 +22,7 @@ runCommand "epi"
         cloud-hypervisor
         passt
         qemu-utils
+        rsync
         virtiofsd
         xorriso
       ]
