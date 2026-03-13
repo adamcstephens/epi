@@ -52,19 +52,19 @@ The CLI SHALL start passt and virtiofsd as transient systemd user services (`sys
 - **THEN** each virtiofsd process runs inside a systemd user service named `epi-<escaped>-<id>-virtiofsd-<index>.service`
 - **AND** each service is a member of the instance slice
 
-### Requirement: VM exit cascades to all helper processes via ExecStopPost
-The VM transient service SHALL be configured with `ExecStopPost=` that stops each helper unit individually. When cloud-hypervisor exits for any reason (crash, guest-initiated shutdown, or explicit stop), systemd SHALL automatically stop all helper processes. The `ExecStopPost` command SHALL use the NixOS absolute path `/run/current-system/sw/bin/systemctl` since `ExecStopPost=` does not inherit the user's `$PATH`.
+### Requirement: VM exit cascades to all helper processes via PartOf=
+Each helper transient service (passt, virtiofsd) SHALL be configured with `PartOf=<vm-unit>.service` so that systemd automatically stops helpers when the VM unit stops. The VM service SHALL NOT use `ExecStopPost` for helper cleanup.
 
 #### Scenario: Guest shutdown cascades to helpers
 - **WHEN** a user runs `shutdown` inside the guest VM
 - **THEN** cloud-hypervisor exits
-- **AND** systemd runs the `ExecStopPost` commands on the VM service
-- **AND** each helper unit (passt, virtiofsd) is stopped individually
+- **AND** systemd stops each helper unit via the `PartOf=` directive
+- **AND** each helper unit (passt, virtiofsd) is stopped
 
 #### Scenario: VM crash cascades to helpers
 - **WHEN** cloud-hypervisor crashes unexpectedly
-- **THEN** systemd runs the `ExecStopPost` commands on the VM service
-- **AND** each helper unit (passt, virtiofsd) is stopped individually
+- **THEN** systemd stops each helper unit via the `PartOf=` directive
+- **AND** each helper unit (passt, virtiofsd) is stopped
 
 #### Scenario: Explicit stop cascades to helpers
 - **WHEN** a user runs `epi stop dev-a`
