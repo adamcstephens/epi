@@ -2,7 +2,7 @@
 Define the CLI surface for managing development VM instances, including creation, lifecycle operations, and instance inventory.
 ## Requirements
 ### Requirement: Launch command creates or starts an instance from a target
-The CLI SHALL provide a `launch` command that accepts an optional positional instance name and an optional `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use `default` as the instance name. If `--target` is omitted, the CLI SHALL look for a `target` value in the project config file (`.epi/config.toml`). If neither CLI nor config provides a target, the CLI MUST exit non-zero with an error message explaining both ways to provide a target. The command SHALL accept `--no-wait` to skip SSH polling and `--wait-timeout` to configure the SSH wait duration.
+The CLI SHALL provide a `launch` command that accepts an optional positional instance name and an optional `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use the `default_name` from config, falling back to `default` if not configured. If `--target` is omitted, the CLI SHALL look for a `target` value in the project config file (`.epi/config.toml`). If neither CLI nor config provides a target, the CLI MUST exit non-zero with an error message explaining both ways to provide a target. The command SHALL accept `--no-wait` to skip SSH polling, `--wait-timeout` to configure the SSH wait duration, `--cpus` to override the descriptor CPU count, and `--memory` to override the descriptor memory size.
 
 During launch, the CLI SHALL show step-based progress output on stderr: a spinner during provisioning with elapsed time, and a spinner during SSH wait with elapsed time. On completion, the CLI SHALL display a success message with the SSH port. When `--console` is active, the CLI SHALL skip spinners (to avoid corrupting raw terminal mode) and use plain text messages instead.
 
@@ -11,10 +11,23 @@ During launch, the CLI SHALL show step-based progress output on stderr: a spinne
 - **THEN** the CLI resolves instance name `dev-a`
 - **AND** the CLI resolves target `.#dev-a`
 
-#### Scenario: Instance name omitted
-- **WHEN** a user runs `epi launch --target github:org/repo#dev`
+#### Scenario: Instance name omitted uses default_name from config
+- **WHEN** `.epi/config.toml` contains `default_name = "dev"`
+- **AND** a user runs `epi launch --target .#dev`
+- **THEN** the CLI resolves instance name `dev`
+
+#### Scenario: Instance name omitted with no default_name configured
+- **WHEN** no config sets `default_name`
+- **AND** a user runs `epi launch --target github:org/repo#dev`
 - **THEN** the CLI resolves instance name `default`
-- **AND** the CLI resolves target `github:org/repo#dev`
+
+#### Scenario: --cpus flag overrides descriptor
+- **WHEN** a user runs `epi launch --cpus 4`
+- **THEN** the VM is launched with 4 CPUs regardless of the descriptor value
+
+#### Scenario: --memory flag overrides descriptor
+- **WHEN** a user runs `epi launch --memory 4096`
+- **THEN** the VM is launched with 4096 MiB of memory regardless of the descriptor value
 
 #### Scenario: --no-wait flag skips SSH polling
 - **WHEN** a user runs `epi launch dev-a --target .#dev-a --no-wait`
@@ -40,7 +53,7 @@ During launch, the CLI SHALL show step-based progress output on stderr: a spinne
 - **WHEN** a user runs `epi launch` in an interactive terminal
 - **THEN** stderr shows a spinner during provisioning with elapsed time
 - **AND** stderr shows a spinner during SSH wait with elapsed time
-- **AND** on success, a "✓" prefixed message shows the instance is ready with the SSH port
+- **AND** on success, a "checkmark" prefixed message shows the instance is ready with the SSH port
 
 #### Scenario: Plain progress with --console flag
 - **WHEN** a user runs `epi launch --console`
@@ -60,19 +73,26 @@ The CLI SHALL treat `--target` as a single string value in `<flake-ref>#<config-
 - **AND** the error states that both flake reference and config name are required
 
 ### Requirement: Lifecycle commands operate on instance identity
-The CLI SHALL treat lifecycle commands as operating on instance identity, not on target identity. The commands `stop`, `rebuild`, `ssh`, `exec`, and `logs` SHALL accept an optional positional instance name and MUST default to `default` when omitted.
+The CLI SHALL treat lifecycle commands as operating on instance identity, not on target identity. The commands `stop`, `rebuild`, `ssh`, `exec`, and `logs` SHALL accept an optional positional instance name and MUST use the `default_name` from config when omitted, falling back to `default` if not configured.
 
 #### Scenario: Explicit lifecycle target
 - **WHEN** a user runs `epi stop dev-a`
 - **THEN** the CLI selects instance `dev-a` for shutdown
 
-#### Scenario: Implicit default lifecycle target
-- **WHEN** a user runs `epi ssh`
+#### Scenario: Implicit default lifecycle target with default_name configured
+- **WHEN** `.epi/config.toml` contains `default_name = "dev"`
+- **AND** a user runs `epi ssh`
+- **THEN** the CLI selects instance `dev`
+
+#### Scenario: Implicit default lifecycle target without default_name
+- **WHEN** no config sets `default_name`
+- **AND** a user runs `epi ssh`
 - **THEN** the CLI selects instance `default`
 
-#### Scenario: Exec uses default instance
-- **WHEN** a user runs `epi exec -- hostname`
-- **THEN** the CLI selects instance `default`
+#### Scenario: Exec uses configured default instance
+- **WHEN** `.epi/config.toml` contains `default_name = "dev"`
+- **AND** a user runs `epi exec -- hostname`
+- **THEN** the CLI selects instance `dev`
 
 ### Requirement: Missing default instance returns clear guidance
 If a lifecycle command is invoked without an instance name and `default` does not exist, the CLI MUST fail with a clear message explaining how to create `default` or specify another instance.
@@ -106,7 +126,7 @@ After a successful `epi launch`, the CLI SHALL print the host port forwarded to 
 
 #### Scenario: SSH port is printed on successful launch
 - **WHEN** `epi launch dev-a --target .#dev-a` succeeds
-- **THEN** the CLI prints a "✓" prefixed message indicating the instance is ready with the SSH port number
+- **THEN** the CLI prints a "checkmark" prefixed message indicating the instance is ready with the SSH port number
 
 ### Requirement: Status includes forwarded SSH port
 The `epi status` command SHALL display instance details in a labeled field format. The output SHALL include the instance name (bold), target, and running status with a colored dot indicator. When the instance is running with runtime metadata, the output SHALL additionally include SSH port, serial socket path, disk path, and unit ID.
