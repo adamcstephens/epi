@@ -116,6 +116,33 @@ fn launch_vm_inner(
 
     let vm_unit = instance_store::vm_unit_name(instance_name, unit_id)?;
 
+    // Resolve binaries for shutdown script (fail early if missing)
+    let ch_remote_path =
+        process::find_executable(cloud_hypervisor::CH_REMOTE_BINARY).ok_or_else(|| {
+            anyhow::anyhow!("{} not found in PATH", cloud_hypervisor::CH_REMOTE_BINARY)
+        })?;
+    let timeout_path = process::find_executable("timeout")
+        .ok_or_else(|| anyhow::anyhow!("timeout not found in PATH"))?;
+    let tail_path = process::find_executable("tail")
+        .ok_or_else(|| anyhow::anyhow!("tail not found in PATH"))?;
+
+    // Generate shutdown script with absolute paths
+    let shutdown_script_path = inst_dir.join("shutdown.sh");
+    let shutdown_content = cloud_hypervisor::generate_shutdown_script(
+        &api_socket_str,
+        &ch_remote_path,
+        &timeout_path,
+        &tail_path,
+    );
+    fs::write(&shutdown_script_path, &shutdown_content).context("writing shutdown script")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&shutdown_script_path, fs::Permissions::from_mode(0o755))
+            .context("setting shutdown script permissions")?;
+    }
+    let shutdown_script_str = shutdown_script_path.to_string_lossy().to_string();
+
     // Write partial runtime so unit_id is recoverable if we crash mid-spawn
     instance_store::set_partial_runtime(instance_name, unit_id)?;
 
@@ -185,7 +212,8 @@ fn launch_vm_inner(
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
     // Generate systemd properties for VM lifecycle
-    let properties = cloud_hypervisor::service_properties(Some(&api_socket_str), &helper_units);
+    let properties =
+        cloud_hypervisor::service_properties(Some(&shutdown_script_str), &helper_units);
 
     // Launch VM as systemd service
     let result = process::run_service(

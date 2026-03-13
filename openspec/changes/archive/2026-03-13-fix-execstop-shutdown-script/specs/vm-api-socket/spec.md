@@ -1,19 +1,4 @@
-## Purpose
-Define how the CLI configures cloud-hypervisor with an API socket for lifecycle control, and uses ch-remote for graceful shutdown via a generated shutdown script.
-
-## Requirements
-
-### Requirement: CLI launches cloud-hypervisor with an API socket
-The CLI SHALL pass `--api-socket path=<instance-dir>/api.sock` to cloud-hypervisor at launch. The CLI SHALL remove any stale `api.sock` file before launching.
-
-#### Scenario: API socket is created at launch
-- **WHEN** `epi launch dev-a --target .#dev-a` provisions successfully
-- **THEN** cloud-hypervisor is started with `--api-socket path=<instance-dir>/api.sock`
-- **AND** the API socket file exists in the instance directory
-
-#### Scenario: Stale API socket is cleaned before launch
-- **WHEN** `epi launch dev-a --target .#dev-a` is run and `api.sock` exists from a previous launch
-- **THEN** the CLI removes the stale `api.sock` before starting cloud-hypervisor
+## MODIFIED Requirements
 
 ### Requirement: VM service ExecStop performs graceful shutdown via ch-remote
 The CLI SHALL generate a shutdown script at `<instance-dir>/shutdown.sh` during launch. The script SHALL contain the graceful shutdown sequence with absolute paths to all binaries resolved at launch time. The VM transient service SHALL be configured with a single `ExecStop=<instance-dir>/shutdown.sh` that executes this script.
@@ -48,11 +33,3 @@ The CLI SHALL resolve absolute paths for `ch-remote`, `timeout`, and `tail` at l
 - **WHEN** `epi launch dev-a` is run and `ch-remote` is not in PATH
 - **THEN** the launch fails with an error indicating the missing binary
 - **AND** no VM is started
-
-### Requirement: VM service has a TimeoutStopSec safety net
-The VM transient service SHALL be configured with `TimeoutStopSec=20`. If the ExecStop sequence and SIGTERM do not terminate cloud-hypervisor within 20 seconds, systemd SHALL send SIGKILL.
-
-#### Scenario: All shutdown methods fail
-- **WHEN** the ExecStop sequence fails and cloud-hypervisor ignores SIGTERM
-- **THEN** systemd sends SIGKILL after 20 seconds
-- **AND** the process is forcefully terminated

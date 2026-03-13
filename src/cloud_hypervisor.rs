@@ -64,17 +64,11 @@ pub fn build_args(
 /// and TimeoutStopSec=20 as a hard safety net.
 ///
 /// Helper cleanup is handled by PartOf= on the helper units themselves.
-pub fn service_properties(api_socket: Option<&str>, helper_units: &[String]) -> Vec<String> {
+pub fn service_properties(shutdown_script: Option<&str>, helper_units: &[String]) -> Vec<String> {
     let mut props = Vec::new();
 
-    if let Some(api_socket) = api_socket {
-        props.push(format!(
-            "ExecStop={CH_REMOTE_BINARY} --api-socket {api_socket} power-button"
-        ));
-        props.push("ExecStop=timeout 15 tail --pid=$MAINPID -f /dev/null".to_string());
-        props.push(format!(
-            "ExecStop={CH_REMOTE_BINARY} --api-socket {api_socket} shutdown-vmm"
-        ));
+    if let Some(script_path) = shutdown_script {
+        props.push(format!("ExecStop={script_path}"));
         props.push("TimeoutStopSec=20".to_string());
     }
 
@@ -83,4 +77,70 @@ pub fn service_properties(api_socket: Option<&str>, helper_units: &[String]) -> 
     }
 
     props
+}
+
+use std::path::Path;
+
+/// Resolve required binaries and generate shutdown script content with absolute paths.
+///
+/// The script performs:
+/// 1. ch-remote power-button (ACPI shutdown)
+/// 2. timeout 15s waiting for main process to exit
+/// 3. ch-remote shutdown-vmm (force fallback)
+pub fn generate_shutdown_script(
+    api_socket: &str,
+    ch_remote: &Path,
+    timeout_bin: &Path,
+    tail_bin: &Path,
+) -> String {
+    let ch_remote = ch_remote.display();
+    let timeout_bin = timeout_bin.display();
+    let tail_bin = tail_bin.display();
+    format!(
+        "#!/usr/bin/env sh\n\
+         {ch_remote} --api-socket {api_socket} power-button\n\
+         {timeout_bin} 15 {tail_bin} --pid=$MAINPID -f /dev/null\n\
+         {ch_remote} --api-socket {api_socket} shutdown-vmm\n"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn generate_shutdown_script_uses_absolute_paths() {
+        let content = generate_shutdown_script(
+            "/tmp/inst/api.sock",
+            Path::new("/nix/store/abc/bin/ch-remote"),
+            Path::new("/nix/store/def/bin/timeout"),
+            Path::new("/nix/store/ghi/bin/tail"),
+        );
+        assert!(content.starts_with("#!/usr/bin/env sh\n"));
+        assert!(content.contains(
+            "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock power-button\n"
+        ));
+        assert!(content.contains(
+            "/nix/store/def/bin/timeout 15 /nix/store/ghi/bin/tail --pid=$MAINPID -f /dev/null\n"
+        ));
+        assert!(content.contains(
+            "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock shutdown-vmm\n"
+        ));
+    }
+
+    #[test]
+    fn service_properties_with_shutdown_script() {
+        let helpers = vec!["helper.service".to_string()];
+        let props = service_properties(Some("/tmp/inst/shutdown.sh"), &helpers);
+        assert_eq!(props[0], "ExecStop=/tmp/inst/shutdown.sh");
+        assert_eq!(props[1], "TimeoutStopSec=20");
+        assert_eq!(props[2], "After=helper.service");
+    }
+
+    #[test]
+    fn service_properties_without_shutdown_script() {
+        let helpers = vec!["helper.service".to_string()];
+        let props = service_properties(None, &helpers);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0], "After=helper.service");
+    }
 }
