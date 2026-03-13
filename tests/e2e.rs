@@ -1,7 +1,7 @@
 //! E2E tests that launch real VMs.
 //!
 //! These require a working nix flake target and systemd user session.
-//! Run with: cargo test --test e2e -- --test-threads=1
+//! Run with: cargo test --test e2e
 //!
 //! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
 
@@ -18,7 +18,7 @@ static DESCRIPTOR: LazyLock<(String, target::Descriptor)> = LazyLock::new(|| {
     let t = e2e_target();
     let desc = target::resolve_descriptor(&t).expect("failed to resolve e2e target");
     target::validate_descriptor(&desc).expect("invalid e2e descriptor");
-    target::ensure_paths_exist(&desc).expect("e2e descriptor paths missing");
+    target::ensure_paths_exist(&t, &desc).expect("e2e descriptor paths missing");
     (t, desc)
 });
 

@@ -156,18 +156,29 @@ pub fn is_nix_store_path(path: &str) -> bool {
     path.starts_with("/nix/store/")
 }
 
-/// Ensure nix store paths are realized
-pub fn ensure_paths_exist(desc: &Descriptor) -> Result<()> {
-    let paths = descriptor_paths(desc);
-    for path in &paths {
-        if is_nix_store_path(path) && !Path::new(path).exists() {
-            let out = process::run("nix-store", &["--realise", path])?;
-            if !out.success() {
-                bail!("failed to realise {path}: {}", out.stderr);
-            }
+/// Ensure all nix store paths from the descriptor are built.
+/// If any are missing, builds the flake target to produce them.
+pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
+    let paths = descriptor_store_paths(desc);
+    let any_missing = paths.iter().any(|p| !Path::new(p).exists());
+
+    if any_missing {
+        let canonical = canonicalize(target);
+        let toplevel = format!("{canonical}.config.system.build.toplevel");
+        let image = format!("{canonical}.config.system.build.image");
+        let out = process::run("nix", &["build", &toplevel, &image, "--no-link"])?;
+        if !out.success() {
+            bail!(
+                "nix build failed (exit {}): {}",
+                out.status,
+                out.stderr
+            );
         }
+    }
+
+    for path in &paths {
         if !Path::new(path).exists() {
-            bail!("path does not exist: {path}");
+            bail!("path does not exist after build: {path}");
         }
     }
     Ok(())
@@ -183,10 +194,25 @@ pub fn validate_descriptor(desc: &Descriptor) -> Result<()> {
     Ok(())
 }
 
-fn descriptor_paths(desc: &Descriptor) -> Vec<&str> {
+fn descriptor_store_paths(desc: &Descriptor) -> Vec<&str> {
     let mut paths = vec![desc.kernel.as_str(), desc.disk.as_str()];
     if let Some(ref initrd) = desc.initrd {
         paths.push(initrd.as_str());
+    }
+    for script in desc.hooks.post_launch.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
+    for script in desc.hooks.pre_stop.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
+    for script in desc.hooks.guest_init.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
     }
     paths
 }
@@ -243,7 +269,7 @@ pub fn resolve_descriptor_cached(target: &str, rebuild: bool) -> Result<CacheRes
     if let Ok(content) = fs::read_to_string(&cache_path) {
         if let Ok(desc) = serde_json::from_str::<Descriptor>(&content) {
             // Verify cached paths still exist
-            let paths_exist = descriptor_paths(&desc)
+            let paths_exist = descriptor_store_paths(&desc)
                 .iter()
                 .all(|p| Path::new(p).exists());
             if paths_exist {
