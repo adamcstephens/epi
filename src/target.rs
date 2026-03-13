@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,9 +9,11 @@ use crate::process;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HooksDescriptor {
     #[serde(default, alias = "post-launch")]
-    pub post_launch: Vec<String>,
+    pub post_launch: BTreeMap<String, String>,
     #[serde(default, alias = "pre-stop")]
-    pub pre_stop: Vec<String>,
+    pub pre_stop: BTreeMap<String, String>,
+    #[serde(default, alias = "guest-init")]
+    pub guest_init: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,11 +46,27 @@ fn default_memory_mib() -> u32 {
     1024
 }
 
+impl HooksDescriptor {
+    /// Sorted hook script paths for a given hook point.
+    pub fn post_launch_scripts(&self) -> Vec<String> {
+        self.post_launch.values().cloned().collect()
+    }
+
+    pub fn pre_stop_scripts(&self) -> Vec<String> {
+        self.pre_stop.values().cloned().collect()
+    }
+
+    pub fn guest_init_scripts(&self) -> Vec<String> {
+        self.guest_init.values().cloned().collect()
+    }
+}
+
 impl Default for HooksDescriptor {
     fn default() -> Self {
         Self {
-            post_launch: vec![],
-            pre_stop: vec![],
+            post_launch: BTreeMap::new(),
+            pre_stop: BTreeMap::new(),
+            guest_init: BTreeMap::new(),
         }
     }
 }
@@ -362,8 +381,8 @@ mod tests {
             "memory_mib": 2048,
             "configured_users": ["root", "admin"],
             "hooks": {
-                "post_launch": ["/nix/store/hook1"],
-                "pre_stop": []
+                "post_launch": {"00-hook": "/nix/store/hook1"},
+                "pre_stop": {}
             }
         }"#;
         let desc: Descriptor = serde_json::from_str(json).unwrap();
@@ -381,14 +400,14 @@ mod tests {
             "disk": "/d",
             "configuredUsers": ["root", "admin"],
             "hooks": {
-                "post-launch": ["/nix/store/hook1"],
-                "pre-stop": ["/nix/store/hook2"]
+                "post-launch": {"00-hook1": "/nix/store/hook1"},
+                "pre-stop": {"00-hook2": "/nix/store/hook2"}
             }
         }"#;
         let desc: Descriptor = serde_json::from_str(json).unwrap();
         assert_eq!(desc.configured_users, vec!["root", "admin"]);
-        assert_eq!(desc.hooks.post_launch, vec!["/nix/store/hook1"]);
-        assert_eq!(desc.hooks.pre_stop, vec!["/nix/store/hook2"]);
+        assert_eq!(desc.hooks.post_launch_scripts(), vec!["/nix/store/hook1"]);
+        assert_eq!(desc.hooks.pre_stop_scripts(), vec!["/nix/store/hook2"]);
     }
 
     #[test]

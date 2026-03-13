@@ -314,7 +314,7 @@ fn run_post_launch_hooks(
     ssh_key_path: &str,
 ) -> Result<()> {
     let desc_hooks = target::resolve_descriptor_cached(target_str, false)
-        .map(|c| c.descriptor().hooks.post_launch.clone())
+        .map(|c| c.descriptor().hooks.post_launch_scripts())
         .unwrap_or_default();
 
     let hook_scripts = hooks::discover(instance, &desc_hooks, "post-launch")?;
@@ -385,7 +385,7 @@ fn cmd_stop(instance: &str) -> Result<()> {
         if let Some(ref rt) = st.runtime {
             if let Some(ssh_port) = rt.ssh_port {
                 let desc_hooks = target::resolve_descriptor_cached(&st.target, false)
-                    .map(|c| c.descriptor().hooks.pre_stop.clone())
+                    .map(|c| c.descriptor().hooks.pre_stop_scripts())
                     .unwrap_or_default();
 
                 let hook_scripts = hooks::discover(instance, &desc_hooks, "pre-stop")?;
@@ -585,7 +585,7 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
 
         // Run post-launch hooks
         let desc_hooks = target::resolve_descriptor_cached(&state.target, false)
-            .map(|c| c.descriptor().hooks.post_launch.clone())
+            .map(|c| c.descriptor().hooks.post_launch_scripts())
             .unwrap_or_default();
 
         let hook_scripts = hooks::discover(instance, &desc_hooks, "post-launch")?;

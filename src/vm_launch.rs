@@ -293,36 +293,14 @@ fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -
         fs::copy(source, dest).context("copying disk image")?;
     }
 
-    // Resize if needed
+    // Resize the virtual disk — the guest grows the partition at boot
+    // via boot.growPartition.
     let dest_str = dest.to_string_lossy();
     let out = process::run("qemu-img", &["resize", &dest_str, disk_size])?;
     if !out.success() {
         bail!("qemu-img resize failed: {}", out.stderr);
     }
 
-    // Grow GPT partition table to fill resized disk
-    grow_partition(&dest_str)?;
-
-    Ok(())
-}
-
-fn grow_partition(path: &str) -> Result<()> {
-    let out = process::run(
-        "sgdisk",
-        &[
-            "-e",
-            "-d",
-            "1",
-            "-n",
-            "1:0:0",
-            "-t",
-            "1:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
-            path,
-        ],
-    )?;
-    if !out.success() {
-        bail!("sgdisk partition grow failed: {}", out.stderr);
-    }
     Ok(())
 }
 

@@ -55,7 +55,6 @@
               packages = [
                 pkgs.xorriso
                 pkgs.cloud-hypervisor
-                pkgs.gptfdisk
                 pkgs.jq
                 pkgs.just
                 pkgs.nixfmt
