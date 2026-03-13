@@ -49,7 +49,7 @@ pub fn build_args(
 
     if let Some(api_socket) = api_socket {
         args.push("--api-socket".to_string());
-        args.push(api_socket.to_string());
+        args.push(format!("path={api_socket}"));
     }
 
     args
@@ -57,22 +57,32 @@ pub fn build_args(
 
 /// Build systemd service properties for cloud-hypervisor VM lifecycle.
 ///
-/// Returns properties for ExecStopPost (helper unit cleanup), and optionally
-/// ExecStop (graceful shutdown via ch-remote), After ordering, and TimeoutStopSec
-/// when an API socket is provided.
+/// When an API socket is provided, configures a graceful shutdown sequence:
+/// 1. ACPI power-button (guest-clean shutdown)
+/// 2. Wait up to 15s for CH to exit
+/// 3. Force shutdown-vmm as fallback
+/// Plus After= ordering so helpers stay alive during VM shutdown,
+/// and TimeoutStopSec=20 as a hard safety net.
+///
+/// ExecStopPost always cleans up helper units regardless.
 pub fn service_properties(api_socket: Option<&str>, helper_units: &[String]) -> Vec<String> {
     let systemctl = process::systemctl_bin();
     let mut props = Vec::new();
 
     if let Some(api_socket) = api_socket {
         props.push(format!(
+            "ExecStop={CH_REMOTE_BINARY} --api-socket {api_socket} power-button"
+        ));
+        props.push("ExecStop=timeout 15 tail --pid=$MAINPID -f /dev/null".to_string());
+        props.push(format!(
             "ExecStop={CH_REMOTE_BINARY} --api-socket {api_socket} shutdown-vmm"
         ));
-        props.push("TimeoutStopSec=15".to_string());
+        props.push("TimeoutStopSec=20".to_string());
     }
 
     for unit in helper_units {
         props.push(format!("ExecStopPost={systemctl} --user stop {unit}"));
+        props.push(format!("After={unit}"));
     }
 
     props
