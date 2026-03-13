@@ -229,6 +229,7 @@ in
     };
 
     boot.loader.grub.enable = false;
+    boot.growPartition = true;
 
     boot.initrd.availableKernelModules = [
       "virtio_pci"

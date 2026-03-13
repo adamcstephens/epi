@@ -1,6 +1,5 @@
 {
   cloud-hypervisor,
-  gptfdisk,
   lib,
   epi-unwrapped,
   makeWrapper,
@@ -20,7 +19,6 @@ runCommand "epi"
     makeWrapper ${lib.getExe epi-unwrapped} $out/bin/epi --prefix PATH : ${
       lib.makeBinPath [
         cloud-hypervisor
-        gptfdisk
         passt
         qemu-utils
         virtiofsd
