@@ -26,6 +26,15 @@ fn generate_mac(instance_name: &str) -> String {
     )
 }
 
+pub struct LaunchConfig<'a> {
+    pub instance_name: &'a str,
+    pub desc: &'a Descriptor,
+    pub mounts: &'a [String],
+    pub disk_size: &'a str,
+    pub cpus: u32,
+    pub memory_mib: u32,
+}
+
 /// Provision a new VM: resolve target, validate, launch
 pub fn provision(
     instance_name: &str,
@@ -42,58 +51,33 @@ pub fn provision(
     target::validate_descriptor(desc)?;
     target::ensure_paths_exist(target_str, desc)?;
 
-    let cpus = cpus_override.unwrap_or(desc.cpus);
-    let memory_mib = memory_override.unwrap_or(desc.memory_mib);
-
-    launch_vm(
+    let config = LaunchConfig {
         instance_name,
-        target_str,
         desc,
         mounts,
         disk_size,
-        cpus,
-        memory_mib,
-    )
+        cpus: cpus_override.unwrap_or(desc.cpus),
+        memory_mib: memory_override.unwrap_or(desc.memory_mib),
+    };
+
+    launch_vm(&config)
 }
 
-fn launch_vm(
-    instance_name: &str,
-    _target_str: &str,
-    desc: &Descriptor,
-    mounts: &[String],
-    disk_size: &str,
-    cpus: u32,
-    memory_mib: u32,
-) -> Result<Runtime> {
+fn launch_vm(config: &LaunchConfig) -> Result<Runtime> {
     let unit_id = process::generate_unit_id();
-    let slice = instance_store::slice_name(instance_name, &unit_id)?;
+    let slice = instance_store::slice_name(config.instance_name, &unit_id)?;
 
-    let result = launch_vm_inner(
-        instance_name,
-        desc,
-        mounts,
-        disk_size,
-        cpus,
-        memory_mib,
-        &unit_id,
-        &slice,
-    );
+    let result = launch_vm_inner(config, &unit_id, &slice);
     if result.is_err() {
         let _ = process::stop_unit(&slice);
     }
     result
 }
 
-fn launch_vm_inner(
-    instance_name: &str,
-    desc: &Descriptor,
-    mounts: &[String],
-    disk_size: &str,
-    cpus: u32,
-    memory_mib: u32,
-    unit_id: &str,
-    slice: &str,
-) -> Result<Runtime> {
+fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<Runtime> {
+    let instance_name = config.instance_name;
+    let desc = config.desc;
+
     let inst_dir = instance_store::ensure_instance_dir(instance_name)?
         .canonicalize()
         .context("canonicalizing instance dir")?;
@@ -108,7 +92,7 @@ fn launch_vm_inner(
 
     // Prepare writable disk overlay
     let disk_path = inst_dir.join("disk.img");
-    ensure_writable_disk(&desc.disk, &disk_path, disk_size)?;
+    ensure_writable_disk(&desc.disk, &disk_path, config.disk_size)?;
 
     // Generate SSH keypair
     let ssh_key_path = inst_dir.join("id_ed25519");
@@ -122,7 +106,7 @@ fn launch_vm_inner(
     generate_seed_iso(
         instance_name,
         &ssh_key_path,
-        mounts,
+        config.mounts,
         &desc.configured_users,
         &seed_iso,
     )?;
@@ -190,7 +174,7 @@ fn launch_vm_inner(
 
     // Start virtiofsd for each mount
     let mut fs_args: Vec<String> = vec![];
-    for (i, mount_path) in mounts.iter().enumerate() {
+    for (i, mount_path) in config.mounts.iter().enumerate() {
         let mount_dir = Path::new(mount_path);
         if !mount_dir.is_dir() {
             bail!("mount path is not a directory: {mount_path}");
@@ -221,20 +205,20 @@ fn launch_vm_inner(
 
     let mac = generate_mac(instance_name);
 
-    let ch_args = cloud_hypervisor::build_args(
-        &desc.kernel,
-        desc.initrd.as_deref(),
-        &disk_str,
-        &seed_str,
-        cpus,
-        memory_mib,
-        &desc.cmdline,
-        &serial_socket_str,
-        &passt_socket_str,
-        &fs_args,
-        Some(&api_socket_str),
-        &mac,
-    );
+    let ch_args = cloud_hypervisor::build_args(&cloud_hypervisor::CloudHypervisorConfig {
+        kernel: &desc.kernel,
+        initrd: desc.initrd.as_deref(),
+        disk_path: &disk_str,
+        seed_iso: &seed_str,
+        cpus: config.cpus,
+        memory_mib: config.memory_mib,
+        cmdline: &desc.cmdline,
+        serial_socket: &serial_socket_str,
+        passt_socket: &passt_socket_str,
+        fs_args: &fs_args,
+        api_socket: Some(&api_socket_str),
+        mac: &mac,
+    });
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
     // Generate systemd properties for VM lifecycle

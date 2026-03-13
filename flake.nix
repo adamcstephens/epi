@@ -65,6 +65,7 @@
                 pkgs.xorriso
 
                 pkgs.cargo
+                pkgs.clippy
                 pkgs.rustc
                 pkgs.rust-analyzer
                 pkgs.rustfmt

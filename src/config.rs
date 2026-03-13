@@ -24,15 +24,15 @@ pub struct Resolved {
 }
 
 fn resolve_path(path: &str, base: &Path) -> PathBuf {
-    if path.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(&path[2..]);
-        }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
     }
-    if path == "~" {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home);
-        }
+    if path == "~"
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home);
     }
     let p = Path::new(path);
     if p.is_absolute() {

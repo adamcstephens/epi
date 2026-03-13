@@ -1,52 +1,60 @@
 pub const BINARY: &str = "cloud-hypervisor";
 pub const CH_REMOTE_BINARY: &str = "ch-remote";
 
+pub struct CloudHypervisorConfig<'a> {
+    pub kernel: &'a str,
+    pub initrd: Option<&'a str>,
+    pub disk_path: &'a str,
+    pub seed_iso: &'a str,
+    pub cpus: u32,
+    pub memory_mib: u32,
+    pub cmdline: &'a str,
+    pub serial_socket: &'a str,
+    pub passt_socket: &'a str,
+    pub fs_args: &'a [String],
+    pub api_socket: Option<&'a str>,
+    pub mac: &'a str,
+}
+
 /// Build cloud-hypervisor CLI arguments from structured inputs.
-pub fn build_args(
-    kernel: &str,
-    initrd: Option<&str>,
-    disk_path: &str,
-    seed_iso: &str,
-    cpus: u32,
-    memory_mib: u32,
-    cmdline: &str,
-    serial_socket: &str,
-    passt_socket: &str,
-    fs_args: &[String],
-    api_socket: Option<&str>,
-    mac: &str,
-) -> Vec<String> {
+pub fn build_args(config: &CloudHypervisorConfig) -> Vec<String> {
     let mut args = vec![
         "--kernel".to_string(),
-        kernel.to_string(),
+        config.kernel.to_string(),
         "--disk".to_string(),
-        format!("path={disk_path},image_type=qcow2,backing_files=on"),
-        format!("path={seed_iso},readonly=on"),
+        format!(
+            "path={},image_type=qcow2,backing_files=on",
+            config.disk_path
+        ),
+        format!("path={},readonly=on", config.seed_iso),
         "--cpus".to_string(),
-        format!("boot={cpus},nested=on"),
+        format!("boot={},nested=on", config.cpus),
         "--memory".to_string(),
-        format!("size={memory_mib}M,shared=on"),
+        format!("size={}M,shared=on", config.memory_mib),
         "--serial".to_string(),
-        format!("socket={serial_socket}"),
+        format!("socket={}", config.serial_socket),
         "--console".to_string(),
         "off".to_string(),
         "--cmdline".to_string(),
-        cmdline.to_string(),
+        config.cmdline.to_string(),
         "--net".to_string(),
-        format!("vhost_user=true,socket={passt_socket},vhost_mode=client,mac={mac}"),
+        format!(
+            "vhost_user=true,socket={},vhost_mode=client,mac={}",
+            config.passt_socket, config.mac
+        ),
     ];
 
-    if let Some(initrd) = initrd {
+    if let Some(initrd) = config.initrd {
         args.push("--initramfs".to_string());
         args.push(initrd.to_string());
     }
 
-    if !fs_args.is_empty() {
+    if !config.fs_args.is_empty() {
         args.push("--fs".to_string());
-        args.extend(fs_args.iter().cloned());
+        args.extend(config.fs_args.iter().cloned());
     }
 
-    if let Some(api_socket) = api_socket {
+    if let Some(api_socket) = config.api_socket {
         args.push("--api-socket".to_string());
         args.push(format!("path={api_socket}"));
     }
@@ -60,8 +68,8 @@ pub fn build_args(
 /// 1. ACPI power-button (guest-clean shutdown)
 /// 2. Wait up to 15s for CH to exit
 /// 3. Force shutdown-vmm as fallback
-/// Plus After= ordering so helpers stay alive during VM shutdown,
-/// and TimeoutStopSec=20 as a hard safety net.
+///    Plus After= ordering so helpers stay alive during VM shutdown,
+///    and TimeoutStopSec=20 as a hard safety net.
 ///
 /// Helper cleanup is handled by PartOf= on the helper units themselves.
 pub fn service_properties(shutdown_script: Option<&str>, helper_units: &[String]) -> Vec<String> {

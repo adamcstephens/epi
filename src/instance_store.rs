@@ -191,14 +191,13 @@ pub fn find_running_owner_by_disk(disk: &str) -> Result<Option<(String, String)>
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if let Some(state) = load_state(&name)? {
-                if let Some(ref rt) = state.runtime {
-                    if rt.disk == disk {
-                        let unit = vm_unit_name(&name, &rt.unit_id)?;
-                        if process::unit_is_active(&unit)? {
-                            return Ok(Some((name, rt.unit_id.clone())));
-                        }
-                    }
+            if let Some(state) = load_state(&name)?
+                && let Some(ref rt) = state.runtime
+                && rt.disk == disk
+            {
+                let unit = vm_unit_name(&name, &rt.unit_id)?;
+                if process::unit_is_active(&unit)? {
+                    return Ok(Some((name, rt.unit_id.clone())));
                 }
             }
         }
