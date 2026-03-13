@@ -92,6 +92,12 @@ fn launch_vm_inner(
     }
     let serial_socket_str = serial_socket.to_string_lossy().to_string();
 
+    let api_socket = inst_dir.join("api.sock");
+    if api_socket.exists() {
+        fs::remove_file(&api_socket)?;
+    }
+    let api_socket_str = api_socket.to_string_lossy().to_string();
+
     let vm_unit = instance_store::vm_unit_name(instance_name, unit_id)?;
 
     // Write partial runtime so unit_id is recoverable if we crash mid-spawn
@@ -153,12 +159,12 @@ fn launch_vm_inner(
         &serial_socket_str,
         &passt_socket_str,
         &fs_args,
-        None,
+        Some(&api_socket_str),
     );
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
     // Generate systemd properties for VM lifecycle
-    let properties = cloud_hypervisor::service_properties(None, &helper_units);
+    let properties = cloud_hypervisor::service_properties(Some(&api_socket_str), &helper_units);
 
     // Launch VM as systemd service
     let result = process::run_service(

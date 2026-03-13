@@ -266,3 +266,31 @@ fn e2e_hooks() {
 
     unsafe { std::env::remove_var("EPI_PROJECT_HOOKS_DIR") };
 }
+
+#[test]
+#[ignore]
+fn e2e_graceful_shutdown() {
+    let name = unique_name("shutdown");
+    let _guard = InstanceGuard::new(&name);
+
+    let _runtime = provision_and_wait(&name);
+    assert!(instance_store::instance_is_running(&name).unwrap());
+
+    // Verify API socket exists
+    let inst_dir = instance_store::instance_dir(&name);
+    let api_socket = inst_dir.join("api.sock");
+    assert!(api_socket.exists(), "api.sock should exist after launch");
+
+    // Stop and measure time — should complete well under 90s
+    let start = std::time::Instant::now();
+    vm_launch::stop_instance(&name).expect("stop failed");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_secs() < 30,
+        "stop took {}s, expected < 30s (graceful shutdown should be fast)",
+        elapsed.as_secs()
+    );
+
+    assert!(!instance_store::instance_is_running(&name).unwrap());
+}
