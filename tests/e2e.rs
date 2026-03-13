@@ -52,6 +52,9 @@ fn default_resolved() -> config::Resolved {
         target: target_str.clone(),
         mounts: vec![],
         disk_size: "40G".to_string(),
+        cpus: None,
+        memory: None,
+        default_name: "default".to_string(),
     }
 }
 
@@ -69,6 +72,8 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
         &resolved.mounts,
         &resolved.disk_size,
         false,
+        resolved.cpus,
+        resolved.memory,
     )
     .expect("provision failed");
 
@@ -211,8 +216,8 @@ fn e2e_mount() {
 
     instance_store::set_launching(&name, target_str, mounts.clone()).unwrap();
 
-    let runtime =
-        vm_launch::provision(&name, target_str, &mounts, "40G", false).expect("provision failed");
+    let runtime = vm_launch::provision(&name, target_str, &mounts, "40G", false, None, None)
+        .expect("provision failed");
 
     instance_store::set_provisioned(&name, runtime.clone()).unwrap();
 
@@ -535,4 +540,62 @@ fn e2e_cp_file_to_vm() {
         verify.stderr
     );
     assert_eq!(verify.stdout, "epi-cp-test-content");
+}
+
+#[test]
+#[ignore]
+fn e2e_memory_override() {
+    let name = unique_name("memover");
+    let _guard = InstanceGuard::new(&name);
+
+    let mut resolved = default_resolved();
+    resolved.memory = Some(2048);
+
+    let runtime = provision_and_wait_with(&name, resolved);
+
+    // Verify the guest sees ~2048 MiB of memory
+    let out = ssh_exec(&runtime, "grep MemTotal /proc/meminfo");
+    assert!(
+        out.success(),
+        "meminfo failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+
+    // MemTotal is in kB; 2048 MiB = ~2097152 kB (minus kernel reserved)
+    let mem_kb: u64 = out
+        .stdout
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .expect("failed to parse MemTotal");
+
+    // Should be between 1800 MiB and 2100 MiB (kernel reserves some)
+    let mem_mib = mem_kb / 1024;
+    assert!(
+        mem_mib >= 1800 && mem_mib <= 2100,
+        "expected ~2048 MiB, got {mem_mib} MiB"
+    );
+}
+
+#[test]
+#[ignore] // cloud-hypervisor crashes with boot>1 + vhost-user passt: https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7766
+fn e2e_cpus_override() {
+    let name = unique_name("cpuover");
+    let _guard = InstanceGuard::new(&name);
+
+    let mut resolved = default_resolved();
+    resolved.cpus = Some(2);
+
+    let runtime = provision_and_wait_with(&name, resolved);
+
+    // Verify the guest sees 2 CPUs
+    let out = ssh_exec(&runtime, "nproc");
+    assert!(
+        out.success(),
+        "nproc failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "2", "expected 2 CPUs, got {}", out.stdout);
 }

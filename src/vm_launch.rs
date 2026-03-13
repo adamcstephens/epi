@@ -33,6 +33,8 @@ pub fn provision(
     mounts: &[String],
     disk_size: &str,
     rebuild: bool,
+    cpus_override: Option<u32>,
+    memory_override: Option<u32>,
 ) -> Result<Runtime> {
     let cache_result = target::resolve_descriptor_cached(target_str, rebuild)?;
     let desc = cache_result.descriptor();
@@ -40,7 +42,18 @@ pub fn provision(
     target::validate_descriptor(desc)?;
     target::ensure_paths_exist(target_str, desc)?;
 
-    launch_vm(instance_name, target_str, desc, mounts, disk_size)
+    let cpus = cpus_override.unwrap_or(desc.cpus);
+    let memory_mib = memory_override.unwrap_or(desc.memory_mib);
+
+    launch_vm(
+        instance_name,
+        target_str,
+        desc,
+        mounts,
+        disk_size,
+        cpus,
+        memory_mib,
+    )
 }
 
 fn launch_vm(
@@ -49,11 +62,22 @@ fn launch_vm(
     desc: &Descriptor,
     mounts: &[String],
     disk_size: &str,
+    cpus: u32,
+    memory_mib: u32,
 ) -> Result<Runtime> {
     let unit_id = process::generate_unit_id();
     let slice = instance_store::slice_name(instance_name, &unit_id)?;
 
-    let result = launch_vm_inner(instance_name, desc, mounts, disk_size, &unit_id, &slice);
+    let result = launch_vm_inner(
+        instance_name,
+        desc,
+        mounts,
+        disk_size,
+        cpus,
+        memory_mib,
+        &unit_id,
+        &slice,
+    );
     if result.is_err() {
         let _ = process::stop_unit(&slice);
     }
@@ -65,6 +89,8 @@ fn launch_vm_inner(
     desc: &Descriptor,
     mounts: &[String],
     disk_size: &str,
+    cpus: u32,
+    memory_mib: u32,
     unit_id: &str,
     slice: &str,
 ) -> Result<Runtime> {
@@ -200,8 +226,8 @@ fn launch_vm_inner(
         desc.initrd.as_deref(),
         &disk_str,
         &seed_str,
-        desc.cpus,
-        desc.memory_mib,
+        cpus,
+        memory_mib,
         &desc.cmdline,
         &serial_socket_str,
         &passt_socket_str,

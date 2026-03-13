@@ -8,6 +8,9 @@ pub struct Config {
     pub target: Option<String>,
     pub mounts: Option<Vec<String>>,
     pub disk_size: Option<String>,
+    pub cpus: Option<u32>,
+    pub memory: Option<u32>,
+    pub default_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -15,6 +18,9 @@ pub struct Resolved {
     pub target: String,
     pub mounts: Vec<String>,
     pub disk_size: String,
+    pub cpus: Option<u32>,
+    pub memory: Option<u32>,
+    pub default_name: String,
 }
 
 fn resolve_path(path: &str, base: &Path) -> PathBuf {
@@ -83,6 +89,9 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
         target: project.target.or(user.target),
         mounts: project.mounts.or(user.mounts),
         disk_size: project.disk_size.or(user.disk_size),
+        cpus: project.cpus.or(user.cpus),
+        memory: project.memory.or(user.memory),
+        default_name: project.default_name.or(user.default_name),
     }
 }
 
@@ -91,6 +100,8 @@ pub fn resolve(
     cli_target: Option<&str>,
     cli_mounts: &[String],
     cli_disk_size: Option<&str>,
+    cli_cpus: Option<u32>,
+    cli_memory: Option<u32>,
 ) -> Result<Resolved> {
     let user = load_user()?;
     let project = load_project()?;
@@ -114,11 +125,26 @@ pub fn resolve(
         .or(config.disk_size)
         .unwrap_or_else(|| "40G".to_string());
 
+    let cpus = cli_cpus.or(config.cpus);
+    let memory = cli_memory.or(config.memory);
+    let default_name = config.default_name.unwrap_or_else(|| "default".to_string());
+
     Ok(Resolved {
         target,
         mounts,
         disk_size,
+        cpus,
+        memory,
+        default_name,
     })
+}
+
+/// Resolve the default instance name from config, falling back to "default".
+pub fn resolve_default_name() -> Result<String> {
+    let user = load_user()?;
+    let project = load_project()?;
+    let config = merge_configs(user, project);
+    Ok(config.default_name.unwrap_or_else(|| "default".to_string()))
 }
 
 /// Parse a config from a TOML string with a base path for relative mount resolution.
@@ -167,6 +193,33 @@ disk_size = "50G"
     }
 
     #[test]
+    fn parse_cpus_and_memory() {
+        let toml = r#"
+cpus = 4
+memory = 2048
+"#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert_eq!(config.cpus.unwrap(), 4);
+        assert_eq!(config.memory.unwrap(), 2048);
+    }
+
+    #[test]
+    fn parse_default_name() {
+        let toml = r#"default_name = "dev""#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert_eq!(config.default_name.unwrap(), "dev");
+    }
+
+    #[test]
+    fn parse_cpus_memory_default_name_absent() {
+        let toml = r#"target = ".#dev""#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert!(config.cpus.is_none());
+        assert!(config.memory.is_none());
+        assert!(config.default_name.is_none());
+    }
+
+    #[test]
     fn resolve_path_absolute() {
         let result = resolve_path("/abs/path", Path::new("/base"));
         assert_eq!(result, PathBuf::from("/abs/path"));
@@ -191,11 +244,11 @@ disk_size = "50G"
             target: Some(".#user".into()),
             mounts: Some(vec!["/user/mount".into()]),
             disk_size: Some("30G".into()),
+            ..Config::default()
         };
         let project = Config {
             target: Some(".#project".into()),
-            mounts: None,
-            disk_size: None,
+            ..Config::default()
         };
         let merged = merge_configs(Some(user), Some(project));
         assert_eq!(merged.target.unwrap(), ".#project");
@@ -208,8 +261,7 @@ disk_size = "50G"
     fn merge_user_only() {
         let user = Config {
             target: Some(".#user".into()),
-            mounts: None,
-            disk_size: None,
+            ..Config::default()
         };
         let merged = merge_configs(Some(user), None);
         assert_eq!(merged.target.unwrap(), ".#user");
@@ -222,6 +274,69 @@ disk_size = "50G"
     }
 
     #[test]
+    fn merge_cpus_memory_project_overrides_user() {
+        let user = Config {
+            cpus: Some(2),
+            memory: Some(1024),
+            default_name: Some("uservm".into()),
+            ..Config::default()
+        };
+        let project = Config {
+            cpus: Some(4),
+            memory: None,
+            default_name: Some("projvm".into()),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        assert_eq!(merged.cpus.unwrap(), 4);
+        assert_eq!(merged.memory.unwrap(), 1024); // falls through to user
+        assert_eq!(merged.default_name.unwrap(), "projvm");
+    }
+
+    #[test]
+    fn merge_cpus_memory_user_only() {
+        let user = Config {
+            cpus: Some(8),
+            memory: Some(4096),
+            default_name: Some("myvm".into()),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), None);
+        assert_eq!(merged.cpus.unwrap(), 8);
+        assert_eq!(merged.memory.unwrap(), 4096);
+        assert_eq!(merged.default_name.unwrap(), "myvm");
+    }
+
+    #[test]
+    fn merge_cpus_memory_none() {
+        let merged = merge_configs(None, None);
+        assert!(merged.cpus.is_none());
+        assert!(merged.memory.is_none());
+        assert!(merged.default_name.is_none());
+    }
+
+    #[test]
+    fn resolve_default_name_from_config() {
+        // When config has default_name, resolve should use it
+        let config = merge_configs(
+            Some(Config {
+                default_name: Some("dev".into()),
+                ..Config::default()
+            }),
+            None,
+        );
+        assert_eq!(config.default_name.unwrap(), "dev");
+    }
+
+    #[test]
+    fn resolve_default_name_fallback() {
+        // When no config sets default_name, it should fall back to "default"
+        let config = merge_configs(None, None);
+        let default_name = config.default_name.unwrap_or_else(|| "default".to_string());
+        assert_eq!(default_name, "default");
+    }
+
+    #[test]
     fn resolve_cli_overrides_config() {
         // Can't easily test resolve() without mocking file system,
         // but we can test the merging logic via merge_configs
@@ -230,6 +345,7 @@ disk_size = "50G"
                 target: Some(".#fromconfig".into()),
                 mounts: Some(vec!["/config/mount".into()]),
                 disk_size: Some("30G".into()),
+                ..Config::default()
             }),
             None,
         );

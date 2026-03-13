@@ -4,6 +4,13 @@ use std::os::unix::process::CommandExt;
 
 use epi::{config, console, cp, hooks, instance_store, target, ui, vm_launch};
 
+fn resolve_instance_name(instance: Option<String>) -> Result<String> {
+    match instance {
+        Some(name) => Ok(name),
+        None => config::resolve_default_name(),
+    }
+}
+
 fn ssh_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
 }
@@ -25,8 +32,7 @@ enum Command {
     /// Create or start an instance from a flake target.
     Launch {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
 
         /// Flake target in <flake-ref>#<config-name> form
         #[arg(long)]
@@ -48,6 +54,14 @@ enum Command {
         #[arg(long)]
         disk_size: Option<String>,
 
+        /// Number of boot CPUs (overrides target descriptor)
+        #[arg(long)]
+        cpus: Option<u32>,
+
+        /// Memory size in MiB (overrides target descriptor)
+        #[arg(long)]
+        memory: Option<u32>,
+
         /// Return immediately without waiting for SSH
         #[arg(long)]
         no_wait: bool,
@@ -60,8 +74,7 @@ enum Command {
     /// Start an existing stopped instance.
     Start {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
 
         /// Attach to serial console immediately after starting
         #[arg(long)]
@@ -79,22 +92,19 @@ enum Command {
     /// Stop an instance.
     Stop {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 
     /// Show instance status.
     Status {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 
     /// Remove an instance from state and runtime.
     Rm {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
 
         /// Terminate running instance before removing
         #[arg(short, long)]
@@ -108,29 +118,25 @@ enum Command {
     /// Attach to an instance serial console.
     Console {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 
     /// Show captured console log for an instance.
     ConsoleLog {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 
     /// Open SSH session to an instance.
     Ssh {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 
     /// Execute a command in an instance.
     Exec {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
 
         /// Command and arguments to execute
         #[arg(last = true)]
@@ -140,8 +146,7 @@ enum Command {
     /// Rebuild an instance.
     Rebuild {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 
     /// Copy files between host and instance.
@@ -156,15 +161,23 @@ enum Command {
     /// Show instance logs.
     Logs {
         /// Instance name
-        #[arg(default_value = "default")]
-        instance: String,
+        instance: Option<String>,
     },
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    let result = match cli.command {
+    let result = run(cli.command);
+
+    if let Err(e) = result {
+        ui::error(&e);
+        std::process::exit(123);
+    }
+}
+
+fn run(command: Command) -> Result<()> {
+    let result = match command {
         Command::Launch {
             instance,
             target,
@@ -172,41 +185,50 @@ fn main() {
             rebuild,
             mount,
             disk_size,
+            cpus,
+            memory,
             no_wait,
             wait_timeout,
-        } => cmd_launch(
-            &instance,
-            target.as_deref(),
-            console,
-            rebuild,
-            &mount,
-            disk_size.as_deref(),
-            no_wait,
-            wait_timeout,
-        ),
+        } => {
+            let instance = resolve_instance_name(instance)?;
+            cmd_launch(
+                &instance,
+                target.as_deref(),
+                console,
+                rebuild,
+                &mount,
+                disk_size.as_deref(),
+                cpus,
+                memory,
+                no_wait,
+                wait_timeout,
+            )
+        }
         Command::Start {
             instance,
             console,
             no_wait,
             wait_timeout,
-        } => cmd_start(&instance, console, no_wait, wait_timeout),
-        Command::Stop { instance } => cmd_stop(&instance),
-        Command::Status { instance } => cmd_status(&instance),
-        Command::Rm { instance, force } => cmd_rm(&instance, force),
+        } => {
+            let instance = resolve_instance_name(instance)?;
+            cmd_start(&instance, console, no_wait, wait_timeout)
+        }
+        Command::Stop { instance } => cmd_stop(&resolve_instance_name(instance)?),
+        Command::Status { instance } => cmd_status(&resolve_instance_name(instance)?),
+        Command::Rm { instance, force } => cmd_rm(&resolve_instance_name(instance)?, force),
         Command::List => cmd_list(),
-        Command::Console { instance } => cmd_console(&instance),
-        Command::ConsoleLog { instance } => cmd_console_log(&instance),
-        Command::Ssh { instance } => cmd_ssh(&instance),
-        Command::Exec { instance, command } => cmd_exec(&instance, &command),
+        Command::Console { instance } => cmd_console(&resolve_instance_name(instance)?),
+        Command::ConsoleLog { instance } => cmd_console_log(&resolve_instance_name(instance)?),
+        Command::Ssh { instance } => cmd_ssh(&resolve_instance_name(instance)?),
+        Command::Exec { instance, command } => {
+            cmd_exec(&resolve_instance_name(instance)?, &command)
+        }
         Command::Cp { source, dest } => cmd_cp(&source, &dest),
-        Command::Rebuild { instance } => cmd_rebuild(&instance),
-        Command::Logs { instance } => cmd_logs(&instance),
+        Command::Rebuild { instance } => cmd_rebuild(&resolve_instance_name(instance)?),
+        Command::Logs { instance } => cmd_logs(&resolve_instance_name(instance)?),
     };
 
-    if let Err(e) = result {
-        ui::error(&e);
-        std::process::exit(123);
-    }
+    result
 }
 
 fn cmd_launch(
@@ -216,6 +238,8 @@ fn cmd_launch(
     rebuild: bool,
     cli_mounts: &[String],
     cli_disk_size: Option<&str>,
+    cli_cpus: Option<u32>,
+    cli_memory: Option<u32>,
     no_wait: bool,
     wait_timeout: u64,
 ) -> Result<()> {
@@ -236,7 +260,8 @@ fn cmd_launch(
         let _ = vm_launch::stop_instance(instance);
     }
 
-    let mut resolved = config::resolve(cli_target, cli_mounts, cli_disk_size)?;
+    let mut resolved =
+        config::resolve(cli_target, cli_mounts, cli_disk_size, cli_cpus, cli_memory)?;
     resolved.target = target::expand_tilde(&resolved.target);
 
     target::validate(&resolved.target)?;
@@ -252,6 +277,8 @@ fn cmd_launch(
         &resolved.mounts,
         &resolved.disk_size,
         rebuild,
+        resolved.cpus,
+        resolved.memory,
     ) {
         Ok(r) => {
             step.finish(&format!("Provisioned {instance}"));
@@ -370,7 +397,7 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
     let mounts = state.mounts.clone();
 
     let step = ui::Step::start(&format!("Starting {instance}"));
-    let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", false)?;
+    let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", false, None, None)?;
     step.finish(&format!("Started {instance}"));
 
     let ssh_key_path = runtime.ssh_key_path.clone();
@@ -652,7 +679,7 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
 
     let step = ui::Step::start(&format!("Rebuilding {instance}"));
     let mounts = state.mounts.clone();
-    let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", true)?;
+    let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", true, None, None)?;
     step.finish(&format!("Rebuilt {instance}"));
 
     let ssh_key_path = runtime.ssh_key_path.clone();
