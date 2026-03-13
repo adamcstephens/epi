@@ -399,6 +399,51 @@ fn e2e_stop_start_ssh() {
 
 #[test]
 #[ignore]
+fn e2e_no_env_leak() {
+    let name = unique_name("noenv");
+    let _guard = InstanceGuard::new(&name);
+
+    // Set a sentinel env var that should NOT appear in the systemd units
+    let sentinel = "EPI_TEST_SENTINEL";
+    unsafe { std::env::set_var(sentinel, "leaked") };
+
+    let runtime = provision_and_wait(&name);
+    let unit_id = &runtime.unit_id;
+
+    let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
+    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+
+    // Check VM service environment
+    let vm_env = process::run(
+        &process::systemctl_bin(),
+        &["--user", "show", &vm_unit, "--property=Environment"],
+    )
+    .expect("failed to query VM unit environment");
+
+    assert!(
+        !vm_env.stdout.contains(sentinel),
+        "VM unit should not contain sentinel env var, got: {}",
+        vm_env.stdout
+    );
+
+    // Check passt service environment
+    let passt_env = process::run(
+        &process::systemctl_bin(),
+        &["--user", "show", &passt_unit, "--property=Environment"],
+    )
+    .expect("failed to query passt unit environment");
+
+    assert!(
+        !passt_env.stdout.contains(sentinel),
+        "passt unit should not contain sentinel env var, got: {}",
+        passt_env.stdout
+    );
+
+    unsafe { std::env::remove_var(sentinel) };
+}
+
+#[test]
+#[ignore]
 fn e2e_vm_crash_stops_helpers() {
     let name = unique_name("vmcrash");
     let _guard = InstanceGuard::new(&name);
