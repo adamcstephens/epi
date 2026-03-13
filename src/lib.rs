@@ -5,4 +5,5 @@ pub mod hooks;
 pub mod instance_store;
 pub mod process;
 pub mod target;
+pub mod ui;
 pub mod vm_launch;

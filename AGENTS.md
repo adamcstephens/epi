@@ -15,6 +15,7 @@
 ## Dependencies
 - Rust deps are in `.cargo-home` — read code from there for correct versions without needing the internet.
 - *Always* ask before adding dependencies.
+- When adding dependencies, *always* check the internet for the latest version
 
 ## Testing
 - Ensure you run e2e tests at least once before finalizing

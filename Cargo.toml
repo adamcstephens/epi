@@ -16,3 +16,5 @@ rand = "0.9"
 anyhow = "1"
 nix = { version = "0.31.2", features = ["fs", "user"] }
 thiserror = "2"
+indicatif = "0.18"
+console = "0.16"
