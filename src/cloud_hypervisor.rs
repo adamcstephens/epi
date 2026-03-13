@@ -23,7 +23,7 @@ pub fn build_args(
         format!("path={disk_path},image_type=qcow2,backing_files=on"),
         format!("path={seed_iso},readonly=on"),
         "--cpus".to_string(),
-        format!("boot={cpus}"),
+        format!("boot={cpus},nested=on"),
         "--memory".to_string(),
         format!("size={memory_mib}M,shared=on"),
         "--serial".to_string(),
