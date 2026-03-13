@@ -21,7 +21,7 @@ pub fn provision(
     let desc = cache_result.descriptor();
 
     target::validate_descriptor(desc)?;
-    target::ensure_paths_exist(desc)?;
+    target::ensure_paths_exist(target_str, desc)?;
 
     launch_vm(instance_name, target_str, desc, mounts, disk_size)
 }
