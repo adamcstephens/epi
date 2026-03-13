@@ -1,6 +1,7 @@
 ## Agent workflow
 - Don't implement without an openspec change without asking.
 - Always use red/green TDD when implementing
+- openspec tasks should *always* be ordered so tests precede the implementation they cover
 
 ## Code style
 - Avoid abstractions

@@ -16,9 +16,7 @@ impl Step {
                 ProgressStyle::default_spinner()
                     .template("{spinner:.yellow} {msg} {elapsed:.dim}")
                     .expect("invalid template")
-                    .tick_strings(&[
-                        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " ",
-                    ]),
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " "]),
             );
             bar.set_message(msg.to_string());
             bar.enable_steady_tick(Duration::from_millis(80));
@@ -47,7 +45,6 @@ impl Step {
         }
         eprintln!("{} {msg}", style.apply_to("✗"));
     }
-
 }
 
 pub fn info(msg: &str) {

@@ -106,12 +106,6 @@ pub fn run_helper(
         cmd_args.push(format!("--property=PartOf={escaped}"));
     }
 
-    // Forward current environment
-    let env_args: Vec<String> = std::env::vars()
-        .map(|(k, v)| format!("--setenv={k}={v}"))
-        .collect();
-    cmd_args.extend(env_args);
-
     cmd_args.push("--".to_string());
     cmd_args.push(prog.to_string());
     cmd_args.extend(args.iter().map(|s| s.to_string()));
@@ -140,11 +134,6 @@ pub fn run_service(
     for prop in properties {
         cmd_args.push(format!("--property={prop}"));
     }
-
-    let env_args: Vec<String> = std::env::vars()
-        .map(|(k, v)| format!("--setenv={k}={v}"))
-        .collect();
-    cmd_args.extend(env_args);
 
     cmd_args.push("--".to_string());
     cmd_args.push(prog.to_string());
