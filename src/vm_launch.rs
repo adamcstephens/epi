@@ -4,6 +4,7 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::cloud_hypervisor;
 use crate::instance_store::{self, Runtime};
 use crate::process;
 use crate::target::Descriptor;
@@ -139,61 +140,32 @@ fn launch_vm_inner(
     // Build cloud-hypervisor command
     let disk_str = disk_path.to_string_lossy().to_string();
     let seed_str = seed_iso.to_string_lossy().to_string();
-    let mem_arg = format!("size={}M,shared=on", desc.memory_mib);
-    let cpu_arg = format!("boot={}", desc.cpus);
-    let serial_arg = format!("socket={serial_socket_str}");
-    let net_arg = format!(
-        "vhost_user=true,socket={},vhost_mode=client",
-        passt_socket.display()
+    let passt_socket_str = passt_socket.to_string_lossy().to_string();
+
+    let ch_args = cloud_hypervisor::build_args(
+        &desc.kernel,
+        desc.initrd.as_deref(),
+        &disk_str,
+        &seed_str,
+        desc.cpus,
+        desc.memory_mib,
+        &desc.cmdline,
+        &serial_socket_str,
+        &passt_socket_str,
+        &fs_args,
+        None,
     );
-    let cmdline = &desc.cmdline;
-
-    let mut ch_args: Vec<String> = vec![
-        "--kernel".to_string(),
-        desc.kernel.clone(),
-        "--disk".to_string(),
-        format!("path={disk_str},image_type=qcow2,backing_files=on"),
-        format!("path={seed_str},readonly=on"),
-        "--cpus".to_string(),
-        cpu_arg,
-        "--memory".to_string(),
-        mem_arg,
-        "--serial".to_string(),
-        serial_arg,
-        "--console".to_string(),
-        "off".to_string(),
-        "--cmdline".to_string(),
-        cmdline.clone(),
-        "--net".to_string(),
-        net_arg,
-    ];
-
-    if let Some(ref initrd) = desc.initrd {
-        ch_args.push("--initramfs".to_string());
-        ch_args.push(initrd.clone());
-    }
-
-    if !fs_args.is_empty() {
-        ch_args.push("--fs".to_string());
-        ch_args.extend(fs_args);
-    }
-
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
-    // Generate ExecStopPost commands to stop helper units when VM exits
-    let systemctl = process::systemctl_bin();
-    let exec_stop_posts: Vec<String> = helper_units
-        .iter()
-        .map(|u| format!("{systemctl} --user stop {u}"))
-        .collect();
-    let exec_stop_post_refs: Vec<&str> = exec_stop_posts.iter().map(|s| s.as_str()).collect();
+    // Generate systemd properties for VM lifecycle
+    let properties = cloud_hypervisor::service_properties(None, &helper_units);
 
     // Launch VM as systemd service
     let result = process::run_service(
         &vm_unit,
         slice,
-        &exec_stop_post_refs,
-        "cloud-hypervisor",
+        &properties,
+        cloud_hypervisor::BINARY,
         &ch_refs,
     )?;
 

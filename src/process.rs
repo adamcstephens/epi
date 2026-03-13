@@ -110,7 +110,7 @@ pub fn run_helper(unit_name: &str, slice: &str, prog: &str, args: &[&str]) -> Re
 pub fn run_service(
     unit_name: &str,
     slice: &str,
-    exec_stop_posts: &[&str],
+    properties: &[String],
     prog: &str,
     args: &[&str],
 ) -> Result<Output> {
@@ -124,8 +124,8 @@ pub fn run_service(
         "--property=Type=exec".to_string(),
     ];
 
-    for stop_post in exec_stop_posts {
-        cmd_args.push(format!("--property=ExecStopPost={stop_post}"));
+    for prop in properties {
+        cmd_args.push(format!("--property={prop}"));
     }
 
     let env_args: Vec<String> = std::env::vars()
