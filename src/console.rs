@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, bail};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use std::fs::{self, File};
 use std::io::{IsTerminal, Read, Write};
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
@@ -60,7 +61,19 @@ pub fn attach(
     eprintln!("attached to console (Ctrl-T q to detach)");
 
     let mut sock_buf = [0u8; 4096];
-    let mut ctrl_t_pressed = false;
+    let mut stdin_buf = [0u8; 4096];
+    let mut ctrl_t_pending = false;
+
+    let mut stdin = std::io::stdin();
+    if read_stdin {
+        // Set stdin to non-blocking so we can poll it alongside the socket
+        let stdin_flags = fcntl(stdin.as_fd(), FcntlArg::F_GETFL)?;
+        let stdin_flags = OFlag::from_bits_retain(stdin_flags);
+        fcntl(
+            stdin.as_fd(),
+            FcntlArg::F_SETFL(stdin_flags | OFlag::O_NONBLOCK),
+        )?;
+    }
 
     loop {
         if let Some(dl) = deadline {
@@ -88,22 +101,46 @@ pub fn attach(
             Err(e) => bail!("reading console: {e}"),
         }
 
-        // Read from stdin via crossterm events
-        if read_stdin && event::poll(Duration::from_millis(0))? {
-            if let Event::Key(key) = event::read()? {
-                if ctrl_t_pressed && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
-                    eprintln!("\ndetached");
-                    return Ok(());
-                }
-                ctrl_t_pressed =
-                    key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL);
+        // Read raw bytes from stdin and forward to socket
+        if read_stdin {
+            match stdin.read(&mut stdin_buf) {
+                Ok(0) => {}
+                Ok(n) => {
+                    let bytes = &stdin_buf[..n];
+                    let mut i = 0;
+                    while i < bytes.len() {
+                        if ctrl_t_pending {
+                            ctrl_t_pending = false;
+                            if bytes[i] == b'q' || bytes[i] == b'Q' {
+                                eprintln!("\ndetached");
+                                return Ok(());
+                            }
+                            // Not q — forward the buffered Ctrl-T and this byte
+                            stream.set_nonblocking(false)?;
+                            stream.write_all(&[0x14])?;
+                            stream.set_nonblocking(true)?;
+                            // Fall through to forward bytes[i] normally
+                        }
 
-                // Forward the keypress to the socket
-                if let Some(bytes) = key_to_bytes(&key) {
-                    stream.set_nonblocking(false)?;
-                    stream.write_all(&bytes)?;
-                    stream.set_nonblocking(true)?;
+                        if bytes[i] == 0x14 {
+                            // Ctrl-T: forward everything before it, then pend
+                            ctrl_t_pending = true;
+                            i += 1;
+                            continue;
+                        }
+
+                        // Find the next Ctrl-T (or end) and forward the chunk
+                        let start = i;
+                        while i < bytes.len() && bytes[i] != 0x14 {
+                            i += 1;
+                        }
+                        stream.set_nonblocking(false)?;
+                        stream.write_all(&bytes[start..i])?;
+                        stream.set_nonblocking(true)?;
+                    }
                 }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => bail!("reading stdin: {e}"),
             }
         }
 
@@ -111,27 +148,6 @@ pub fn attach(
     }
 
     Ok(())
-}
-
-fn key_to_bytes(key: &KeyEvent) -> Option<Vec<u8>> {
-    match key.code {
-        KeyCode::Char(c) => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                // Ctrl+letter → ASCII control char
-                let ctrl = (c as u8).wrapping_sub(b'a').wrapping_add(1);
-                Some(vec![ctrl])
-            } else {
-                let mut buf = [0u8; 4];
-                let s = c.encode_utf8(&mut buf);
-                Some(s.as_bytes().to_vec())
-            }
-        }
-        KeyCode::Enter => Some(vec![b'\r']),
-        KeyCode::Backspace => Some(vec![0x7f]),
-        KeyCode::Tab => Some(vec![b'\t']),
-        KeyCode::Esc => Some(vec![0x1b]),
-        _ => None,
-    }
 }
 
 /// RAII guard to disable raw mode on drop
