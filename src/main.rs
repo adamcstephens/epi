@@ -252,8 +252,8 @@ fn cmd_launch(
         }
     };
 
-    let ssh_port = runtime.ssh_port.unwrap_or(0);
     let ssh_key_path = runtime.ssh_key_path.clone();
+    let ssh_port = runtime.ssh_port;
 
     instance_store::set_provisioned(instance, runtime)?;
 
@@ -267,7 +267,7 @@ fn cmd_launch(
 
     if attach_console {
         // Run SSH wait + hooks in background so console attaches immediately
-        let wait_handle = if !no_wait && ssh_port > 0 {
+        let wait_handle = if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
             let inst = instance.to_string();
             let key = ssh_key_path.clone();
             let tgt = resolved.target.clone();
@@ -291,7 +291,7 @@ fn cmd_launch(
         if let Some(handle) = wait_handle {
             let _ = handle.join();
         }
-    } else if !no_wait && ssh_port > 0 {
+    } else if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
         let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -349,13 +349,13 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
 
     let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", false)?;
 
-    let ssh_port = runtime.ssh_port.unwrap_or(0);
     let ssh_key_path = runtime.ssh_key_path.clone();
+    let ssh_port = runtime.ssh_port;
 
     instance_store::set_provisioned(instance, runtime)?;
     console::start_capture(instance)?;
 
-    if !no_wait && ssh_port > 0 {
+    if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
         eprintln!("waiting for SSH on port {ssh_port}...");
         vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, wait_timeout)?;
         eprintln!("instance {instance} is ready");
@@ -572,13 +572,13 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
     let mounts = state.mounts.clone();
     let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", true)?;
 
-    let ssh_port = runtime.ssh_port.unwrap_or(0);
     let ssh_key_path = runtime.ssh_key_path.clone();
+    let ssh_port = runtime.ssh_port;
 
     instance_store::set_provisioned(instance, runtime)?;
     console::start_capture(instance)?;
 
-    if ssh_port > 0 {
+    if let Some(ssh_port) = ssh_port {
         eprintln!("waiting for SSH on port {ssh_port}...");
         vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, 120)?;
         eprintln!("instance {instance} rebuilt and ready");

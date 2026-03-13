@@ -138,9 +138,12 @@ pub fn unit_is_active(unit_name: &str) -> Result<bool> {
     Ok(out.stdout == "active")
 }
 
-pub fn stop_unit(unit_name: &str) -> Result<bool> {
+pub fn stop_unit(unit_name: &str) -> Result<()> {
     let out = run(&systemctl_bin(), &["--user", "stop", unit_name])?;
-    Ok(out.success())
+    if !out.success() {
+        bail!("failed to stop unit {unit_name}: {}", out.stderr);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
