@@ -83,7 +83,13 @@ pub fn systemctl_bin() -> String {
         .unwrap_or_else(|_| "/run/current-system/sw/bin/systemctl".to_string())
 }
 
-pub fn run_helper(unit_name: &str, slice: &str, prog: &str, args: &[&str]) -> Result<Output> {
+pub fn run_helper(
+    unit_name: &str,
+    slice: &str,
+    vm_unit: Option<&str>,
+    prog: &str,
+    args: &[&str],
+) -> Result<Output> {
     let unit_arg = format!("--unit={unit_name}");
     let slice_arg = format!("--slice={slice}");
     let mut cmd_args: Vec<String> = vec![
@@ -92,6 +98,13 @@ pub fn run_helper(unit_name: &str, slice: &str, prog: &str, args: &[&str]) -> Re
         unit_arg,
         slice_arg,
     ];
+
+    if let Some(vm_unit) = vm_unit {
+        // systemd-run --property= interprets backslash as an escape character,
+        // so we must double them to preserve literal backslashes in escaped unit names
+        let escaped = vm_unit.replace('\\', "\\\\");
+        cmd_args.push(format!("--property=PartOf={escaped}"));
+    }
 
     // Forward current environment
     let env_args: Vec<String> = std::env::vars()

@@ -1,5 +1,3 @@
-use crate::process;
-
 pub const BINARY: &str = "cloud-hypervisor";
 pub const CH_REMOTE_BINARY: &str = "ch-remote";
 
@@ -64,9 +62,8 @@ pub fn build_args(
 /// Plus After= ordering so helpers stay alive during VM shutdown,
 /// and TimeoutStopSec=20 as a hard safety net.
 ///
-/// ExecStopPost always cleans up helper units regardless.
+/// Helper cleanup is handled by PartOf= on the helper units themselves.
 pub fn service_properties(api_socket: Option<&str>, helper_units: &[String]) -> Vec<String> {
-    let systemctl = process::systemctl_bin();
     let mut props = Vec::new();
 
     if let Some(api_socket) = api_socket {
@@ -81,7 +78,6 @@ pub fn service_properties(api_socket: Option<&str>, helper_units: &[String]) -> 
     }
 
     for unit in helper_units {
-        props.push(format!("ExecStopPost={systemctl} --user stop {unit}"));
         props.push(format!("After={unit}"));
     }
 

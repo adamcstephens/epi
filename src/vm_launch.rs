@@ -112,6 +112,7 @@ fn launch_vm_inner(
     start_passt(
         &passt_unit,
         slice,
+        Some(&vm_unit),
         &passt_socket.to_string_lossy(),
         ssh_port,
     )?;
@@ -136,6 +137,7 @@ fn launch_vm_inner(
         start_virtiofsd(
             &vfsd_unit,
             slice,
+            Some(&vm_unit),
             &vfsd_socket.to_string_lossy(),
             &abs_mount.to_string_lossy(),
         )?;
@@ -395,12 +397,19 @@ fn generate_seed_iso(
     Ok(())
 }
 
-fn start_passt(unit_name: &str, slice: &str, socket_path: &str, ssh_port: u16) -> Result<()> {
+fn start_passt(
+    unit_name: &str,
+    slice: &str,
+    vm_unit: Option<&str>,
+    socket_path: &str,
+    ssh_port: u16,
+) -> Result<()> {
     process::require_binary("passt", "passt")?;
     let tcp_fwd = format!("{ssh_port}:22");
     let out = process::run_helper(
         unit_name,
         slice,
+        vm_unit,
         "passt",
         &[
             "--foreground",
@@ -421,6 +430,7 @@ fn start_passt(unit_name: &str, slice: &str, socket_path: &str, ssh_port: u16) -
 fn start_virtiofsd(
     unit_name: &str,
     slice: &str,
+    vm_unit: Option<&str>,
     socket_path: &str,
     shared_dir: &str,
 ) -> Result<()> {
@@ -428,6 +438,7 @@ fn start_virtiofsd(
     let out = process::run_helper(
         unit_name,
         slice,
+        vm_unit,
         "virtiofsd",
         &[
             "--socket-path",

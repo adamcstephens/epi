@@ -294,3 +294,93 @@ fn e2e_graceful_shutdown() {
 
     assert!(!instance_store::instance_is_running(&name).unwrap());
 }
+
+#[test]
+#[ignore]
+fn e2e_clean_shutdown_stops_helpers() {
+    let name = unique_name("cleanstop");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+    let unit_id = &runtime.unit_id;
+
+    // Construct expected unit names
+    let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
+    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+    let slice = instance_store::slice_name(&name, unit_id).unwrap();
+
+    // All units should be active before stop
+    assert!(
+        process::unit_is_active(&vm_unit).unwrap(),
+        "VM should be active"
+    );
+    assert!(
+        process::unit_is_active(&passt_unit).unwrap(),
+        "passt should be active"
+    );
+    assert!(
+        process::unit_is_active(&slice).unwrap(),
+        "slice should be active"
+    );
+
+    // Stop the instance
+    vm_launch::stop_instance(&name).expect("stop failed");
+
+    // All units should be inactive after stop
+    assert!(
+        !process::unit_is_active(&vm_unit).unwrap(),
+        "VM should be inactive after stop"
+    );
+    assert!(
+        !process::unit_is_active(&passt_unit).unwrap(),
+        "passt should be inactive after stop"
+    );
+    assert!(
+        !process::unit_is_active(&slice).unwrap(),
+        "slice should be inactive after stop"
+    );
+}
+
+#[test]
+#[ignore]
+fn e2e_vm_crash_stops_helpers() {
+    let name = unique_name("vmcrash");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+    let unit_id = &runtime.unit_id;
+
+    let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
+    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+
+    // All units should be active
+    assert!(
+        process::unit_is_active(&vm_unit).unwrap(),
+        "VM should be active"
+    );
+    assert!(
+        process::unit_is_active(&passt_unit).unwrap(),
+        "passt should be active"
+    );
+
+    // Kill the VM process directly (simulating a crash) by stopping just the VM unit
+    process::stop_unit(&vm_unit).expect("failed to stop VM unit");
+
+    // Wait for PartOf= propagation — systemd stops helpers asynchronously
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if !process::unit_is_active(&passt_unit).unwrap() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "passt should be inactive after VM kill (PartOf= should propagate stop)"
+        );
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    assert!(
+        !process::unit_is_active(&vm_unit).unwrap(),
+        "VM should be inactive after kill"
+    );
+}

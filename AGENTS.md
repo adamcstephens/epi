@@ -19,9 +19,7 @@
 - Ensure you run e2e tests at least once before finalizing
 - Quick tests: `just test` (runs unit + CLI integration concurrently)
 - Unit only: `just test-unit`
-- CLI only: `just test-cli`
 - E2E (requires real VM): `just test-e2e`
-- E2E individual groups: `just test-e2e e2e-setup`. You *must* test e2e-setup first in order to force a rebuild before testing other e2e groups.
 - When possible, manually test: e.g. `just run list`
 
 ## Testing against a real VM
