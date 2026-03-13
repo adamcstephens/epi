@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::os::unix::process::CommandExt;
 
-use epi::{config, console, hooks, instance_store, target, vm_launch};
+use epi::{config, console, hooks, instance_store, target, ui, vm_launch};
 
 fn ssh_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
@@ -194,7 +194,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("error: {e:#}");
+        ui::error(&e);
         std::process::exit(123);
     }
 }
@@ -211,7 +211,7 @@ fn cmd_launch(
 ) -> Result<()> {
     // Check if already running
     if instance_store::instance_is_running(instance)? {
-        eprintln!("instance {instance} is already running");
+        ui::info(&format!("instance {instance} is already running"));
         if attach_console {
             return console::attach(instance, None, None);
         }
@@ -220,7 +220,9 @@ fn cmd_launch(
 
     // If instance exists but stale, stop it first
     if instance_store::find_runtime(instance)?.is_some() {
-        eprintln!("instance {instance} has stale runtime, cleaning up");
+        ui::info(&format!(
+            "instance {instance} has stale runtime, cleaning up"
+        ));
         let _ = vm_launch::stop_instance(instance);
     }
 
@@ -232,7 +234,7 @@ fn cmd_launch(
     let pre_existing = instance_store::find(instance)?.is_some();
     instance_store::set_launching(instance, &resolved.target, resolved.mounts.clone())?;
 
-    eprintln!("provisioning {instance} from {}", resolved.target);
+    let step = ui::Step::start(&format!("Provisioning {instance}"));
 
     let runtime = match vm_launch::provision(
         instance,
@@ -241,8 +243,12 @@ fn cmd_launch(
         &resolved.disk_size,
         rebuild,
     ) {
-        Ok(r) => r,
+        Ok(r) => {
+            step.finish(&format!("Provisioned {instance}"));
+            r
+        }
         Err(e) => {
+            step.fail(&format!("Provisioning {instance} failed"));
             if pre_existing {
                 let _ = instance_store::clear_runtime(instance);
             } else {
@@ -267,6 +273,7 @@ fn cmd_launch(
 
     if attach_console {
         // Run SSH wait + hooks in background so console attaches immediately
+        // Skip spinners — raw terminal mode would be corrupted
         let wait_handle = if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
             let inst = instance.to_string();
             let key = ssh_key_path.clone();
@@ -297,9 +304,16 @@ fn cmd_launch(
             .and_then(|v| v.parse().ok())
             .unwrap_or(wait_timeout);
 
-        eprintln!("waiting for SSH on port {ssh_port}...");
-        vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, timeout)?;
-        eprintln!("instance {instance} is ready (ssh port {ssh_port})");
+        let step = ui::Step::start("Waiting for SSH");
+        match vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, timeout) {
+            Ok(()) => step.finish(&format!(
+                "instance {instance} is ready (ssh port {ssh_port})"
+            )),
+            Err(e) => {
+                step.fail("SSH wait failed");
+                return Err(e);
+            }
+        }
 
         run_post_launch_hooks(instance, &resolved.target, ssh_port, &ssh_key_path)?;
     }
@@ -333,7 +347,7 @@ fn run_post_launch_hooks(
 
 fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: u64) -> Result<()> {
     if instance_store::instance_is_running(instance)? {
-        eprintln!("instance {instance} is already running");
+        ui::info(&format!("instance {instance} is already running"));
         if attach_console {
             return console::attach(instance, None, None);
         }
@@ -345,9 +359,9 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
 
     let mounts = state.mounts.clone();
 
-    eprintln!("starting {instance} from {}", state.target);
-
+    let step = ui::Step::start(&format!("Starting {instance}"));
     let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", false)?;
+    step.finish(&format!("Started {instance}"));
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;
@@ -356,9 +370,11 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
     console::start_capture(instance)?;
 
     if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
-        eprintln!("waiting for SSH on port {ssh_port}...");
+        let step = ui::Step::start("Waiting for SSH");
         vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, wait_timeout)?;
-        eprintln!("instance {instance} is ready");
+        step.finish(&format!(
+            "instance {instance} is ready (ssh port {ssh_port})"
+        ));
     }
 
     if attach_console {
@@ -372,9 +388,11 @@ fn cmd_stop(instance: &str) -> Result<()> {
     if !instance_store::instance_is_running(instance)? {
         if instance_store::find_runtime(instance)?.is_some() {
             instance_store::clear_runtime(instance)?;
-            eprintln!("stop: instance {instance} was already stopped (stale runtime cleared)");
+            ui::info(&format!(
+                "stop: instance {instance} was already stopped (stale runtime cleared)"
+            ));
         } else {
-            eprintln!("instance {instance} is not running");
+            ui::info(&format!("instance {instance} is not running"));
         }
         return Ok(());
     }
@@ -403,9 +421,9 @@ fn cmd_stop(instance: &str) -> Result<()> {
         }
     }
 
-    eprintln!("stopping {instance}");
+    let step = ui::Step::start(&format!("Stopping {instance}"));
     vm_launch::stop_instance(instance)?;
-    eprintln!("instance {instance} stopped");
+    step.finish(&format!("Stopped {instance}"));
     Ok(())
 }
 
@@ -414,11 +432,10 @@ fn cmd_status(instance: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
 
     let running = instance_store::instance_is_running(instance)?;
-    let status = if running { "running" } else { "stopped" };
 
-    println!("instance:  {instance}");
+    println!("instance:  {}", ui::bold(instance));
     println!("target:    {}", state.target);
-    println!("status:    {status}");
+    println!("status:    {}", ui::status_dot(running));
 
     if let Some(ref rt) = state.runtime {
         if let Some(port) = rt.ssh_port {
@@ -440,12 +457,14 @@ fn cmd_rm(instance: &str, force: bool) -> Result<()> {
     }
 
     if running {
-        eprintln!("terminating {instance}");
+        let step = ui::Step::start(&format!("Terminating {instance}"));
         vm_launch::stop_instance(instance)?;
+        step.finish(&format!("Terminated {instance}"));
     }
 
+    let step = ui::Step::start(&format!("Removing {instance}"));
     instance_store::remove(instance)?;
-    eprintln!("removed {instance}");
+    step.finish(&format!("Removed {instance}"));
     Ok(())
 }
 
@@ -458,19 +477,23 @@ fn cmd_list() -> Result<()> {
     }
 
     println!(
-        "{:<16} {:<40} {:<10} {}",
+        "{:<16} {:<40} {:<14} {}",
         "INSTANCE", "TARGET", "STATUS", "SSH"
     );
 
     for (name, target_str) in &instances {
         let running = instance_store::instance_is_running(name)?;
-        let status = if running { "running" } else { "stopped" };
-        let ssh = instance_store::find_runtime(name)?
-            .and_then(|rt| rt.ssh_port)
-            .map(|p| format!("127.0.0.1:{p}"))
-            .unwrap_or_default();
+        let status = ui::status_dot(running);
+        let ssh = if running {
+            instance_store::find_runtime(name)?
+                .and_then(|rt| rt.ssh_port)
+                .map(|p| format!("127.0.0.1:{p}"))
+                .unwrap_or_else(|| "\u{2014}".to_string())
+        } else {
+            "\u{2014}".to_string()
+        };
 
-        println!("{:<16} {:<40} {:<10} {}", name, target_str, status, ssh);
+        println!("{:<16} {:<40} {:<14} {}", name, target_str, status, ssh);
     }
 
     Ok(())
@@ -558,8 +581,9 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
 
     let was_running = instance_store::instance_is_running(instance)?;
     if was_running {
-        eprintln!("stopping {instance} for rebuild");
+        let step = ui::Step::start(&format!("Stopping {instance} for rebuild"));
         vm_launch::stop_instance(instance)?;
+        step.finish(&format!("Stopped {instance}"));
     }
 
     // Remove disk to force fresh overlay
@@ -568,9 +592,10 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
         std::fs::remove_file(&disk_path)?;
     }
 
-    eprintln!("rebuilding {instance} from {}", state.target);
+    let step = ui::Step::start(&format!("Rebuilding {instance}"));
     let mounts = state.mounts.clone();
     let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", true)?;
+    step.finish(&format!("Rebuilt {instance}"));
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;
@@ -579,9 +604,11 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
     console::start_capture(instance)?;
 
     if let Some(ssh_port) = ssh_port {
-        eprintln!("waiting for SSH on port {ssh_port}...");
+        let step = ui::Step::start("Waiting for SSH");
         vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, 120)?;
-        eprintln!("instance {instance} rebuilt and ready");
+        step.finish(&format!(
+            "instance {instance} rebuilt and ready (ssh port {ssh_port})"
+        ));
 
         // Run post-launch hooks
         let desc_hooks = target::resolve_descriptor_cached(&state.target, false)

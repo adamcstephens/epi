@@ -3,7 +3,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::process;
+use crate::{process, ui};
 
 pub struct HookEnv {
     pub instance_name: String,
@@ -52,10 +52,10 @@ fn discover_scripts(dir: &Path) -> Result<Vec<PathBuf>> {
         if mode & 0o111 != 0 {
             scripts.push(entry.path());
         } else {
-            eprintln!(
-                "warning: hook {} is not executable, skipping",
+            ui::warn(&format!(
+                "hook {} is not executable, skipping",
                 entry.path().display()
-            );
+            ));
         }
     }
     scripts.sort();
@@ -93,7 +93,7 @@ pub fn discover(
         if p.exists() {
             hooks.push(p);
         } else {
-            eprintln!("warning: nix hook {path} does not exist, skipping");
+            ui::warn(&format!("nix hook {path} does not exist, skipping"));
         }
     }
 
@@ -123,9 +123,14 @@ pub fn execute(env: &HookEnv, scripts: &[PathBuf]) -> Result<()> {
 
     for script in scripts {
         let script_str = script.to_string_lossy();
-        eprintln!("running hook: {script_str}");
+        let script_name = script
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| script_str.to_string());
+        let step = ui::Step::start(&format!("Running hook: {script_name}"));
         let out = process::run_with_env(&script_str, &[], &env_vars)?;
         if !out.success() {
+            step.fail(&format!("hook: {script_name}"));
             anyhow::bail!(
                 "hook {} failed (exit {}): {}",
                 script_str,
@@ -133,6 +138,7 @@ pub fn execute(env: &HookEnv, scripts: &[PathBuf]) -> Result<()> {
                 out.stderr
             );
         }
+        step.finish(&format!("hook: {script_name}"));
     }
     Ok(())
 }
