@@ -1,31 +1,23 @@
 ## MODIFIED Requirements
 
 ### Requirement: Descriptor cache stores resolved target artifacts
-The system SHALL cache the resolved descriptor (kernel, disk, initrd, cmdline, cpus, memory_mib, configuredUsers) for each target string in `$EPI_CACHE_DIR/targets/<md5>.descriptor` as JSON, keyed by MD5 hex digest of the full target string.
+The system SHALL cache the resolved descriptor (kernel, disk, initrd, cmdline, cpus, memory_mib, configuredUsers) for each target string in `$EPI_CACHE_DIR/targets/<hash>.descriptor` as JSON, keyed by a SipHash (std DefaultHasher) of the full target string, producing a 16-char hex filename.
 
-The `Target` module SHALL expose cache-related functions for direct testing:
-- `resolve_descriptor_cached` — resolves a descriptor, using cache when valid
-- `descriptor_paths_exist` — checks whether all artifact paths in a descriptor exist on disk
-- `cache_dir` — returns the configured cache directory path
+The `target` module SHALL expose `resolve_descriptor_cached` for direct testing — resolves a descriptor, using cache when valid.
 
 #### Scenario: Cache is written after successful resolution
 - **WHEN** `epi launch --target .#foo` resolves a descriptor via nix eval
 - **THEN** the resolved descriptor is written to the cache file as a JSON object before VM launch
 
-#### Scenario: Cache file uses MD5 of target string as filename
+#### Scenario: Cache file uses SipHash of target string as filename
 - **WHEN** target string is `.#manual-test`
-- **THEN** the cache file is named by the hex MD5 of that exact string with `.descriptor` extension
+- **THEN** the cache file is named by the 16-char hex SipHash of that exact string with `.descriptor` extension
 
 #### Scenario: Cache file format is JSON
 - **WHEN** a descriptor cache file is written
 - **THEN** the file contains a JSON object with keys: `kernel`, `disk`, `initrd`, `cmdline`, `cpus`, `memory_mib`, `configuredUsers`
 - **AND** `initrd` SHALL be `null` when no initrd is configured
 - **AND** `configuredUsers` SHALL be a JSON array of strings
-
-#### Scenario: Cache read/write testable in-process
-- **WHEN** test code calls `Target.resolve_descriptor_cached` with `EPI_CACHE_DIR` pointing to a temp directory
-- **THEN** the function writes to and reads from the temp cache directory
-- **AND** tests can verify cache file contents and cache hit/miss behavior without spawning a subprocess
 
 ### Requirement: Descriptor cache is used when valid
 The system SHALL skip nix eval and nix build when a cache file exists for the target AND all artifact paths referenced in the cached descriptor exist on disk.

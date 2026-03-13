@@ -90,6 +90,19 @@ pub fn set_launching(name: &str, target: &str, mounts: Vec<String>) -> Result<()
     save_state(name, &state)
 }
 
+pub fn set_partial_runtime(name: &str, unit_id: &str) -> Result<()> {
+    let mut state =
+        load_state(name)?.ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
+    state.runtime = Some(Runtime {
+        unit_id: unit_id.to_string(),
+        serial_socket: String::new(),
+        disk: String::new(),
+        ssh_port: None,
+        ssh_key_path: String::new(),
+    });
+    save_state(name, &state)
+}
+
 pub fn set_provisioned(name: &str, runtime: Runtime) -> Result<()> {
     let mut state =
         load_state(name)?.ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
@@ -330,6 +343,36 @@ mod tests {
         let result = read_state(dir.path(), "vm1").unwrap();
         assert_eq!(result.target, ".#dev");
         assert!(result.runtime.is_none());
+    }
+
+    #[test]
+    fn set_partial_runtime_writes_unit_id() {
+        let dir = TempDir::new().unwrap();
+        let state = InstanceState {
+            target: ".#dev".into(),
+            runtime: None,
+            mounts: vec!["/mnt".into()],
+        };
+        write_state(dir.path(), "vm1", &state);
+
+        // Simulate set_partial_runtime
+        let mut loaded = read_state(dir.path(), "vm1").unwrap();
+        loaded.runtime = Some(Runtime {
+            unit_id: "abc12345".into(),
+            serial_socket: String::new(),
+            disk: String::new(),
+            ssh_port: None,
+            ssh_key_path: String::new(),
+        });
+        write_state(dir.path(), "vm1", &loaded);
+
+        let result = read_state(dir.path(), "vm1").unwrap();
+        assert_eq!(result.target, ".#dev");
+        assert_eq!(result.mounts, vec!["/mnt"]);
+        let rt = result.runtime.unwrap();
+        assert_eq!(rt.unit_id, "abc12345");
+        assert!(rt.ssh_port.is_none());
+        assert!(rt.serial_socket.is_empty());
     }
 
     #[test]

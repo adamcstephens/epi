@@ -48,10 +48,10 @@ The CLI SHALL treat `--target` as a single string value in `<flake-ref>#<config-
 - **AND** the error states that both flake reference and config name are required
 
 ### Requirement: Lifecycle commands operate on instance identity
-The CLI SHALL treat lifecycle commands as operating on instance identity, not on target identity. The commands `down`, `rebuild`, `ssh`, `exec`, and `logs` SHALL accept an optional positional instance name and MUST default to `default` when omitted.
+The CLI SHALL treat lifecycle commands as operating on instance identity, not on target identity. The commands `stop`, `rebuild`, `ssh`, `exec`, and `logs` SHALL accept an optional positional instance name and MUST default to `default` when omitted.
 
 #### Scenario: Explicit lifecycle target
-- **WHEN** a user runs `epi down dev-a`
+- **WHEN** a user runs `epi stop dev-a`
 - **THEN** the CLI selects instance `dev-a` for shutdown
 
 #### Scenario: Implicit default lifecycle target
@@ -72,22 +72,22 @@ If a lifecycle command is invoked without an instance name and `default` does no
 - **AND** the error message suggests running `epi launch --target <flake#config>` or passing an instance name
 
 ### Requirement: CLI exposes instance inventory
-The CLI SHALL provide a `list` command that outputs known instance names, their associated targets, running status, and SSH port. The output SHALL be a four-column table with headers `INSTANCE`, `TARGET`, `STATUS`, and `SSH`. The STATUS column SHALL show `running` if the instance's systemd unit is active, or `stopped` otherwise. The SSH column SHALL show the forwarded host port number if the instance is running and has an SSH port, or `-` otherwise.
+The CLI SHALL provide a `list` command that outputs known instance names, their associated targets, running status, and SSH port. The output SHALL be a four-column table with headers `INSTANCE`, `TARGET`, `STATUS`, and `SSH`. The STATUS column SHALL show `running` if the instance's systemd unit is active, or `stopped` otherwise. The SSH column SHALL show the forwarded host port as `127.0.0.1:<port>` if the instance is running and has an SSH port, or be empty otherwise.
 
 #### Scenario: Multiple instances with mixed running state
 - **WHEN** a user runs `epi list` with instances `dev-a` (running, SSH port 54321) and `qa-1` (stopped)
 - **THEN** the output includes headers `INSTANCE  TARGET  STATUS  SSH`
-- **AND** `dev-a` row shows `running` in STATUS and `54321` in SSH
-- **AND** `qa-1` row shows `stopped` in STATUS and `-` in SSH
+- **AND** `dev-a` row shows `running` in STATUS and `127.0.0.1:54321` in SSH
+- **AND** `qa-1` row shows `stopped` in STATUS and empty SSH
 
 #### Scenario: All instances stopped
 - **WHEN** a user runs `epi list` and all instances are stopped
-- **THEN** every row shows `stopped` in STATUS and `-` in SSH
+- **THEN** every row shows `stopped` in STATUS and empty SSH
 
 #### Scenario: Instance has runtime but systemd unit is no longer active
 - **WHEN** an instance has a `runtime` field in state.json but `systemctl --user is-active` reports inactive
 - **THEN** the STATUS column shows `stopped`
-- **AND** the SSH column shows `-`
+- **AND** the SSH column is empty
 
 ### Requirement: Launch reports SSH connection details after successful launch
 After a successful `epi launch`, the CLI SHALL print the host port forwarded to the VM's SSH port so the user can connect immediately.
@@ -102,17 +102,18 @@ The `epi status` command SHALL display instance details in a labeled field forma
 
 #### Scenario: Status shows full runtime details for running instance
 - **WHEN** a user runs `epi status dev-a` and `dev-a` is running with SSH port 54321
-- **THEN** the output shows `Instance: dev-a`
-- **AND** the output shows `Target: .#dev-a`
-- **AND** the output shows `Status: running`
-- **AND** the output shows `SSH port: 54321`
+- **THEN** the output shows `instance:  dev-a`
+- **AND** the output shows `target:    .#dev-a`
+- **AND** the output shows `status:    running`
+- **AND** the output shows `ssh port:  54321`
+- **AND** the output shows `serial:`, `disk:`, and `unit id:` fields
 
-#### Scenario: Status shows minimal info for stopped instance
-- **WHEN** a user runs `epi status dev-a` and `dev-a` is stopped
-- **THEN** the output shows `Instance: dev-a`
-- **AND** the output shows `Target: .#dev-a`
-- **AND** the output shows `Status: stopped`
-- **AND** no SSH port, serial socket, or disk path lines are shown
+#### Scenario: Status shows runtime fields even when stopped
+- **WHEN** a user runs `epi status dev-a` and `dev-a` is stopped but has stored runtime metadata
+- **THEN** the output shows `instance:  dev-a`
+- **AND** the output shows `target:    .#dev-a`
+- **AND** the output shows `status:    stopped`
+- **AND** runtime fields (ssh port, serial, disk, unit id) are still shown if runtime metadata exists
 
 ### Requirement: ssh command opens an SSH session to a running instance
 The `epi ssh` command SHALL resolve the instance's stored SSH port and exec into `ssh`, replacing the epi process. It SHALL not wrap or proxy the SSH connection — the user's terminal is handed directly to `ssh`.
@@ -123,11 +124,12 @@ Connection parameters:
 - User: `$USER` from the environment (falls back to `user` if unset)
 - `StrictHostKeyChecking=no` — VMs generate fresh host keys on each provision
 - `UserKnownHostsFile=/dev/null` — prevents stale host key conflicts
+- `LogLevel=ERROR` — suppresses SSH warnings about unknown host keys
 - `-i <ssh_key_path>` — always uses the generated instance key
 
 #### Scenario: ssh opens session to running instance
 - **WHEN** a user runs `epi ssh dev-a` and `dev-a` is running with `ssh_port=54321`
-- **THEN** the CLI execs `ssh -p 54321 -i <ssh_key_path> -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null <user>@127.0.0.1`
+- **THEN** the CLI execs `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i <ssh_key_path> -p 54321 <user>@127.0.0.1`
 - **AND** epi's process is replaced by the ssh process (no wrapper)
 
 #### Scenario: ssh fails if instance is not running

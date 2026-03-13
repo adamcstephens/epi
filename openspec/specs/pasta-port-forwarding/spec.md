@@ -4,12 +4,12 @@ Define how the CLI allocates a host TCP port and configures pasta to forward it 
 ## Requirements
 
 ### Requirement: pasta is started with TCP port forwarding to VM SSH port
-When launching a VM, the CLI SHALL allocate a free host TCP port and start pasta with `-T <host-port>:22` so that host-to-VM SSH connections are possible via `localhost:<host-port>`.
+When launching a VM, the CLI SHALL allocate a free host TCP port and start pasta with `--tcp-ports <host-port>:22` so that host-to-VM SSH connections are possible via `localhost:<host-port>`.
 
 #### Scenario: pasta receives port forwarding arguments
-- **WHEN** `epi up dev-a --target .#dev-a` is invoked
+- **WHEN** `epi launch dev-a --target .#dev-a` is invoked
 - **THEN** the CLI allocates a free host TCP port (e.g., 54321)
-- **AND** pasta is started with arguments including `--vhost-user`, `--socket <path>`, and `-T 54321:22`
+- **AND** pasta is started with arguments including `--vhost-user`, `--socket <path>`, and `--tcp-ports 54321:22`
 
 #### Scenario: allocated port is reachable
 - **WHEN** the VM is running and pasta is forwarding host port 54321 to VM port 22

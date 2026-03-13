@@ -3,13 +3,6 @@
 ### Requirement: Up provisions a VM from the requested target
 The `epi launch` command SHALL evaluate the provided `--target <flake-ref>#<config-name>` and SHALL attempt to provision and start a cloud-hypervisor VM for the resolved instance using coherent launch inputs produced by that target evaluation. The VM SHALL be launched with passt-backed networking instead of TAP-based networking. When a valid descriptor cache exists for the target and all artifact paths are present on disk, the CLI SHALL skip nix eval and nix build and use the cached descriptor directly. When relaunching over a stale instance, the CLI SHALL terminate any tracked systemd units from the prior runtime before starting a new one. The target resolver (whether built-in `nix eval --json` or custom via `EPI_TARGET_RESOLVER_CMD`) MUST produce JSON output containing the descriptor fields. During seed ISO creation, the system SHALL collect guest hook scripts from drop-in directories and embed them alongside `epi.json`.
 
-The `Vm_launch` module SHALL expose the following functions for direct testing:
-- `generate_epi_json` — creates the epi.json content as a JSON string
-- `read_ssh_public_keys` — reads SSH public keys from the configured directory
-- `alloc_free_port` — allocates an unused TCP port
-- `ensure_writable_disk` — creates a writable overlay from a nix-store disk
-- `generate_ssh_key` — generates an ed25519 keypair for an instance
-- `provision` — the main provisioning entry point (already exposed)
 
 #### Scenario: Named instance is provisioned
 - **WHEN** a user runs `epi launch dev-a --target .#dev-a`
@@ -44,10 +37,3 @@ The `Vm_launch` module SHALL expose the following functions for direct testing:
 - **AND** guest hook scripts exist in `guest-init.d/` directories
 - **THEN** the collected scripts are embedded in the seed ISO alongside `epi.json`
 
-#### Scenario: generate_epi_json is callable directly
-- **WHEN** test code calls `Vm_launch.generate_epi_json ~instance_name ~username ~ssh_keys ~user_exists ~host_uid ~mount_paths`
-- **THEN** the function returns a JSON string without side effects
-
-#### Scenario: alloc_free_port is callable directly
-- **WHEN** test code calls `Vm_launch.alloc_free_port ()`
-- **THEN** the function returns an available TCP port number

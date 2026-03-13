@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::os::unix::process::CommandExt;
 
-use epi::{config, console, hooks, instance_store, process, target, vm_launch};
+use epi::{config, console, hooks, instance_store, target, vm_launch};
 
 fn ssh_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
@@ -608,11 +608,10 @@ fn cmd_logs(instance: &str) -> Result<()> {
     let runtime = instance_store::find_runtime(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found or not running"))?;
 
-    let unit = instance_store::vm_unit_name(instance, &runtime.unit_id)?;
-    let out = process::run(
-        "journalctl",
-        &["--user", "--unit", &unit, "--no-pager", "--output=cat"],
-    )?;
-    println!("{}", out.stdout);
-    Ok(())
+    let slice = instance_store::slice_name(instance, &runtime.unit_id)?;
+    let err = std::process::Command::new("journalctl")
+        .args(["--user", "--unit", &slice, "--follow"])
+        .exec();
+
+    bail!("failed to exec journalctl: {err}")
 }

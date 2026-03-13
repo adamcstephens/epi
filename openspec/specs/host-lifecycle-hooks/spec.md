@@ -31,7 +31,7 @@ The system SHALL discover host hook scripts from drop-in directories at three la
 - **THEN** no hooks are collected and launch proceeds normally
 
 ### Requirement: Host hooks are executed with instance environment variables
-The system SHALL execute each collected hook script sequentially as a subprocess. The following environment variables SHALL be set: `EPI_INSTANCE` (instance name), `EPI_SSH_PORT` (SSH port number), `EPI_SSH_KEY` (path to SSH private key), `EPI_SSH_USER` (SSH username), `EPI_STATE_DIR` (instance state directory path). If a hook script exits non-zero, the system SHALL stop executing remaining hooks and report the failure.
+The system SHALL execute each collected hook script sequentially as a subprocess. The following environment variables SHALL be set: `EPI_INSTANCE` (instance name), `EPI_SSH_PORT` (SSH port number), `EPI_SSH_KEY` (path to SSH private key), `EPI_SSH_USER` (SSH username), `EPI_STATE_DIR` (instance state directory path), `EPI_BIN` (absolute path to the epi binary). If a hook script exits non-zero, the system SHALL stop executing remaining hooks and report the failure.
 
 #### Scenario: Hook receives environment variables
 - **WHEN** a post-launch hook script runs for instance `dev` on SSH port 12345

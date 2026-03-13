@@ -4,7 +4,7 @@ Define the manual-test NixOS configuration that the flake exposes so developers 
 ## Requirements
 
 ### Requirement: Manual-test configuration is exposed by the flake
-The `flake.nix` outputs MUST include `nixosConfigurations.manual-test` so the configuration is reachable from standard Nix tools. The manual-test module MUST enable cloud-init with the NoCloud datasource so user provisioning happens at runtime.
+The `flake.nix` outputs MUST include `nixosConfigurations.manual-test` so the configuration is reachable from standard Nix tools. The manual-test module MUST enable the epi-init service so user provisioning happens at runtime.
 
 #### Scenario: Manual-test configuration is addressable
 - **WHEN** a developer evaluates `nix flake show` or an equivalent inspection command for this repository
@@ -13,7 +13,7 @@ The `flake.nix` outputs MUST include `nixosConfigurations.manual-test` so the co
 - **AND** the configuration references the dedicated manual-test module without leaking other host-specific wiring.
 
 ### Requirement: Manual-test configuration supports a local build path
-The manual-test host MUST remain buildable via a non-destructive local command so developers can validate the configuration at will, and the built outputs MUST support coherent VM launch artifacts for `epi up`.
+The manual-test host MUST remain buildable via a non-destructive local command so developers can validate the configuration at will, and the built outputs MUST support coherent VM launch artifacts for `epi launch`.
 
 #### Scenario: Manual-test configuration builds locally
 - **WHEN** a developer runs `nix build .#nixosConfigurations.manual-test.config.system.build.toplevel`
@@ -22,21 +22,21 @@ The manual-test host MUST remain buildable via a non-destructive local command s
 - **AND** the resulting outputs can be used as a coherent source for follow-up virtualization flows
 
 ### Requirement: Repository documents the manual test workflow
-The repository documentation MUST describe how to run and judge the manual-test configuration so the workflow stays repeatable, including how `epi up` consumes target-built launch artifacts.
+The repository documentation MUST describe how to run and judge the manual-test configuration so the workflow stays repeatable, including how `epi launch` consumes target-built launch artifacts.
 
 #### Scenario: Developer follows manual test instructions
 - **WHEN** a developer reads the manual-testing section in the docs
 - **THEN** the instructions include the canonical build command for `nixosConfigurations.manual-test`
-- **AND** the instructions describe that `epi up --target .#manual-test` expects kernel/initrd/disk to come from coherent target outputs
+- **AND** the instructions describe that `epi launch --target .#manual-test` expects kernel/initrd/disk to come from coherent target outputs
 - **AND** the documentation references the manual-test configuration name so future contributors can find the correct flake target
 
-### Requirement: Manual-test VM enables cloud-init
-The manual-test NixOS configuration MUST enable `services.cloud-init` so that user provisioning data from the NoCloud seed ISO is applied at boot.
+### Requirement: Manual-test VM enables epi-init service
+The manual-test NixOS configuration MUST enable the epi-init service so that user provisioning data from the epidata seed ISO is applied at boot.
 
-#### Scenario: cloud-init runs on first boot
-- **WHEN** the manual-test VM boots with a `cidata`-labeled ISO attached
-- **THEN** cloud-init detects the NoCloud datasource
-- **AND** cloud-init applies the `user-data` configuration (user creation, SSH keys, sudo)
+#### Scenario: epi-init runs on first boot
+- **WHEN** the manual-test VM boots with an `epidata`-labeled ISO attached
+- **THEN** the epi-init service detects the epidata ISO
+- **AND** the epi-init service applies the provisioning configuration (user creation, SSH keys, mounts)
 
 ### Requirement: Manual-test VM has network connectivity
 The manual-test NixOS configuration MUST include networking support with DHCP on the virtio-net interface so the VM is reachable from the host. The network connectivity SHALL be provided by pasta userspace networking rather than host-level TAP interfaces.

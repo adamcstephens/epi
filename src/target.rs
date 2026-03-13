@@ -168,11 +168,7 @@ pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
         let image = format!("{canonical}.config.system.build.image");
         let out = process::run("nix", &["build", &toplevel, &image, "--no-link"])?;
         if !out.success() {
-            bail!(
-                "nix build failed (exit {}): {}",
-                out.status,
-                out.stderr
-            );
+            bail!("nix build failed (exit {}): {}", out.status, out.stderr);
         }
     }
 

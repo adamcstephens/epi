@@ -45,7 +45,7 @@ The state root contains one subdirectory per instance, named by the instance nam
 - **AND** it contains valid JSON with a `target` field
 
 ### Requirement: state.json file format
-The `state.json` file is a JSON object containing all instance state. The CLI SHALL use `Yojson.Basic` for reading and writing. The file SHALL be written with a trailing newline.
+The `state.json` file is a JSON object containing all instance state. The CLI SHALL use `serde_json` for reading and writing.
 
 Top-level fields:
 
@@ -63,7 +63,7 @@ Runtime object fields:
 | `serial_socket` | string | Yes | Absolute path to the serial Unix domain socket |
 | `disk` | string | Yes | Absolute path to the writable disk image used at launch |
 | `ssh_port` | integer | No | Host TCP port forwarded to VM port 22 |
-| `ssh_key_path` | string | No | Absolute path to the generated SSH private key |
+| `ssh_key_path` | string | Yes | Absolute path to the generated SSH private key |
 
 Unknown keys at any level SHALL be ignored when reading.
 
@@ -77,8 +77,8 @@ Unknown keys at any level SHALL be ignored when reading.
 - **AND** `runtime` contains `unit_id`, `serial_socket`, `disk`, `ssh_port`, and `ssh_key_path`
 
 #### Scenario: state.json round-trips runtime with optional fields absent
-- **WHEN** a runtime is saved with `ssh_port` and `ssh_key_path` absent
-- **THEN** reading the file yields `ssh_port = None` and `ssh_key_path = None`
+- **WHEN** a runtime is saved with `ssh_port` absent
+- **THEN** reading the file yields `ssh_port = None`
 
 ### Requirement: Clearing runtime state
 When the VM stops, the CLI SHALL remove the `runtime` key from `state.json` while preserving `target` and `mounts`. The CLI SHALL read the existing file, remove `runtime`, and write the result back.

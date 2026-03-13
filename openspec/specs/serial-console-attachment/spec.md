@@ -17,17 +17,17 @@ The `epi console` command SHALL connect directly to the instance serial Unix soc
 - **THEN** the command exits non-zero
 - **AND** the error states the serial socket is unavailable
 
-### Requirement: Up command supports immediate console attachment
-The `epi up` command SHALL accept a `--console` flag that immediately attaches to the serial console after successful VM creation.
+### Requirement: Launch command supports immediate console attachment
+The `epi launch` command SHALL accept a `--console` flag that immediately attaches to the serial console after successful VM creation.
 
-#### Scenario: Up with console attaches immediately
-- **WHEN** a user runs `epi up dev-a --target .#dev-a --console`
+#### Scenario: Launch with console attaches immediately
+- **WHEN** a user runs `epi launch dev-a --target .#dev-a --console`
 - **THEN** the VM is provisioned and started in the background
 - **AND** the CLI immediately connects to the provisioned serial socket
 - **AND** the user interacts directly with the VM boot process
 
-#### Scenario: Up with console fails if VM provisioning fails
-- **WHEN** a user runs `epi up dev-a --target .#dev-a --console` and provisioning fails
+#### Scenario: Launch with console fails if VM provisioning fails
+- **WHEN** a user runs `epi launch dev-a --target .#dev-a --console` and provisioning fails
 - **THEN** the command exits non-zero with provisioning error
 - **AND** no console attachment is attempted
 
@@ -35,7 +35,7 @@ The `epi up` command SHALL accept a `--console` flag that immediately attaches t
 When using `--console` flag, the CLI MUST verify the VM is actually running before attempting attachment.
 
 #### Scenario: Console flag with zombie process
-- **WHEN** a user runs `epi up dev-a --target .#dev-a --console` and the VM process exits immediately
+- **WHEN** a user runs `epi launch dev-a --target .#dev-a --console` and the VM process exits immediately
 - **THEN** provisioning is marked as failed
 - **AND** the command exits non-zero without attempting console attachment
 
@@ -43,7 +43,7 @@ When using `--console` flag, the CLI MUST verify the VM is actually running befo
 Console attachment SHALL tolerate short delays between runtime launch and serial socket readiness.
 
 #### Scenario: Socket is not immediately ready
-- **WHEN** a user runs `epi up dev-a --target .#dev-a --console` and the serial socket appears shortly after process launch
+- **WHEN** a user runs `epi launch dev-a --target .#dev-a --console` and the serial socket appears shortly after process launch
 - **THEN** the CLI retries connection for a bounded interval
 - **AND** the CLI attaches successfully once the socket is accepting connections
 
@@ -68,20 +68,12 @@ The detach escape sequence is **Ctrl-T** (`\x14`) followed by **q** or **Q**. Al
 
 If Ctrl-T is the last byte in a read buffer (split across two reads), the prefix state is carried forward. If the byte following Ctrl-T is not `q`/`Q`, the Ctrl-T byte is forwarded to the VM and the following byte is processed normally.
 
-A banner is printed to stdout when console attaches:
-```
-[console attached — ctrl-t q to detach]
-```
-
-And when detached:
-```
-[console detached]
-```
+A banner is printed to stdout when console attaches and when detached. The exact banner text is an implementation detail.
 
 #### Scenario: Ctrl-T Q detaches the console
 - **WHEN** the user presses Ctrl-T then Q while the console is attached
 - **THEN** the CLI closes the socket connection
-- **AND** prints `[console detached]`
+- **AND** prints a detach banner
 - **AND** exits zero
 
 ### Requirement: Connection retry parameters
@@ -98,13 +90,12 @@ The CLI SHALL retry socket connection up to **40 times** with a **50ms** delay b
 - **AND** the error states the serial endpoint is unavailable
 
 ### Requirement: Console supports capture and timeout via environment variables
-Non-interactive console workflows (e.g. CI, testing) are controlled via environment variables:
+Non-interactive console workflows (e.g. CI, testing) are controlled via environment variables. When stdin is not a TTY, the console operates in non-interactive mode (stdin reading is disabled).
 
 | Variable | Effect |
 |----------|--------|
-| `EPI_CONSOLE_NON_INTERACTIVE` | `true`/`1`/`yes`/`on` disables stdin reading; `false`/`0`/`no`/`off` forces interactive. Defaults to TTY detection. |
 | `EPI_CONSOLE_CAPTURE_FILE` | If set, console output is written to this file path instead of stdout. The file is created (or truncated) at attach time. |
-| `EPI_CONSOLE_TIMEOUT_SECONDS` | If set to a positive number, the console session exits after this many seconds of inactivity (no bytes received from the VM). Exits non-zero with a timeout error. |
+| `EPI_CONSOLE_TIMEOUT_SECONDS` | If set to a positive number, the console session exits after this many seconds of total elapsed time. Exits non-zero with a timeout error. |
 
 #### Scenario: Capture file receives console output
 - **WHEN** `EPI_CONSOLE_CAPTURE_FILE=/tmp/boot.log` is set
@@ -112,6 +103,6 @@ Non-interactive console workflows (e.g. CI, testing) are controlled via environm
 - **AND** the captured bytes are not printed to stdout
 
 #### Scenario: Timeout exits non-zero
-- **WHEN** `EPI_CONSOLE_TIMEOUT_SECONDS=30` is set and no bytes arrive from the VM for 30 seconds
+- **WHEN** `EPI_CONSOLE_TIMEOUT_SECONDS=30` is set and 30 seconds of total elapsed time have passed
 - **THEN** the command exits non-zero
 - **AND** the error states that the console session timed out after 30 seconds

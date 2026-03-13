@@ -1,14 +1,15 @@
 ## Code style
 - Avoid abstractions
 - Avoid wrapping single expressions in standalone functions
-- Prefer explicit namespace references
 - No `unwrap()` outside of tests — propagate with `?` or `ok_or_else`
 - Keep `Option`/`Result` as long as possible — don't collapse to sentinel values (e.g. `unwrap_or(0)` then `> 0`)
 - Functions that can fail should return `Result`, not log-and-continue
+- Avoid unsafe code, ask before adding.
 - Format code with `just format`
 
 ## Dependencies
 - Rust deps are in `.cargo-home` — read code from there for correct versions without needing the internet.
+- *Always* ask before adding dependencies.
 
 ## Testing
 - Always execute red/green TDD
@@ -16,12 +17,9 @@
 - Quick tests: `just test` (runs unit + CLI integration concurrently)
 - Unit only: `just test-unit`
 - CLI only: `just test-cli`
-- Individual groups: `... -- test <group>` (unit: `test epi_json`, `test cache`, `test provision`; CLI: `test launch`, `test seed`)
-- List groups: `... -- list`
 - E2E (requires real VM): `just test-e2e`
 - E2E individual groups: `just test-e2e e2e-setup`. You *must* test e2e-setup first in order to force a rebuild before testing other e2e groups.
 - When possible, manually test: e.g. `just run list`
-- Use `--help=plain` for CLI help (without `=plain`, pager hangs non-interactively)
 
 ## Testing against a real VM
 - Launch: `just run launch <NAME> --target '.#manual-test'`

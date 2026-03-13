@@ -104,12 +104,22 @@ fn e2e_lifecycle() {
 
     // Verify SSH works
     let out = ssh_exec(&runtime, "echo hello");
-    assert!(out.success(), "echo hello failed (exit {}): {}", out.status, out.stderr);
+    assert!(
+        out.success(),
+        "echo hello failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
     assert_eq!(out.stdout, "hello");
 
     // Verify hostname
     let out = ssh_exec(&runtime, "hostname");
-    assert!(out.success(), "hostname failed (exit {}): {}", out.status, out.stderr);
+    assert!(
+        out.success(),
+        "hostname failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
 
     // Verify instance is running
     assert!(instance_store::instance_is_running(&name).unwrap());
@@ -125,7 +135,12 @@ fn e2e_lifecycle() {
     // Restart
     let runtime2 = provision_and_wait(&name);
     let out = ssh_exec(&runtime2, "echo back");
-    assert!(out.success(), "echo back failed (exit {}): {}", out.status, out.stderr);
+    assert!(
+        out.success(),
+        "echo back failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
     assert_eq!(out.stdout, "back");
 
     // Remove
@@ -189,7 +204,12 @@ fn e2e_mount() {
     // The guest mounts virtiofs at the same path as the host
     let cat_cmd = format!("cat {}/marker.txt", mount_path);
     let out = ssh_exec(&runtime, &cat_cmd);
-    assert!(out.success(), "cat marker.txt failed (exit {}): {}", out.status, out.stderr);
+    assert!(
+        out.success(),
+        "cat marker.txt failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
     assert_eq!(out.stdout, "epi-mount-test");
 }
 
@@ -223,7 +243,8 @@ fn e2e_hooks() {
     let runtime = provision_and_wait(&name);
 
     // Run post-launch hooks manually
-    let hook_scripts = hooks::discover(&name, &desc.hooks.post_launch_scripts(), "post-launch").unwrap();
+    let hook_scripts =
+        hooks::discover(&name, &desc.hooks.post_launch_scripts(), "post-launch").unwrap();
 
     let ssh_port = runtime.ssh_port.unwrap();
     let env = hooks::HookEnv {
