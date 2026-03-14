@@ -100,15 +100,17 @@ pub fn generate_shutdown_script(
     ch_remote: &Path,
     timeout_bin: &Path,
     tail_bin: &Path,
+    sh_bin: &Path,
 ) -> String {
+    let sh_bin = sh_bin.display();
     let ch_remote = ch_remote.display();
     let timeout_bin = timeout_bin.display();
     let tail_bin = tail_bin.display();
     format!(
-        "#!/usr/bin/env sh\n\
+        "#!{sh_bin}\n\
          {ch_remote} --api-socket {api_socket} power-button\n\
          {timeout_bin} 15 {tail_bin} --pid=$MAINPID -f /dev/null\n\
-         {ch_remote} --api-socket {api_socket} shutdown-vmm\n"
+         {ch_remote} --api-socket {api_socket} shutdown-vmm || true\n"
     )
 }
 
@@ -122,8 +124,9 @@ mod tests {
             Path::new("/nix/store/abc/bin/ch-remote"),
             Path::new("/nix/store/def/bin/timeout"),
             Path::new("/nix/store/ghi/bin/tail"),
+            Path::new("/nix/store/xyz/bin/sh"),
         );
-        assert!(content.starts_with("#!/usr/bin/env sh\n"));
+        assert!(content.starts_with("#!/nix/store/xyz/bin/sh\n"));
         assert!(content.contains(
             "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock power-button\n"
         ));
@@ -131,7 +134,7 @@ mod tests {
             "/nix/store/def/bin/timeout 15 /nix/store/ghi/bin/tail --pid=$MAINPID -f /dev/null\n"
         ));
         assert!(content.contains(
-            "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock shutdown-vmm\n"
+            "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock shutdown-vmm || true\n"
         ));
     }
 

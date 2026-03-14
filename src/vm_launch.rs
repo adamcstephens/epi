@@ -135,6 +135,8 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         .ok_or_else(|| anyhow::anyhow!("timeout not found in PATH"))?;
     let tail_path = process::find_executable("tail")
         .ok_or_else(|| anyhow::anyhow!("tail not found in PATH"))?;
+    let sh_path = process::find_executable("sh")
+        .ok_or_else(|| anyhow::anyhow!("sh not found in PATH"))?;
 
     // Generate shutdown script with absolute paths
     let shutdown_script_path = inst_dir.join("shutdown.sh");
@@ -143,6 +145,7 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         &ch_remote_path,
         &timeout_path,
         &tail_path,
+        &sh_path,
     );
     fs::write(&shutdown_script_path, &shutdown_content).context("writing shutdown script")?;
     #[cfg(unix)]
@@ -497,9 +500,12 @@ pub fn stop_instance(instance_name: &str) -> Result<()> {
     let runtime = instance_store::find_runtime(instance_name)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance_name} has no runtime"))?;
 
+    let vm_unit = instance_store::vm_unit_name(instance_name, &runtime.unit_id)?;
     let slice = instance_store::slice_name(instance_name, &runtime.unit_id)?;
 
-    // Stopping the slice stops all units in it (VM + helpers)
+    // Stop the VM service first — this triggers ExecStop (graceful ACPI shutdown).
+    // Then stop the slice to clean up helper units (passt, virtiofsd).
+    let _ = process::stop_unit(&vm_unit);
     process::stop_unit(&slice)?;
 
     instance_store::clear_runtime(instance_name)?;
