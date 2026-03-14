@@ -1,5 +1,6 @@
 {
   cloud-hypervisor,
+  installShellFiles,
   lib,
   epi-unwrapped,
   makeWrapper,
@@ -12,7 +13,10 @@
 }:
 runCommand "epi"
   {
-    nativeBuildInputs = [ makeWrapper ];
+    nativeBuildInputs = [
+      installShellFiles
+      makeWrapper
+    ];
     meta.mainProgram = "epi";
   }
   ''
@@ -27,4 +31,9 @@ runCommand "epi"
         xorriso
       ]
     }
+
+    installShellCompletion --cmd epi \
+      --bash <($out/bin/epi completions bash) \
+      --fish <($out/bin/epi completions fish) \
+      --zsh <($out/bin/epi completions zsh)
   ''

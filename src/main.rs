@@ -1,8 +1,20 @@
 use anyhow::{Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
+use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use std::os::unix::process::CommandExt;
 
 use epi::{config, console, cp, hooks, instance_store, ssh, target, ui, vm_launch};
+
+fn complete_instance(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let current = current.to_string_lossy();
+    instance_store::list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, _)| name.starts_with(current.as_ref()))
+        .map(|(name, target)| CompletionCandidate::new(name).help(Some(target.into())))
+        .collect()
+}
 
 fn resolve_instance_name(instance: Option<String>) -> Result<String> {
     match instance {
@@ -24,6 +36,7 @@ enum Command {
     /// Create or start an instance from a flake target.
     Launch {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
 
         /// Flake target in <flake-ref>#<config-name> form
@@ -70,6 +83,7 @@ enum Command {
     /// Start an existing stopped instance.
     Start {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
 
         /// Attach to serial console immediately after starting
@@ -88,18 +102,21 @@ enum Command {
     /// Stop an instance.
     Stop {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
     /// Show instance status.
     Status {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
     /// Remove an instance from state and runtime.
     Rm {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
 
         /// Terminate running instance before removing
@@ -114,24 +131,28 @@ enum Command {
     /// Attach to an instance serial console.
     Console {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
     /// Show captured console log for an instance.
     ConsoleLog {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
     /// Open SSH session to an instance.
     Ssh {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
     /// Execute a command in an instance.
     Exec {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
 
         /// Command and arguments to execute
@@ -142,6 +163,7 @@ enum Command {
     /// Rebuild an instance.
     Rebuild {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
@@ -157,21 +179,31 @@ enum Command {
     /// Show instance logs.
     Logs {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
     },
 
     /// Show SSH config for an instance.
     SshConfig {
         /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
 
         /// Print the config file contents instead of the path
         #[arg(long)]
         print: bool,
     },
+
+    /// Generate shell completion scripts.
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
 }
 
 fn main() {
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
+
     let cli = Cli::parse();
 
     let result = run(cli.command);
@@ -241,6 +273,11 @@ fn run(command: Command) -> Result<()> {
         Command::Logs { instance } => cmd_logs(&resolve_instance_name(instance)?),
         Command::SshConfig { instance, print } => {
             cmd_ssh_config(&resolve_instance_name(instance)?, print)
+        }
+        Command::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "epi", &mut std::io::stdout());
+            Ok(())
         }
     }
 }
