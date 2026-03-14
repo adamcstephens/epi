@@ -2,21 +2,13 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::os::unix::process::CommandExt;
 
-use epi::{config, console, cp, hooks, instance_store, target, ui, vm_launch};
+use epi::{config, console, cp, hooks, instance_store, ssh, target, ui, vm_launch};
 
 fn resolve_instance_name(instance: Option<String>) -> Result<String> {
     match instance {
         Some(name) => Ok(name),
         None => config::resolve_default_name(),
     }
-}
-
-fn ssh_user() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "user".to_string())
-}
-
-fn ssh_target() -> String {
-    format!("{}@127.0.0.1", ssh_user())
 }
 
 /// Manage development VM instances from Nix flake targets.
@@ -163,6 +155,16 @@ enum Command {
         /// Instance name
         instance: Option<String>,
     },
+
+    /// Show SSH config for an instance.
+    SshConfig {
+        /// Instance name
+        instance: Option<String>,
+
+        /// Print the config file contents instead of the path
+        #[arg(long)]
+        print: bool,
+    },
 }
 
 fn main() {
@@ -200,7 +202,14 @@ fn run(command: Command) -> Result<()> {
             )?;
             resolved.target = target::expand_tilde(&resolved.target);
             target::validate(&resolved.target)?;
-            cmd_launch(&instance, &resolved, console, rebuild, no_wait, wait_timeout)
+            cmd_launch(
+                &instance,
+                &resolved,
+                console,
+                rebuild,
+                no_wait,
+                wait_timeout,
+            )
         }
         Command::Start {
             instance,
@@ -224,6 +233,9 @@ fn run(command: Command) -> Result<()> {
         Command::Cp { source, dest } => cmd_cp(&source, &dest),
         Command::Rebuild { instance } => cmd_rebuild(&resolve_instance_name(instance)?),
         Command::Logs { instance } => cmd_logs(&resolve_instance_name(instance)?),
+        Command::SshConfig { instance, print } => {
+            cmd_ssh_config(&resolve_instance_name(instance)?, print)
+        }
     }
 }
 
@@ -286,6 +298,17 @@ fn cmd_launch(
 
     instance_store::set_provisioned(instance, runtime)?;
 
+    // Write SSH config immediately — port and key are known
+    if let Some(ssh_port) = ssh_port {
+        ssh::generate_config(
+            &ssh::config_path(instance),
+            instance,
+            ssh_port,
+            &ssh::user(),
+            std::path::Path::new(&ssh_key_path),
+        )?;
+    }
+
     // Start console capture in background
     console::start_capture(instance)?;
 
@@ -306,8 +329,9 @@ fn cmd_launch(
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(wait_timeout);
             Some(std::thread::spawn(move || -> Result<()> {
+                let config = ssh::config_path(&inst);
                 eprintln!("waiting for SSH on port {ssh_port}...");
-                vm_launch::wait_for_ssh(ssh_port, &key, timeout)?;
+                ssh::wait_for_ssh(&config, &inst, timeout)?;
                 eprintln!("instance {inst} is ready (ssh port {ssh_port})");
                 run_post_launch_hooks(&inst, &tgt, ssh_port, &key)?;
                 Ok(())
@@ -327,8 +351,9 @@ fn cmd_launch(
             .and_then(|v| v.parse().ok())
             .unwrap_or(wait_timeout);
 
+        let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
-        match vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, timeout) {
+        match ssh::wait_for_ssh(&config, instance, timeout) {
             Ok(()) => step.finish(&format!(
                 "instance {instance} is ready (ssh port {ssh_port})"
             )),
@@ -360,7 +385,7 @@ fn run_post_launch_hooks(
             instance_name: instance.to_string(),
             ssh_port,
             ssh_key_path: ssh_key_path.to_string(),
-            ssh_user: ssh_user(),
+            ssh_user: ssh::user(),
             state_dir: instance_store::state_dir().to_string_lossy().to_string(),
         };
         hooks::execute(&env, &hook_scripts)?;
@@ -390,11 +415,23 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
     let ssh_port = runtime.ssh_port;
 
     instance_store::set_provisioned(instance, runtime)?;
+
+    if let Some(ssh_port) = ssh_port {
+        ssh::generate_config(
+            &ssh::config_path(instance),
+            instance,
+            ssh_port,
+            &ssh::user(),
+            std::path::Path::new(&ssh_key_path),
+        )?;
+    }
+
     console::start_capture(instance)?;
 
     if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
+        let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
-        vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, wait_timeout)?;
+        ssh::wait_for_ssh(&config, instance, wait_timeout)?;
         step.finish(&format!(
             "instance {instance} is ready (ssh port {ssh_port})"
         ));
@@ -436,7 +473,7 @@ fn cmd_stop(instance: &str) -> Result<()> {
                 instance_name: instance.to_string(),
                 ssh_port,
                 ssh_key_path: rt.ssh_key_path.clone(),
-                ssh_user: ssh_user(),
+                ssh_user: ssh::user(),
                 state_dir: instance_store::state_dir().to_string_lossy().to_string(),
             };
             hooks::execute(&env, &hook_scripts)?;
@@ -531,31 +568,20 @@ fn cmd_console_log(instance: &str) -> Result<()> {
     console::show_log(instance)
 }
 
-fn cmd_ssh(instance: &str) -> Result<()> {
-    let runtime = instance_store::find_runtime(instance)?
+fn ensure_running(instance: &str) -> Result<()> {
+    instance_store::find_runtime(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} is not running"))?;
+    Ok(())
+}
 
-    let ssh_port = runtime
-        .ssh_port
-        .ok_or_else(|| anyhow::anyhow!("no SSH port for instance {instance}"))?;
+fn cmd_ssh(instance: &str) -> Result<()> {
+    ensure_running(instance)?;
 
+    let config = ssh::config_path(instance);
     let err = std::process::Command::new("ssh")
-        .args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-o",
-            "LogLevel=ERROR",
-            "-i",
-            &runtime.ssh_key_path,
-            "-p",
-            &ssh_port.to_string(),
-            &ssh_target(),
-        ])
+        .args(["-F", &config.to_string_lossy(), instance])
         .exec();
 
-    // exec() only returns on error
     bail!("failed to exec ssh: {err}");
 }
 
@@ -564,25 +590,15 @@ fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
         bail!("no command specified");
     }
 
-    let runtime = instance_store::find_runtime(instance)?
-        .ok_or_else(|| anyhow::anyhow!("instance {instance} is not running"))?;
+    ensure_running(instance)?;
 
-    let ssh_port = runtime
-        .ssh_port
-        .ok_or_else(|| anyhow::anyhow!("no SSH port for instance {instance}"))?;
+    let config = ssh::config_path(instance);
+    let config_str = config.to_string_lossy();
 
     let mut args = vec![
-        "-o".to_string(),
-        "StrictHostKeyChecking=no".to_string(),
-        "-o".to_string(),
-        "UserKnownHostsFile=/dev/null".to_string(),
-        "-o".to_string(),
-        "LogLevel=ERROR".to_string(),
-        "-i".to_string(),
-        runtime.ssh_key_path.clone(),
-        "-p".to_string(),
-        ssh_port.to_string(),
-        ssh_target(),
+        "-F".to_string(),
+        config_str.to_string(),
+        instance.to_string(),
         "--".to_string(),
     ];
     args.extend_from_slice(command);
@@ -607,19 +623,12 @@ fn cmd_cp(source: &str, dest: &str) -> Result<()> {
         _ => unreachable!("parse_copy_spec validates exactly one side is remote"),
     };
 
-    let runtime = instance_store::find_runtime(instance)?
-        .ok_or_else(|| anyhow::anyhow!("instance {instance} is not running"))?;
+    ensure_running(instance)?;
 
-    let ssh_port = runtime
-        .ssh_port
-        .ok_or_else(|| anyhow::anyhow!("no SSH port for instance {instance}"))?;
+    let config = ssh::config_path(instance);
+    let ssh_cmd = format!("ssh -F {}", config.display());
 
-    let ssh_cmd = format!(
-        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i {} -p {}",
-        runtime.ssh_key_path, ssh_port
-    );
-
-    let remote = format!("{}@127.0.0.1:{}", ssh_user(), remote_path);
+    let remote = format!("{instance}:{remote_path}");
 
     let (rsync_src, rsync_dest) = if is_push {
         let local_path = match &spec.source {
@@ -668,11 +677,23 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
     let ssh_port = runtime.ssh_port;
 
     instance_store::set_provisioned(instance, runtime)?;
+
+    if let Some(ssh_port) = ssh_port {
+        ssh::generate_config(
+            &ssh::config_path(instance),
+            instance,
+            ssh_port,
+            &ssh::user(),
+            std::path::Path::new(&ssh_key_path),
+        )?;
+    }
+
     console::start_capture(instance)?;
 
     if let Some(ssh_port) = ssh_port {
+        let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
-        vm_launch::wait_for_ssh(ssh_port, &ssh_key_path, 120)?;
+        ssh::wait_for_ssh(&config, instance, 120)?;
         step.finish(&format!(
             "instance {instance} rebuilt and ready (ssh port {ssh_port})"
         ));
@@ -688,7 +709,7 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
                 instance_name: instance.to_string(),
                 ssh_port,
                 ssh_key_path,
-                ssh_user: ssh_user(),
+                ssh_user: ssh::user(),
                 state_dir: instance_store::state_dir().to_string_lossy().to_string(),
             };
             hooks::execute(&env, &hook_scripts)?;
@@ -708,4 +729,24 @@ fn cmd_logs(instance: &str) -> Result<()> {
         .exec();
 
     bail!("failed to exec journalctl: {err}")
+}
+
+fn cmd_ssh_config(instance: &str, print: bool) -> Result<()> {
+    ensure_running(instance)?;
+
+    let config = ssh::config_path(instance);
+    if !config.exists() {
+        bail!(
+            "SSH config not found for instance {instance} — it may have launched before config generation was added"
+        );
+    }
+
+    if print {
+        let contents = std::fs::read_to_string(&config)?;
+        print!("{contents}");
+    } else {
+        println!("{}", config.display());
+    }
+
+    Ok(())
 }

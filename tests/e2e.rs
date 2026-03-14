@@ -5,7 +5,7 @@
 //!
 //! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
 
-use epi::{config, console, hooks, instance_store, process, target, vm_launch};
+use epi::{config, console, hooks, instance_store, process, ssh, target, vm_launch};
 use std::fs;
 use std::sync::LazyLock;
 use tempfile::TempDir;
@@ -80,7 +80,15 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
     instance_store::set_provisioned(name, runtime.clone()).expect("set_provisioned failed");
 
     let ssh_port = runtime.ssh_port.expect("no ssh port");
-    vm_launch::wait_for_ssh(ssh_port, &runtime.ssh_key_path, 120).expect("ssh wait failed");
+    ssh::generate_config(
+        &ssh::config_path(name),
+        name,
+        ssh_port,
+        &ssh::user(),
+        std::path::Path::new(&runtime.ssh_key_path),
+    )
+    .expect("generate ssh config failed");
+    ssh::wait_for_ssh(&ssh::config_path(name), name, 120).expect("ssh wait failed");
 
     runtime
 }
@@ -222,7 +230,15 @@ fn e2e_mount() {
     instance_store::set_provisioned(&name, runtime.clone()).unwrap();
 
     let ssh_port = runtime.ssh_port.expect("no ssh port");
-    vm_launch::wait_for_ssh(ssh_port, &runtime.ssh_key_path, 120).expect("ssh wait failed");
+    ssh::generate_config(
+        &ssh::config_path(&name),
+        &name,
+        ssh_port,
+        &ssh::user(),
+        std::path::Path::new(&runtime.ssh_key_path),
+    )
+    .expect("generate ssh config failed");
+    ssh::wait_for_ssh(&ssh::config_path(&name), &name, 120).expect("ssh wait failed");
 
     // The guest mounts virtiofs at the same path as the host
     let cat_cmd = format!("cat {}/marker.txt", mount_path);
