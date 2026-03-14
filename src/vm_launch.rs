@@ -118,6 +118,9 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
     }
     let serial_socket_str = serial_socket.to_string_lossy().to_string();
 
+    let console_log = inst_dir.join("console.log");
+    let console_log_str = console_log.to_string_lossy().to_string();
+
     let api_socket = inst_dir.join("api.sock");
     if api_socket.exists() {
         fs::remove_file(&api_socket)?;
@@ -135,8 +138,8 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         .ok_or_else(|| anyhow::anyhow!("timeout not found in PATH"))?;
     let tail_path = process::find_executable("tail")
         .ok_or_else(|| anyhow::anyhow!("tail not found in PATH"))?;
-    let sh_path = process::find_executable("sh")
-        .ok_or_else(|| anyhow::anyhow!("sh not found in PATH"))?;
+    let sh_path =
+        process::find_executable("sh").ok_or_else(|| anyhow::anyhow!("sh not found in PATH"))?;
 
     // Generate shutdown script with absolute paths
     let shutdown_script_path = inst_dir.join("shutdown.sh");
@@ -221,6 +224,7 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         fs_args: &fs_args,
         api_socket: Some(&api_socket_str),
         mac: &mac,
+        console_log: &console_log_str,
     });
     let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
 
