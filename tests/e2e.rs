@@ -55,6 +55,7 @@ fn default_resolved() -> config::Resolved {
         cpus: None,
         memory: None,
         default_name: "default".to_string(),
+        ports: vec![],
     }
 }
 
@@ -74,6 +75,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
         false,
         resolved.cpus,
         resolved.memory,
+        &resolved.ports,
     )
     .expect("provision failed");
 
@@ -268,7 +270,7 @@ fn e2e_mount() {
 
     instance_store::set_launching(&name, target_str, mounts.clone()).unwrap();
 
-    let runtime = vm_launch::provision(&name, target_str, &mounts, "40G", false, None, None)
+    let runtime = vm_launch::provision(&name, target_str, &mounts, "40G", false, None, None, &[])
         .expect("provision failed");
 
     instance_store::set_provisioned(&name, runtime.clone()).unwrap();

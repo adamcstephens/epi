@@ -54,6 +54,10 @@ enum Command {
         #[arg(long)]
         memory: Option<u32>,
 
+        /// Map a TCP port from host to guest (repeatable, e.g. 8080:80 or :443)
+        #[arg(long)]
+        port: Vec<String>,
+
         /// Return immediately without waiting for SSH
         #[arg(long)]
         no_wait: bool,
@@ -189,6 +193,7 @@ fn run(command: Command) -> Result<()> {
             disk_size,
             cpus,
             memory,
+            port,
             no_wait,
             wait_timeout,
         } => {
@@ -199,6 +204,7 @@ fn run(command: Command) -> Result<()> {
                 disk_size.as_deref(),
                 cpus,
                 memory,
+                &port,
             )?;
             resolved.target = target::expand_tilde(&resolved.target);
             target::validate(&resolved.target)?;
@@ -277,6 +283,7 @@ fn cmd_launch(
         rebuild,
         resolved.cpus,
         resolved.memory,
+        &resolved.ports,
     ) {
         Ok(r) => {
             step.finish(&format!("Provisioned {instance}"));
@@ -414,7 +421,19 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
     let mounts = state.mounts.clone();
 
     let step = ui::Step::start(&format!("Starting {instance}"));
-    let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", false, None, None)?;
+    let config_ports = config::load_project()?
+        .and_then(|c| c.ports)
+        .unwrap_or_default();
+    let runtime = vm_launch::provision(
+        instance,
+        &state.target,
+        &mounts,
+        "40G",
+        false,
+        None,
+        None,
+        &config_ports,
+    )?;
     step.finish(&format!("Started {instance}"));
 
     let ssh_key_path = runtime.ssh_key_path.clone();
@@ -512,6 +531,11 @@ fn cmd_status(instance: &str) -> Result<()> {
         if let Some(port) = rt.ssh_port {
             println!("ssh port:  {port}");
         }
+        if !rt.ports.is_empty() {
+            for pm in &rt.ports {
+                println!("port:      {}:{} ({})", pm.host, pm.guest, pm.protocol);
+            }
+        }
         println!("serial:    {}", rt.serial_socket);
         println!("disk:      {}", rt.disk);
         println!("unit id:   {}", rt.unit_id);
@@ -547,21 +571,40 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<16} {:<40} {:<14} SSH", "INSTANCE", "TARGET", "STATUS");
+    println!(
+        "{:<16} {:<40} {:<14} {:<20} PORTS",
+        "INSTANCE", "TARGET", "STATUS", "SSH"
+    );
 
     for (name, target_str) in &instances {
         let running = instance_store::instance_is_running(name)?;
         let status = ui::status_dot(running);
-        let ssh = if running {
-            instance_store::find_runtime(name)?
+        let (ssh, ports_str) = if running {
+            let rt = instance_store::find_runtime(name)?;
+            let ssh = rt
+                .as_ref()
                 .and_then(|rt| rt.ssh_port)
                 .map(|p| format!("127.0.0.1:{p}"))
-                .unwrap_or_else(|| "\u{2014}".to_string())
+                .unwrap_or_else(|| "\u{2014}".to_string());
+            let ports = rt
+                .as_ref()
+                .map(|rt| {
+                    rt.ports
+                        .iter()
+                        .map(|pm| format!("{}:{}", pm.host, pm.guest))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            (ssh, ports)
         } else {
-            "\u{2014}".to_string()
+            ("\u{2014}".to_string(), String::new())
         };
 
-        println!("{:<16} {:<40} {:<14} {}", name, target_str, status, ssh);
+        println!(
+            "{:<16} {:<40} {:<14} {:<20} {}",
+            name, target_str, status, ssh, ports_str
+        );
     }
 
     Ok(())
@@ -682,7 +725,19 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
 
     let step = ui::Step::start(&format!("Rebuilding {instance}"));
     let mounts = state.mounts.clone();
-    let runtime = vm_launch::provision(instance, &state.target, &mounts, "40G", true, None, None)?;
+    let config_ports = config::load_project()?
+        .and_then(|c| c.ports)
+        .unwrap_or_default();
+    let runtime = vm_launch::provision(
+        instance,
+        &state.target,
+        &mounts,
+        "40G",
+        true,
+        None,
+        None,
+        &config_ports,
+    )?;
     step.finish(&format!("Rebuilt {instance}"));
 
     let ssh_key_path = runtime.ssh_key_path.clone();
