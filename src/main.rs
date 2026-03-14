@@ -71,6 +71,10 @@ enum Command {
         #[arg(long)]
         port: Vec<String>,
 
+        /// Do not auto-mount project directory into the guest
+        #[arg(long)]
+        no_project_mount: bool,
+
         /// Return immediately without waiting for SSH
         #[arg(long)]
         no_wait: bool,
@@ -226,6 +230,7 @@ fn run(command: Command) -> Result<()> {
             cpus,
             memory,
             port,
+            no_project_mount,
             no_wait,
             wait_timeout,
         } => {
@@ -237,6 +242,7 @@ fn run(command: Command) -> Result<()> {
                 cpus,
                 memory,
                 &port,
+                no_project_mount,
             )?;
             resolved.target = target::expand_tilde(&resolved.target);
             target::validate(&resolved.target)?;

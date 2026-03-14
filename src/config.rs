@@ -12,6 +12,7 @@ pub struct Config {
     pub memory: Option<u32>,
     pub default_name: Option<String>,
     pub ports: Option<Vec<String>>,
+    pub project_mount: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +106,7 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
         memory: project.memory.or(user.memory),
         default_name: project.default_name.or(user.default_name),
         ports: merge_port_lists(user.ports, project.ports),
+        project_mount: project.project_mount.or(user.project_mount),
     }
 }
 
@@ -135,6 +137,7 @@ pub fn resolve(
     cli_cpus: Option<u32>,
     cli_memory: Option<u32>,
     cli_ports: &[String],
+    cli_no_project_mount: bool,
 ) -> Result<Resolved> {
     let user = load_user()?;
     let project = load_project()?;
@@ -147,11 +150,32 @@ pub fn resolve(
             anyhow::anyhow!("no target specified (use --target or set in .epi/config.toml)")
         })?;
 
-    let mounts = if cli_mounts.is_empty() {
+    let mut mounts = if cli_mounts.is_empty() {
         config.mounts.unwrap_or_default()
     } else {
         cli_mounts.to_vec()
     };
+
+    // Auto-mount project directory when in a project and not disabled
+    let auto_mount = if cli_no_project_mount {
+        false
+    } else {
+        config.project_mount.unwrap_or(true)
+    };
+    if auto_mount
+        && let Some(ref dir) = project_dir()?
+    {
+        let already_mounted = mounts.iter().any(|m| {
+            Path::new(m)
+                .canonicalize()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| m.clone())
+                == *dir
+        });
+        if !already_mounted {
+            mounts.insert(0, dir.clone());
+        }
+    }
 
     let disk_size = cli_disk_size
         .map(|s| s.to_string())
@@ -435,6 +459,57 @@ ports = ["8080:80", ":443"]
         };
         let merged = merge_configs(Some(user), None);
         assert_eq!(merged.ports.unwrap(), vec!["8080:80"]);
+    }
+
+    #[test]
+    fn parse_project_mount_false() {
+        let toml = r#"project_mount = false"#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert_eq!(config.project_mount, Some(false));
+    }
+
+    #[test]
+    fn parse_project_mount_true() {
+        let toml = r#"project_mount = true"#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert_eq!(config.project_mount, Some(true));
+    }
+
+    #[test]
+    fn parse_project_mount_absent() {
+        let toml = r#"target = ".#dev""#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert!(config.project_mount.is_none());
+    }
+
+    #[test]
+    fn merge_project_mount_project_overrides_user() {
+        let user = Config {
+            project_mount: Some(true),
+            ..Config::default()
+        };
+        let project = Config {
+            project_mount: Some(false),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        assert_eq!(merged.project_mount, Some(false));
+    }
+
+    #[test]
+    fn merge_project_mount_falls_through_to_user() {
+        let user = Config {
+            project_mount: Some(false),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), None);
+        assert_eq!(merged.project_mount, Some(false));
+    }
+
+    #[test]
+    fn merge_project_mount_none_when_unset() {
+        let merged = merge_configs(None, None);
+        assert!(merged.project_mount.is_none());
     }
 
     #[test]
