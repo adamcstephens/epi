@@ -677,6 +677,16 @@ fn cmd_status(instance: &str) -> Result<()> {
 }
 
 fn cmd_rm(instance: &str, force: bool) -> Result<()> {
+    let exists = instance_store::find(instance)?.is_some();
+
+    if !exists {
+        if force {
+            ui::info(&format!("no instance {instance} found"));
+            return Ok(());
+        }
+        bail!("instance {instance} not found");
+    }
+
     let running = instance_store::instance_is_running(instance)?;
 
     if running && !force {
