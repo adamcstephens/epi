@@ -16,9 +16,11 @@ fn e2e_target() -> String {
 
 static DESCRIPTOR: LazyLock<(String, target::Descriptor)> = LazyLock::new(|| {
     let t = e2e_target();
+    eprintln!("Generating descriptor");
     let desc = target::resolve_descriptor(&t).expect("failed to resolve e2e target");
     target::validate_descriptor(&desc).expect("invalid e2e descriptor");
     target::ensure_paths_exist(&t, &desc).expect("e2e descriptor paths missing");
+    eprintln!("Finished generating descriptor");
     (t, desc)
 });
 
@@ -41,6 +43,14 @@ impl InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
+        if std::env::var("EPI_E2E_PAUSE").is_ok() {
+            eprintln!(
+                "== PAUSED: instance {} is running. Press Enter to continue teardown ==",
+                self.name
+            );
+            let mut buf = String::new();
+            let _ = std::io::stdin().read_line(&mut buf);
+        }
         let _ = vm_launch::stop_instance(&self.name);
         let _ = instance_store::remove(&self.name);
     }

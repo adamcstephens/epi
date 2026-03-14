@@ -65,14 +65,29 @@ fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<Config>
     Ok(Some(config))
 }
 
+fn project_config_path() -> (PathBuf, Option<PathBuf>) {
+    if let Ok(p) = std::env::var("EPI_PROJECT_CONFIG_FILE") {
+        let path = PathBuf::from(&p);
+        let base = path.parent().map(|d| d.to_path_buf());
+        (path, base)
+    } else {
+        (PathBuf::from(".epi/config.toml"), Some(PathBuf::from(".")))
+    }
+}
+
 pub fn load_project() -> Result<Option<Config>> {
-    load_from(Path::new(".epi/config.toml"), Some(Path::new(".")))
+    let (path, base) = project_config_path();
+    load_from(&path, base.as_deref())
 }
 
 /// Returns the canonicalized project directory if .epi/config.toml exists.
 pub fn project_dir() -> Result<Option<String>> {
-    if Path::new(".epi/config.toml").exists() {
-        let dir = Path::new(".").canonicalize()?;
+    let (path, _) = project_config_path();
+    if path.exists() {
+        let dir = path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .canonicalize()?;
         Ok(Some(dir.to_string_lossy().to_string()))
     } else {
         Ok(None)
@@ -644,6 +659,20 @@ ports = ["8080:80", ":443"]
     fn merge_project_mount_none_when_unset() {
         let merged = merge_configs(None, None);
         assert!(merged.project_mount.is_none());
+    }
+
+    #[test]
+    fn load_project_respects_env_override() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(&config_path, "target = \".#from-env\"").unwrap();
+
+        // SAFETY: unit tests with env var manipulation
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &config_path) };
+        let config = load_project().unwrap();
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(config.unwrap().target.unwrap(), ".#from-env");
     }
 
     #[test]
