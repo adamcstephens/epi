@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use crossterm::terminal;
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use std::fs::{self, File};
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read, Seek, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
@@ -38,6 +38,21 @@ pub fn attach(
 
     if runtime.serial_socket.is_empty() {
         bail!("no serial socket for instance {instance_name}");
+    }
+
+    // Dump scrollback from console.log before connecting
+    let console_log = instance_store::console_log_path(instance_name);
+    let scrollback = read_scrollback(&console_log, SCROLLBACK_BYTES);
+    if !scrollback.is_empty() {
+        let cleaned = strip_control_chars(&scrollback);
+        if !cleaned.is_empty() {
+            eprintln!("--- scrollback (console.log) ---");
+            eprint!("{cleaned}");
+            if !cleaned.ends_with('\n') {
+                eprintln!();
+            }
+            eprintln!("--- live ---");
+        }
     }
 
     let mut stream = connect_socket(&runtime.serial_socket, 40, Duration::from_millis(50))?;
@@ -159,6 +174,59 @@ impl Drop for RawModeGuard {
     }
 }
 
+const SCROLLBACK_BYTES: usize = 8192;
+
+/// Strip ANSI escape sequences and non-printable control characters from text.
+/// Preserves newlines (0x0A) and carriage returns (0x0D).
+fn strip_control_chars(input: &str) -> String {
+    let stripped = fast_strip_ansi::strip_ansi_string(input);
+    stripped
+        .chars()
+        .filter(|c| {
+            let b = *c as u32;
+            // Keep printable chars, newline, carriage return
+            b >= 0x20 || b == 0x0A || b == 0x0D
+        })
+        .collect()
+}
+
+/// Read the last `max_bytes` of a file as a string.
+/// Returns empty string if the file does not exist.
+fn read_scrollback(path: &std::path::Path, max_bytes: usize) -> String {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return String::new(),
+    };
+    let metadata = match file.metadata() {
+        Ok(m) => m,
+        Err(_) => return String::new(),
+    };
+    let file_len = metadata.len() as usize;
+    let offset = file_len.saturating_sub(max_bytes);
+    let mut reader = std::io::BufReader::new(file);
+    if offset > 0 {
+        if reader
+            .seek(std::io::SeekFrom::Start(offset as u64))
+            .is_err()
+        {
+            return String::new();
+        }
+    }
+    let mut buf = String::new();
+    if reader.read_to_string(&mut buf).is_err() {
+        // File may contain non-UTF8; read as bytes and lossy-convert
+        if let Ok(mut file) = File::open(path) {
+            let mut bytes = Vec::new();
+            if file.seek(std::io::SeekFrom::Start(offset as u64)).is_ok() {
+                let _ = file.read_to_end(&mut bytes);
+                return String::from_utf8_lossy(&bytes).into_owned();
+            }
+        }
+        return String::new();
+    }
+    buf
+}
+
 /// Show captured console log
 pub fn show_log(instance_name: &str) -> Result<()> {
     let path = instance_store::console_log_path(instance_name);
@@ -168,4 +236,59 @@ pub fn show_log(instance_name: &str) -> Result<()> {
     let content = fs::read_to_string(&path)?;
     print!("{content}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn strip_control_chars_removes_ansi_colors() {
+        let input = "\x1b[32mOK\x1b[0m";
+        assert_eq!(strip_control_chars(input), "OK");
+    }
+
+    #[test]
+    fn strip_control_chars_removes_non_printable_preserves_newlines() {
+        let input = "hello\x07\x08world\nfoo\rbar";
+        assert_eq!(strip_control_chars(input), "helloworld\nfoo\rbar");
+    }
+
+    #[test]
+    fn strip_control_chars_passes_through_plain_text() {
+        let input = "just plain text\nwith lines\n";
+        assert_eq!(strip_control_chars(input), input);
+    }
+
+    #[test]
+    fn read_scrollback_reads_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.log");
+        let mut f = File::create(&path).unwrap();
+        // Write 100 bytes of 'a' then 50 bytes of 'b'
+        f.write_all(&[b'a'; 100]).unwrap();
+        f.write_all(&[b'b'; 50]).unwrap();
+        drop(f);
+
+        let result = read_scrollback(&path, 50);
+        assert_eq!(result.len(), 50);
+        assert!(result.chars().all(|c| c == 'b'));
+    }
+
+    #[test]
+    fn read_scrollback_returns_full_content_when_small() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.log");
+        fs::write(&path, "small content").unwrap();
+
+        let result = read_scrollback(&path, 8192);
+        assert_eq!(result, "small content");
+    }
+
+    #[test]
+    fn read_scrollback_returns_empty_for_missing_file() {
+        let result = read_scrollback(std::path::Path::new("/nonexistent/path/file.log"), 8192);
+        assert_eq!(result, "");
+    }
 }
