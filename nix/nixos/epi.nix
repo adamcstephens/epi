@@ -242,11 +242,46 @@ in
       "ext4"
     ];
 
+    # Use systemd-networkd instead of dhcpcd — faster DHCP
     networking.useDHCP = true;
+    networking.useNetworkd = true;
+
+    # Disable firewall — VM runs behind passt (user-mode networking)
+    networking.firewall.enable = false;
 
     nix.settings = {
       experimental-features = "nix-command flakes";
     };
+
+    # Disable unnecessary services for a lightweight VM
+    systemd.services."getty@".enable = false;
+
+    # Blacklist kernel modules not needed in a cloud-hypervisor VM
+    boot.blacklistedKernelModules = [
+      "cfg80211"     # wireless
+      "rfkill"       # wireless killswitch
+      "8021q"        # VLANs
+      "edac_core"    # ECC memory error detection
+      "intel_rapl_msr" # power management
+      "intel_rapl_common"
+      "ccp"          # AMD crypto coprocessor
+      "mac_hid"      # macOS HID emulation
+      "atkbd"        # AT keyboard
+      "libps2"       # PS/2
+      "serio"        # serial I/O
+      "vivaldi_fmap" # chromebook keyboard
+      "efi_pstore"   # EFI pstore
+      "vmw_vsock_vmci_transport" # VMware vsock
+      "vmw_vsock_virtio_transport_common"
+      "vsock_loopback"
+      "vsock"
+      "vmw_vmci"     # VMware VMCI
+      "dmi_sysfs"    # DMI/SMBIOS sysfs
+      "qemu_fw_cfg"  # QEMU firmware config
+      "autofs4"      # automounting
+      "dm_mod"       # device mapper
+      "loop"         # loop devices
+    ];
 
     systemd.services.epi-init = {
       description = "epi guest initialization";
