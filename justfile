@@ -15,7 +15,7 @@ test *args:
     cargo test {{ args }}
 
 test-e2e *args:
-    cargo test --test e2e -- --ignored {{ args }}
+    cargo test --test e2e -- --ignored --nocapture {{ args }}
 
 # Release: just release 0.3.0
 release version:

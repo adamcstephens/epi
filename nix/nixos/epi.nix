@@ -71,7 +71,6 @@ let
         MOUNT_PATH=$(jq -r ".mounts[$i]" "$EPI_JSON")
         mkdir -p "$MOUNT_PATH"
         mount -t virtiofs "hostfs-$i" "$MOUNT_PATH"
-        chown "$USERNAME:" "$MOUNT_PATH"
       done
     '';
   };
