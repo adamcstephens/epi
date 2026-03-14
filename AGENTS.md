@@ -10,7 +10,7 @@
 - Functions that can fail should return `Result`, not log-and-continue
 - Avoid unsafe code, ask before adding.
 - Format code with `just format`
-- Check code linting with `just lint`
+- Always check code linting with `just lint`
 - Canonicalize relative paths to absolute paths as early as possible
 
 ## Dependencies

@@ -204,13 +204,12 @@ fn read_scrollback(path: &std::path::Path, max_bytes: usize) -> String {
     let file_len = metadata.len() as usize;
     let offset = file_len.saturating_sub(max_bytes);
     let mut reader = std::io::BufReader::new(file);
-    if offset > 0 {
-        if reader
+    if offset > 0
+        && reader
             .seek(std::io::SeekFrom::Start(offset as u64))
             .is_err()
-        {
-            return String::new();
-        }
+    {
+        return String::new();
     }
     let mut buf = String::new();
     if reader.read_to_string(&mut buf).is_err() {

@@ -67,16 +67,16 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
     instance_store::set_launching(name, &resolved.target, resolved.mounts.clone(), None)
         .expect("set_launching failed");
 
-    let runtime = vm_launch::provision(
-        name,
-        &resolved.target,
-        &resolved.mounts,
-        &resolved.disk_size,
-        false,
-        resolved.cpus,
-        resolved.memory,
-        &resolved.ports,
-    )
+    let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
+        instance_name: name,
+        target_str: &resolved.target,
+        mounts: &resolved.mounts,
+        disk_size: &resolved.disk_size,
+        rebuild: false,
+        cpus_override: resolved.cpus,
+        memory_override: resolved.memory,
+        port_specs: &resolved.ports,
+    })
     .expect("provision failed");
 
     instance_store::set_provisioned(name, runtime.clone()).expect("set_provisioned failed");
@@ -304,8 +304,17 @@ fn e2e_mount() {
 
     instance_store::set_launching(&name, target_str, mounts.clone(), None).unwrap();
 
-    let runtime = vm_launch::provision(&name, target_str, &mounts, "40G", false, None, None, &[])
-        .expect("provision failed");
+    let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
+        instance_name: &name,
+        target_str,
+        mounts: &mounts,
+        disk_size: "40G",
+        rebuild: false,
+        cpus_override: None,
+        memory_override: None,
+        port_specs: &[],
+    })
+    .expect("provision failed");
 
     instance_store::set_provisioned(&name, runtime.clone()).unwrap();
 
