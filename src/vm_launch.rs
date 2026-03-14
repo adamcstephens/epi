@@ -467,6 +467,8 @@ fn start_virtiofsd(
     shared_dir: &str,
 ) -> Result<()> {
     process::require_binary("virtiofsd", "virtiofsd")?;
+    let uid = nix::unistd::getuid().as_raw();
+    let gid = nix::unistd::getgid().as_raw();
     let out = process::run_helper(
         unit_name,
         slice,
@@ -478,6 +480,14 @@ fn start_virtiofsd(
             "--shared-dir",
             shared_dir,
             "--announce-submounts",
+            "--uid-map",
+            &format!(":0:{uid}:1:"),
+            "--gid-map",
+            &format!(":0:{gid}:1:"),
+            "--translate-uid",
+            &format!("map:{uid}:0:1"),
+            "--translate-gid",
+            &format!("map:{gid}:0:1"),
         ],
     )?;
     if !out.success() {
