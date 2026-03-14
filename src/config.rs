@@ -100,13 +100,32 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
     let project = project.unwrap_or_default();
     Config {
         target: project.target.or(user.target),
-        mounts: project.mounts.or(user.mounts),
+        mounts: merge_mount_lists(user.mounts, project.mounts),
         disk_size: project.disk_size.or(user.disk_size),
         cpus: project.cpus.or(user.cpus),
         memory: project.memory.or(user.memory),
         default_name: project.default_name.or(user.default_name),
         ports: merge_port_lists(user.ports, project.ports),
         project_mount: project.project_mount.or(user.project_mount),
+    }
+}
+
+/// Merge mount lists from user and project configs (union, deduped by exact string).
+fn merge_mount_lists(
+    user: Option<Vec<String>>,
+    project: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match (user, project) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(mut a), Some(b)) => {
+            for m in b {
+                if !a.contains(&m) {
+                    a.push(m);
+                }
+            }
+            Some(a)
+        }
     }
 }
 
@@ -150,10 +169,15 @@ pub fn resolve(
             anyhow::anyhow!("no target specified (use --target or set in .epi/config.toml)")
         })?;
 
-    let mut mounts = if cli_mounts.is_empty() {
-        config.mounts.unwrap_or_default()
-    } else {
-        cli_mounts.to_vec()
+    // CLI mounts are additive with config mounts (union)
+    let mut mounts = {
+        let mut merged = config.mounts.unwrap_or_default();
+        for m in cli_mounts {
+            if !merged.contains(m) {
+                merged.push(m.clone());
+            }
+        }
+        merged
     };
 
     // Auto-mount project directory when in a project and not disabled
@@ -162,9 +186,7 @@ pub fn resolve(
     } else {
         config.project_mount.unwrap_or(true)
     };
-    if auto_mount
-        && let Some(ref dir) = project_dir()?
-    {
+    if auto_mount && let Some(ref dir) = project_dir()? {
         let already_mounted = mounts.iter().any(|m| {
             Path::new(m)
                 .canonicalize()
@@ -322,6 +344,50 @@ memory = 2048
         // mounts falls through to user
         assert_eq!(merged.mounts.unwrap(), vec!["/user/mount"]);
         assert_eq!(merged.disk_size.unwrap(), "30G");
+    }
+
+    #[test]
+    fn merge_mounts_union() {
+        let user = Config {
+            mounts: Some(vec!["/user/dotfiles".into()]),
+            ..Config::default()
+        };
+        let project = Config {
+            mounts: Some(vec!["/project/src".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        let mounts = merged.mounts.unwrap();
+        assert_eq!(mounts.len(), 2);
+        assert!(mounts.contains(&"/user/dotfiles".to_string()));
+        assert!(mounts.contains(&"/project/src".to_string()));
+    }
+
+    #[test]
+    fn merge_mounts_dedup() {
+        let user = Config {
+            mounts: Some(vec!["/shared/mount".into()]),
+            ..Config::default()
+        };
+        let project = Config {
+            mounts: Some(vec!["/shared/mount".into(), "/project/only".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        let mounts = merged.mounts.unwrap();
+        assert_eq!(mounts.len(), 2);
+        assert!(mounts.contains(&"/shared/mount".to_string()));
+        assert!(mounts.contains(&"/project/only".to_string()));
+    }
+
+    #[test]
+    fn merge_mounts_one_side_none() {
+        let user = Config {
+            mounts: Some(vec!["/user/mount".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), None);
+        assert_eq!(merged.mounts.unwrap(), vec!["/user/mount"]);
     }
 
     #[test]
@@ -513,9 +579,8 @@ ports = ["8080:80", ":443"]
     }
 
     #[test]
-    fn resolve_cli_overrides_config() {
-        // Can't easily test resolve() without mocking file system,
-        // but we can test the merging logic via merge_configs
+    fn resolve_cli_mounts_additive() {
+        // CLI mounts are merged with config mounts (union)
         let config = merge_configs(
             Some(Config {
                 target: Some(".#fromconfig".into()),
@@ -530,13 +595,17 @@ ports = ["8080:80", ":443"]
         let target = Some(".#fromcli").map(|s| s.to_string()).or(config.target);
         assert_eq!(target.unwrap(), ".#fromcli");
 
-        // CLI mounts override when non-empty
+        // CLI mounts are additive with config mounts
         let cli_mounts = vec!["/cli/mount".to_string()];
-        let mounts = if cli_mounts.is_empty() {
-            config.mounts.unwrap_or_default()
-        } else {
-            cli_mounts.clone()
-        };
-        assert_eq!(mounts, vec!["/cli/mount"]);
+        let config_mounts = config.mounts.unwrap_or_default();
+        let mut mounts = config_mounts;
+        for m in &cli_mounts {
+            if !mounts.contains(m) {
+                mounts.push(m.clone());
+            }
+        }
+        assert_eq!(mounts.len(), 2);
+        assert!(mounts.contains(&"/config/mount".to_string()));
+        assert!(mounts.contains(&"/cli/mount".to_string()));
     }
 }
