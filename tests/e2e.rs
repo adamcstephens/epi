@@ -86,6 +86,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
         ssh_port,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
+        None,
     )
     .expect("generate ssh config failed");
     ssh::wait_for_ssh(&ssh::config_path(name), name, 120).expect("ssh wait failed");
@@ -182,6 +183,53 @@ fn e2e_lifecycle() {
 
 #[test]
 #[ignore]
+fn e2e_ssh_config_trusted_after_launch() {
+    let name = unique_name("sshcfg");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+    let ssh_port = runtime.ssh_port.expect("no ssh port");
+
+    // Record host key and rewrite config
+    ssh::trust_host_key(
+        &name,
+        ssh_port,
+        &ssh::user(),
+        std::path::Path::new(&runtime.ssh_key_path),
+    )
+    .expect("trust_host_key failed");
+
+    // Verify known_hosts file was created
+    let known_hosts = ssh::known_hosts_path(&name);
+    assert!(known_hosts.exists(), "known_hosts file should exist");
+    let kh_contents = std::fs::read_to_string(&known_hosts).unwrap();
+    assert!(!kh_contents.is_empty(), "known_hosts should not be empty");
+
+    // Verify SSH config was rewritten with trusted settings
+    let config = ssh::config_path(&name);
+    let config_contents = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        config_contents.contains("StrictHostKeyChecking yes"),
+        "config should have StrictHostKeyChecking yes, got:\n{config_contents}"
+    );
+    assert!(
+        config_contents.contains(&format!("UserKnownHostsFile {}", known_hosts.display())),
+        "config should reference known_hosts file, got:\n{config_contents}"
+    );
+    assert!(
+        !config_contents.contains("StrictHostKeyChecking no"),
+        "config should not have StrictHostKeyChecking no"
+    );
+
+    // Verify SSH still works with the trusted config
+    let config_str = config.to_string_lossy();
+    let out = process::run("ssh", &["-F", &config_str, &name, "echo", "trusted"]).unwrap();
+    assert!(out.success(), "SSH with trusted config failed: {}", out.stderr);
+    assert_eq!(out.stdout, "trusted");
+}
+
+#[test]
+#[ignore]
 fn e2e_console_log_captured() {
     let name = unique_name("console");
     let _guard = InstanceGuard::new(&name);
@@ -236,6 +284,7 @@ fn e2e_mount() {
         ssh_port,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
+        None,
     )
     .expect("generate ssh config failed");
     ssh::wait_for_ssh(&ssh::config_path(&name), &name, 120).expect("ssh wait failed");
