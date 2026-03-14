@@ -11,8 +11,8 @@ fn complete_instance(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
     instance_store::list()
         .unwrap_or_default()
         .into_iter()
-        .filter(|(name, _)| name.starts_with(current.as_ref()))
-        .map(|(name, target)| CompletionCandidate::new(name).help(Some(target.into())))
+        .filter(|(name, _, _)| name.starts_with(current.as_ref()))
+        .map(|(name, target, _)| CompletionCandidate::new(name).help(Some(target.into())))
         .collect()
 }
 
@@ -308,7 +308,13 @@ fn cmd_launch(
     }
 
     let pre_existing = instance_store::find(instance)?.is_some();
-    instance_store::set_launching(instance, &resolved.target, resolved.mounts.clone())?;
+    let project_dir = config::project_dir()?;
+    instance_store::set_launching(
+        instance,
+        &resolved.target,
+        resolved.mounts.clone(),
+        project_dir,
+    )?;
 
     let step = ui::Step::start(&format!("Provisioning {instance}"));
 
@@ -600,6 +606,15 @@ fn cmd_rm(instance: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
+fn strip_home(path: &str) -> String {
+    if let Ok(home) = std::env::var("HOME")
+        && let Some(rest) = path.strip_prefix(&home)
+    {
+        return format!("~{rest}");
+    }
+    path.to_string()
+}
+
 fn cmd_list() -> Result<()> {
     let instances = instance_store::list()?;
 
@@ -608,12 +623,21 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<16} {:<40} {:<14} {:<20} PORTS",
-        "INSTANCE", "TARGET", "STATUS", "SSH"
-    );
+    let has_projects = instances.iter().any(|(_, _, p)| p.is_some());
 
-    for (name, target_str) in &instances {
+    if has_projects {
+        println!(
+            "{:<16} {:<40} {:<14} {:<20} {:<24} PORTS",
+            "INSTANCE", "TARGET", "STATUS", "SSH", "PROJECT"
+        );
+    } else {
+        println!(
+            "{:<16} {:<40} {:<14} {:<20} PORTS",
+            "INSTANCE", "TARGET", "STATUS", "SSH"
+        );
+    }
+
+    for (name, target_str, project_dir) in &instances {
         let running = instance_store::instance_is_running(name)?;
         let status = ui::status_dot(running);
         let (ssh, ports_str) = if running {
@@ -638,10 +662,21 @@ fn cmd_list() -> Result<()> {
             ("\u{2014}".to_string(), String::new())
         };
 
-        println!(
-            "{:<16} {:<40} {:<14} {:<20} {}",
-            name, target_str, status, ssh, ports_str
-        );
+        if has_projects {
+            let project = project_dir
+                .as_deref()
+                .map(strip_home)
+                .unwrap_or_else(|| "\u{2014}".to_string());
+            println!(
+                "{:<16} {:<40} {:<14} {:<20} {:<24} {}",
+                name, target_str, status, ssh, project, ports_str
+            );
+        } else {
+            println!(
+                "{:<16} {:<40} {:<14} {:<20} {}",
+                name, target_str, status, ssh, ports_str
+            );
+        }
     }
 
     Ok(())
