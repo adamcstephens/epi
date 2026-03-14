@@ -49,11 +49,11 @@
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
 
         perSystem =
-          { pkgs, ... }:
+          { pkgs, self', ... }:
           {
             devShells.default = pkgs.mkShell {
               packages = [
-                pkgs.cloud-hypervisor
+                self'.packages.cloud-hypervisor
                 pkgs.jq
                 pkgs.just
                 pkgs.nixfmt
@@ -76,10 +76,20 @@
               default = epi;
 
               epi = pkgs.callPackage ./nix/wrapper.nix {
-                inherit epi-unwrapped;
+                inherit cloud-hypervisor epi-unwrapped;
               };
 
               epi-unwrapped = pkgs.callPackage ./nix/package.nix { };
+
+              cloud-hypervisor = pkgs.cloud-hypervisor.overrideAttrs (old: {
+                patches = (old.patches or [ ]) ++ [
+                  # https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7766
+                  (pkgs.fetchpatch {
+                    url = "https://github.com/cloud-hypervisor/cloud-hypervisor/commit/e9742f22baa22b0a0b2d0acb58d644d0b52d753e.patch";
+                    hash = "sha256-79wO1eSJDoCAsw8IRfGK1p04fJwQhFTO7BXoWCXJGP0=";
+                  })
+                ];
+              });
             };
           };
       }
