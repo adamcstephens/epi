@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Fix virtiofsd mount permission issues by switching to `--sandbox none` and removing uid/gid mapping flags
+
 ## [0.4.0] - 2026-03-14
 
 ### Added
