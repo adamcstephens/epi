@@ -306,6 +306,7 @@ fn cmd_launch(
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
+            None,
         )?;
     }
 
@@ -332,6 +333,7 @@ fn cmd_launch(
                 let config = ssh::config_path(&inst);
                 eprintln!("waiting for SSH on port {ssh_port}...");
                 ssh::wait_for_ssh(&config, &inst, timeout)?;
+                ssh::trust_host_key(&inst, ssh_port, &ssh::user(), std::path::Path::new(&key))?;
                 eprintln!("instance {inst} is ready (ssh port {ssh_port})");
                 run_post_launch_hooks(&inst, &tgt, ssh_port, &key)?;
                 Ok(())
@@ -362,6 +364,13 @@ fn cmd_launch(
                 return Err(e);
             }
         }
+
+        ssh::trust_host_key(
+            instance,
+            ssh_port,
+            &ssh::user(),
+            std::path::Path::new(&ssh_key_path),
+        )?;
 
         run_post_launch_hooks(instance, &resolved.target, ssh_port, &ssh_key_path)?;
     }
@@ -423,6 +432,7 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
+            None,
         )?;
     }
 
@@ -435,6 +445,13 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
         step.finish(&format!(
             "instance {instance} is ready (ssh port {ssh_port})"
         ));
+
+        ssh::trust_host_key(
+            instance,
+            ssh_port,
+            &ssh::user(),
+            std::path::Path::new(&ssh_key_path),
+        )?;
     }
 
     if attach_console {
@@ -685,6 +702,7 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
+            None,
         )?;
     }
 
@@ -697,6 +715,13 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
         step.finish(&format!(
             "instance {instance} rebuilt and ready (ssh port {ssh_port})"
         ));
+
+        ssh::trust_host_key(
+            instance,
+            ssh_port,
+            &ssh::user(),
+            std::path::Path::new(&ssh_key_path),
+        )?;
 
         // Run post-launch hooks
         let desc_hooks = target::resolve_descriptor_cached(&state.target, false)
