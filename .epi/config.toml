@@ -1,2 +1,4 @@
 target = ".#manual-test"
-mounts = ["."]
+default_name = "epi"
+cpus = 2
+memory = 2048

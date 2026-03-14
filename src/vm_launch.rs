@@ -36,31 +36,33 @@ pub struct LaunchConfig<'a> {
     pub port_specs: &'a [String],
 }
 
+pub struct ProvisionParams<'a> {
+    pub instance_name: &'a str,
+    pub target_str: &'a str,
+    pub mounts: &'a [String],
+    pub disk_size: &'a str,
+    pub rebuild: bool,
+    pub cpus_override: Option<u32>,
+    pub memory_override: Option<u32>,
+    pub port_specs: &'a [String],
+}
+
 /// Provision a new VM: resolve target, validate, launch
-pub fn provision(
-    instance_name: &str,
-    target_str: &str,
-    mounts: &[String],
-    disk_size: &str,
-    rebuild: bool,
-    cpus_override: Option<u32>,
-    memory_override: Option<u32>,
-    port_specs: &[String],
-) -> Result<Runtime> {
-    let cache_result = target::resolve_descriptor_cached(target_str, rebuild)?;
+pub fn provision(params: &ProvisionParams) -> Result<Runtime> {
+    let cache_result = target::resolve_descriptor_cached(params.target_str, params.rebuild)?;
     let desc = cache_result.descriptor();
 
     target::validate_descriptor(desc)?;
-    target::ensure_paths_exist(target_str, desc)?;
+    target::ensure_paths_exist(params.target_str, desc)?;
 
     let config = LaunchConfig {
-        instance_name,
+        instance_name: params.instance_name,
         desc,
-        mounts,
-        disk_size,
-        cpus: cpus_override.unwrap_or(desc.cpus),
-        memory_mib: memory_override.unwrap_or(desc.memory_mib),
-        port_specs,
+        mounts: params.mounts,
+        disk_size: params.disk_size,
+        cpus: params.cpus_override.unwrap_or(desc.cpus),
+        memory_mib: params.memory_override.unwrap_or(desc.memory_mib),
+        port_specs: params.port_specs,
     };
 
     launch_vm(&config)

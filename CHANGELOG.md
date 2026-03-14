@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] (0.4.0)
+## [0.4.0] - 2026-03-14
 
 ### Added
 - Multiple port mapping support
@@ -12,7 +12,7 @@
 - Console scrollback: dump recent console.log on attach with control char stripping
 - Auto-mount project directory for project-local instances
 - Project-scoped instance listing
-- `bd init` command for beads issue tracking
+- `epi init` command for interactive project initialization
 - Nested virtualization support
 
 ### Changed
@@ -22,6 +22,8 @@
 - Optimized VM boot: networkd, disable firewall, blacklist modules, disable getty
 - Patched cloud-hypervisor for project needs
 - Moved flakes/nix-command to non extra-experimental
+- Split main.rs command handlers into `commands/` module (lifecycle, access, info, init)
+- `rm` reports when instance doesn't exist instead of silent success
 
 ### Fixed
 - Graceful VM shutdown: absolute shebang, stop VM service before slice, non-fatal shutdown-vmm
