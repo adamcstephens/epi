@@ -22,5 +22,5 @@ release version:
     sed -i 's/^version = ".*"/version = "{{ version }}"/' Cargo.toml
     cargo generate-lockfile --offline
     jj commit --message "release {{ version }}" Cargo.*
-    git tag "v{{ version }}"
+    git tag -a "v{{ version }}" -m "release {{ version }}"
     git push origin "v{{ version }}"
