@@ -264,48 +264,6 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
     Ok(runtime)
 }
 
-pub fn wait_for_ssh(ssh_port: u16, ssh_key_path: &str, timeout_seconds: u64) -> Result<()> {
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(timeout_seconds);
-    let username = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-    let target = format!("{username}@127.0.0.1");
-
-    loop {
-        if start.elapsed() >= timeout {
-            bail!("SSH not reachable after {timeout_seconds}s — instance may still be booting");
-        }
-
-        let port_str = ssh_port.to_string();
-        let out = process::run(
-            "ssh",
-            &[
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "UserKnownHostsFile=/dev/null",
-                "-o",
-                "IdentitiesOnly=yes",
-                "-o",
-                "ConnectTimeout=5",
-                "-i",
-                ssh_key_path,
-                "-p",
-                &port_str,
-                &target,
-                "true",
-            ],
-        )?;
-
-        if out.success() {
-            return Ok(());
-        }
-
-        std::thread::sleep(Duration::from_secs(2));
-    }
-}
-
 fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -> Result<()> {
     if dest.exists() {
         return Ok(());
