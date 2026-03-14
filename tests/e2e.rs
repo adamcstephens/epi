@@ -64,7 +64,7 @@ fn provision_and_wait(name: &str) -> instance_store::Runtime {
 }
 
 fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_store::Runtime {
-    instance_store::set_launching(name, &resolved.target, resolved.mounts.clone())
+    instance_store::set_launching(name, &resolved.target, resolved.mounts.clone(), None)
         .expect("set_launching failed");
 
     let runtime = vm_launch::provision(
@@ -302,7 +302,7 @@ fn e2e_mount() {
     let mount_path = mount_dir.path().to_string_lossy().to_string();
     let mounts = vec![mount_path.clone()];
 
-    instance_store::set_launching(&name, target_str, mounts.clone()).unwrap();
+    instance_store::set_launching(&name, target_str, mounts.clone(), None).unwrap();
 
     let runtime = vm_launch::provision(&name, target_str, &mounts, "40G", false, None, None, &[])
         .expect("provision failed");

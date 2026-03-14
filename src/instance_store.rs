@@ -52,6 +52,8 @@ pub struct InstanceState {
     pub runtime: Option<Runtime>,
     #[serde(default)]
     pub mounts: Vec<String>,
+    #[serde(default)]
+    pub project_dir: Option<String>,
 }
 
 pub fn state_dir() -> PathBuf {
@@ -108,11 +110,17 @@ pub fn save_target(name: &str, target: &str) -> Result<()> {
         target: target.to_string(),
         runtime: None,
         mounts: vec![],
+        project_dir: None,
     };
     save_state(name, &state)
 }
 
-pub fn set_launching(name: &str, target: &str, mounts: Vec<String>) -> Result<()> {
+pub fn set_launching(
+    name: &str,
+    target: &str,
+    mounts: Vec<String>,
+    project_dir: Option<String>,
+) -> Result<()> {
     let canonical_mounts: Vec<String> = mounts
         .iter()
         .map(|m| {
@@ -126,6 +134,7 @@ pub fn set_launching(name: &str, target: &str, mounts: Vec<String>) -> Result<()
         target: target.to_string(),
         runtime: None,
         mounts: canonical_mounts,
+        project_dir,
     };
     save_state(name, &state)
 }
@@ -167,7 +176,7 @@ pub fn find_runtime(name: &str) -> Result<Option<Runtime>> {
     Ok(load_state(name)?.and_then(|s| s.runtime))
 }
 
-pub fn list() -> Result<Vec<(String, String)>> {
+pub fn list() -> Result<Vec<(String, String, Option<String>)>> {
     let dir = state_dir();
     if !dir.exists() {
         return Ok(vec![]);
@@ -178,7 +187,7 @@ pub fn list() -> Result<Vec<(String, String)>> {
         if entry.file_type()?.is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
             if let Some(state) = load_state(&name)? {
-                instances.push((name, state.target));
+                instances.push((name, state.target, state.project_dir));
             }
         }
     }
@@ -276,6 +285,7 @@ mod tests {
                 ports: vec![],
             }),
             mounts: vec!["/a".into(), "/b".into()],
+            project_dir: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -290,6 +300,7 @@ mod tests {
             target: ".#dev".into(),
             runtime: None,
             mounts: vec![],
+            project_dir: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -303,6 +314,7 @@ mod tests {
             target: ".#dev".into(),
             runtime: None,
             mounts: vec!["/home".into(), "/opt".into()],
+            project_dir: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -316,6 +328,7 @@ mod tests {
             target: ".#test".into(),
             runtime: None,
             mounts: vec!["/home".into()],
+            project_dir: None,
         };
         write_state(dir.path(), "myvm", &state);
 
@@ -338,6 +351,7 @@ mod tests {
             target: ".#dev".into(),
             runtime: None,
             mounts: vec!["/mnt".into()],
+            project_dir: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -375,6 +389,7 @@ mod tests {
                 ports: vec![],
             }),
             mounts: vec![],
+            project_dir: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -395,6 +410,7 @@ mod tests {
             target: ".#dev".into(),
             runtime: None,
             mounts: vec!["/mnt".into()],
+            project_dir: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -430,6 +446,7 @@ mod tests {
                     target: target.into(),
                     runtime: None,
                     mounts: vec![],
+                    project_dir: None,
                 },
             );
         };
@@ -463,6 +480,7 @@ mod tests {
                 target: ".#dev".into(),
                 runtime: None,
                 mounts: vec![],
+                project_dir: None,
             },
         );
         assert!(dir.path().join("vm1").exists());
@@ -478,6 +496,27 @@ mod tests {
         assert_eq!(state.target, ".#test");
         assert!(state.runtime.is_none());
         assert!(state.mounts.is_empty());
+        assert!(state.project_dir.is_none());
+    }
+
+    #[test]
+    fn state_with_project_dir_roundtrip() {
+        let state = InstanceState {
+            target: ".#dev".into(),
+            runtime: None,
+            mounts: vec![],
+            project_dir: Some("/home/user/myproject".into()),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: InstanceState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.project_dir.as_deref(), Some("/home/user/myproject"));
+    }
+
+    #[test]
+    fn state_without_project_dir_deserializes_none() {
+        let json = r#"{"target": ".#test", "mounts": []}"#;
+        let state: InstanceState = serde_json::from_str(json).unwrap();
+        assert!(state.project_dir.is_none());
     }
 
     #[test]

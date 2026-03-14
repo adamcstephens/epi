@@ -68,6 +68,16 @@ pub fn load_project() -> Result<Option<Config>> {
     load_from(Path::new(".epi/config.toml"), Some(Path::new(".")))
 }
 
+/// Returns the canonicalized project directory if .epi/config.toml exists.
+pub fn project_dir() -> Result<Option<String>> {
+    if Path::new(".epi/config.toml").exists() {
+        let dir = Path::new(".").canonicalize()?;
+        Ok(Some(dir.to_string_lossy().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn load_user() -> Result<Option<Config>> {
     let (path, explicit) = if let Ok(p) = std::env::var("EPI_CONFIG_FILE") {
         (PathBuf::from(p), true)
