@@ -141,9 +141,10 @@ For more details, see README.md and docs/QUICKSTART.md.
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
 3. **Update issue status** - Close finished work, update in-progress items
-4. **Commit all work** - Everything must be committed (use jj)
-5. **Sync beads** - `bd dolt pull` to sync issue tracking
-6. **Hand off** - Provide context for next session
+4. **Update CHANGELOG.md** - Document the change in a single line, high-level, description. Note breaking changes.
+5. **Commit all work** - Everything must be committed (use jj)
+6. **Sync beads** - `bd dolt pull` to sync issue tracking
+7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
 - Work is NOT complete until all changes are committed
