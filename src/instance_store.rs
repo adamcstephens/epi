@@ -5,6 +5,35 @@ use std::path::PathBuf;
 
 use crate::process;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortMapping {
+    pub host: u16,
+    pub guest: u16,
+    pub protocol: String,
+}
+
+/// Parse a port mapping string like "8080:80" or ":443".
+/// Returns (host_port_or_zero, guest_port) — host=0 means auto-allocate.
+pub fn parse_port_mapping(s: &str) -> Result<(u16, u16)> {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix(':') {
+        let guest: u16 = rest
+            .parse()
+            .with_context(|| format!("invalid guest port in '{s}'"))?;
+        Ok((0, guest))
+    } else if let Some((host_str, guest_str)) = s.split_once(':') {
+        let host: u16 = host_str
+            .parse()
+            .with_context(|| format!("invalid host port in '{s}'"))?;
+        let guest: u16 = guest_str
+            .parse()
+            .with_context(|| format!("invalid guest port in '{s}'"))?;
+        Ok((host, guest))
+    } else {
+        anyhow::bail!("invalid port mapping '{s}' — expected HOST:GUEST or :GUEST")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Runtime {
     pub unit_id: String,
@@ -12,6 +41,8 @@ pub struct Runtime {
     pub disk: String,
     pub ssh_port: Option<u16>,
     pub ssh_key_path: String,
+    #[serde(default)]
+    pub ports: Vec<PortMapping>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +139,7 @@ pub fn set_partial_runtime(name: &str, unit_id: &str) -> Result<()> {
         disk: String::new(),
         ssh_port: None,
         ssh_key_path: String::new(),
+        ports: vec![],
     });
     save_state(name, &state)
 }
@@ -241,6 +273,7 @@ mod tests {
                 disk: "/d".into(),
                 ssh_port: Some(3333),
                 ssh_key_path: "/k".into(),
+                ports: vec![],
             }),
             mounts: vec!["/a".into(), "/b".into()],
         };
@@ -316,6 +349,7 @@ mod tests {
             disk: "/tmp/disk.img".into(),
             ssh_port: Some(2222),
             ssh_key_path: "/tmp/id_ed25519".into(),
+            ports: vec![],
         });
         write_state(dir.path(), "vm1", &loaded);
 
@@ -338,6 +372,7 @@ mod tests {
                 disk: "".into(),
                 ssh_port: Some(2222),
                 ssh_key_path: "".into(),
+                ports: vec![],
             }),
             mounts: vec![],
         };
@@ -371,6 +406,7 @@ mod tests {
             disk: String::new(),
             ssh_port: None,
             ssh_key_path: String::new(),
+            ports: vec![],
         });
         write_state(dir.path(), "vm1", &loaded);
 
@@ -452,9 +488,87 @@ mod tests {
             disk: "/d".into(),
             ssh_port: None,
             ssh_key_path: "/k".into(),
+            ports: vec![],
         };
         let json = serde_json::to_string(&rt).unwrap();
         let parsed: Runtime = serde_json::from_str(&json).unwrap();
         assert!(parsed.ssh_port.is_none());
+    }
+
+    #[test]
+    fn parse_port_mapping_host_and_guest() {
+        let (host, guest) = parse_port_mapping("8080:80").unwrap();
+        assert_eq!(host, 8080);
+        assert_eq!(guest, 80);
+    }
+
+    #[test]
+    fn parse_port_mapping_auto_host() {
+        let (host, guest) = parse_port_mapping(":443").unwrap();
+        assert_eq!(host, 0);
+        assert_eq!(guest, 443);
+    }
+
+    #[test]
+    fn parse_port_mapping_invalid_no_colon() {
+        assert!(parse_port_mapping("8080").is_err());
+    }
+
+    #[test]
+    fn parse_port_mapping_invalid_guest() {
+        assert!(parse_port_mapping(":abc").is_err());
+    }
+
+    #[test]
+    fn parse_port_mapping_invalid_host() {
+        assert!(parse_port_mapping("abc:80").is_err());
+    }
+
+    #[test]
+    fn port_mapping_serialization_roundtrip() {
+        let pm = PortMapping {
+            host: 8080,
+            guest: 80,
+            protocol: "tcp".into(),
+        };
+        let json = serde_json::to_string(&pm).unwrap();
+        let parsed: PortMapping = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, pm);
+    }
+
+    #[test]
+    fn runtime_with_ports_roundtrip() {
+        let rt = Runtime {
+            unit_id: "abc".into(),
+            serial_socket: "/s".into(),
+            disk: "/d".into(),
+            ssh_port: Some(2222),
+            ssh_key_path: "/k".into(),
+            ports: vec![
+                PortMapping {
+                    host: 8080,
+                    guest: 80,
+                    protocol: "tcp".into(),
+                },
+                PortMapping {
+                    host: 4443,
+                    guest: 443,
+                    protocol: "tcp".into(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&rt).unwrap();
+        let parsed: Runtime = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.ports.len(), 2);
+        assert_eq!(parsed.ports[0].host, 8080);
+        assert_eq!(parsed.ports[1].guest, 443);
+    }
+
+    #[test]
+    fn runtime_without_ports_deserializes_empty() {
+        // Old state.json without "ports" field should still deserialize
+        let json = r#"{"unit_id":"abc","serial_socket":"/s","disk":"/d","ssh_port":2222,"ssh_key_path":"/k"}"#;
+        let parsed: Runtime = serde_json::from_str(json).unwrap();
+        assert!(parsed.ports.is_empty());
     }
 }

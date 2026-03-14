@@ -11,6 +11,7 @@ pub struct Config {
     pub cpus: Option<u32>,
     pub memory: Option<u32>,
     pub default_name: Option<String>,
+    pub ports: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +22,7 @@ pub struct Resolved {
     pub cpus: Option<u32>,
     pub memory: Option<u32>,
     pub default_name: String,
+    pub ports: Vec<String>,
 }
 
 fn resolve_path(path: &str, base: &Path) -> PathBuf {
@@ -92,6 +94,26 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
         cpus: project.cpus.or(user.cpus),
         memory: project.memory.or(user.memory),
         default_name: project.default_name.or(user.default_name),
+        ports: merge_port_lists(user.ports, project.ports),
+    }
+}
+
+/// Merge port lists from user and project configs (union, deduped by guest port).
+fn merge_port_lists(
+    user: Option<Vec<String>>,
+    project: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match (user, project) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(mut a), Some(b)) => {
+            for p in b {
+                if !a.contains(&p) {
+                    a.push(p);
+                }
+            }
+            Some(a)
+        }
     }
 }
 
@@ -102,6 +124,7 @@ pub fn resolve(
     cli_disk_size: Option<&str>,
     cli_cpus: Option<u32>,
     cli_memory: Option<u32>,
+    cli_ports: &[String],
 ) -> Result<Resolved> {
     let user = load_user()?;
     let project = load_project()?;
@@ -129,6 +152,15 @@ pub fn resolve(
     let memory = cli_memory.or(config.memory);
     let default_name = config.default_name.unwrap_or_else(|| "default".to_string());
 
+    // CLI ports are merged with config ports (union)
+    let config_ports = config.ports.unwrap_or_default();
+    let mut ports = config_ports;
+    for p in cli_ports {
+        if !ports.contains(p) {
+            ports.push(p.clone());
+        }
+    }
+
     Ok(Resolved {
         target,
         mounts,
@@ -136,6 +168,7 @@ pub fn resolve(
         cpus,
         memory,
         default_name,
+        ports,
     })
 }
 
@@ -334,6 +367,64 @@ memory = 2048
         let config = merge_configs(None, None);
         let default_name = config.default_name.unwrap_or_else(|| "default".to_string());
         assert_eq!(default_name, "default");
+    }
+
+    #[test]
+    fn parse_ports_config() {
+        let toml = r#"
+ports = ["8080:80", ":443"]
+"#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert_eq!(config.ports.unwrap(), vec!["8080:80", ":443"]);
+    }
+
+    #[test]
+    fn parse_no_ports_config() {
+        let toml = r#"target = ".#dev""#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert!(config.ports.is_none());
+    }
+
+    #[test]
+    fn merge_ports_union() {
+        let user = Config {
+            ports: Some(vec!["8080:80".into()]),
+            ..Config::default()
+        };
+        let project = Config {
+            ports: Some(vec![":443".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        let ports = merged.ports.unwrap();
+        assert_eq!(ports.len(), 2);
+        assert!(ports.contains(&"8080:80".to_string()));
+        assert!(ports.contains(&":443".to_string()));
+    }
+
+    #[test]
+    fn merge_ports_dedup() {
+        let user = Config {
+            ports: Some(vec!["8080:80".into()]),
+            ..Config::default()
+        };
+        let project = Config {
+            ports: Some(vec!["8080:80".into(), ":443".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        let ports = merged.ports.unwrap();
+        assert_eq!(ports.len(), 2);
+    }
+
+    #[test]
+    fn merge_ports_one_side_none() {
+        let user = Config {
+            ports: Some(vec!["8080:80".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), None);
+        assert_eq!(merged.ports.unwrap(), vec!["8080:80"]);
     }
 
     #[test]

@@ -33,6 +33,7 @@ pub struct LaunchConfig<'a> {
     pub disk_size: &'a str,
     pub cpus: u32,
     pub memory_mib: u32,
+    pub port_specs: &'a [String],
 }
 
 /// Provision a new VM: resolve target, validate, launch
@@ -44,6 +45,7 @@ pub fn provision(
     rebuild: bool,
     cpus_override: Option<u32>,
     memory_override: Option<u32>,
+    port_specs: &[String],
 ) -> Result<Runtime> {
     let cache_result = target::resolve_descriptor_cached(target_str, rebuild)?;
     let desc = cache_result.descriptor();
@@ -58,6 +60,7 @@ pub fn provision(
         disk_size,
         cpus: cpus_override.unwrap_or(desc.cpus),
         memory_mib: memory_override.unwrap_or(desc.memory_mib),
+        port_specs,
     };
 
     launch_vm(&config)
@@ -100,6 +103,18 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
 
     // Allocate SSH port
     let ssh_port = allocate_port()?;
+
+    // Parse and allocate user-specified port mappings
+    let mut port_mappings: Vec<instance_store::PortMapping> = vec![];
+    for spec in config.port_specs {
+        let (host, guest) = instance_store::parse_port_mapping(spec)?;
+        let host = if host == 0 { allocate_port()? } else { host };
+        port_mappings.push(instance_store::PortMapping {
+            host,
+            guest,
+            protocol: "tcp".to_string(),
+        });
+    }
 
     // Generate seed ISO
     let seed_iso = inst_dir.join("epidata.iso");
@@ -174,6 +189,7 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         Some(&vm_unit),
         &passt_socket.to_string_lossy(),
         ssh_port,
+        &port_mappings,
     )?;
 
     let mut helper_units = vec![passt_unit.clone()];
@@ -266,6 +282,7 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         disk: disk_str,
         ssh_port: Some(ssh_port),
         ssh_key_path: ssh_key_path.to_string_lossy().to_string(),
+        ports: port_mappings,
     };
 
     Ok(runtime)
@@ -435,23 +452,23 @@ fn start_passt(
     vm_unit: Option<&str>,
     socket_path: &str,
     ssh_port: u16,
+    port_mappings: &[instance_store::PortMapping],
 ) -> Result<()> {
     process::require_binary("passt", "passt")?;
-    let tcp_fwd = format!("{ssh_port}:22");
-    let out = process::run_helper(
-        unit_name,
-        slice,
-        vm_unit,
-        "passt",
-        &[
-            "--foreground",
-            "--vhost-user",
-            "--socket-path",
-            socket_path,
-            "--tcp-ports",
-            &tcp_fwd,
-        ],
-    )?;
+
+    // Build TCP forward rules: SSH + user port mappings
+    let mut tcp_fwds: Vec<String> = vec![format!("{ssh_port}:22")];
+    for pm in port_mappings {
+        tcp_fwds.push(format!("{}:{}", pm.host, pm.guest));
+    }
+
+    let mut args: Vec<&str> = vec!["--foreground", "--vhost-user", "--socket-path", socket_path];
+    for fwd in &tcp_fwds {
+        args.push("--tcp-ports");
+        args.push(fwd);
+    }
+
+    let out = process::run_helper(unit_name, slice, vm_unit, "passt", &args)?;
     if !out.success() {
         bail!("failed to start passt: {}", out.stderr);
     }
