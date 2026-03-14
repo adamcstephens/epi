@@ -5,7 +5,7 @@
 //!
 //! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
 
-use epi::{config, console, hooks, instance_store, process, ssh, target, vm_launch};
+use epi::{config, hooks, instance_store, process, ssh, target, vm_launch};
 use std::fs;
 use std::sync::LazyLock;
 use tempfile::TempDir;
@@ -224,7 +224,11 @@ fn e2e_ssh_config_trusted_after_launch() {
     // Verify SSH still works with the trusted config
     let config_str = config.to_string_lossy();
     let out = process::run("ssh", &["-F", &config_str, &name, "echo", "trusted"]).unwrap();
-    assert!(out.success(), "SSH with trusted config failed: {}", out.stderr);
+    assert!(
+        out.success(),
+        "SSH with trusted config failed: {}",
+        out.stderr
+    );
     assert_eq!(out.stdout, "trusted");
 }
 
@@ -234,25 +238,17 @@ fn e2e_console_log_captured() {
     let name = unique_name("console");
     let _guard = InstanceGuard::new(&name);
 
-    let runtime = provision_and_wait(&name);
+    let _runtime = provision_and_wait(&name);
 
-    // Start console capture
-    console::start_capture(&name).expect("start_capture failed");
-
-    // Generate output on the serial console via SSH (needs sudo for ttyS0)
-    ssh_exec(&runtime, "sudo sh -c 'echo epi-console-test > /dev/ttyS0'");
-
-    // Give capture thread time to read
-    std::thread::sleep(std::time::Duration::from_secs(2));
-
-    // Check that console.log exists and has our marker
+    // Console output is now captured by cloud-hypervisor via --console file=console.log.
+    // The file should exist and contain boot output from the virtio-console device (hvc0).
     let log_path = instance_store::console_log_path(&name);
     assert!(log_path.exists(), "console.log should exist");
 
     let content = fs::read_to_string(&log_path).unwrap_or_default();
     assert!(
-        content.contains("epi-console-test"),
-        "console.log should contain marker, got: {content}"
+        !content.is_empty(),
+        "console.log should contain boot output"
     );
 }
 

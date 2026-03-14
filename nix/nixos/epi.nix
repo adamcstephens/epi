@@ -211,7 +211,7 @@ in
       kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
       disk = "${config.system.build.image}/${config.image.baseName}.raw";
-      cmdline = "console=ttyS0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
+      cmdline = "console=ttyS0 console=hvc0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
       cpus = 1;
       memory_mib = 1024;
       configuredUsers = builtins.attrNames config.users.users;
@@ -238,6 +238,7 @@ in
       "virtio_pci"
       "virtio_blk"
       "virtio_net"
+      "virtio_console"
       "virtiofs"
       "ext4"
     ];

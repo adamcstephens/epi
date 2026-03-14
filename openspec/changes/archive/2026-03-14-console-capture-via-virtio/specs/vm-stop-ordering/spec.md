@@ -1,7 +1,4 @@
-## Purpose
-Define systemd unit ordering between the VM service and helper services within the instance slice, ensuring helpers stay alive during VM shutdown.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: VM service starts after helper services
 The VM transient service SHALL be configured with `After=<helper>.service` for each helper unit (passt, virtiofsd). This ensures systemd starts helpers before the VM and stops the VM before helpers when the slice is stopped.
@@ -16,6 +13,8 @@ The VM transient service SHALL be configured with `After=<helper>.service` for e
 - **THEN** the CLI stops the VM service first, triggering ExecStop (ACPI power-button → guest shutdown)
 - **AND** the CLI stops the slice after the VM service has exited, cleaning up helper services
 - **AND** helper sockets remain alive during VM shutdown
+
+## ADDED Requirements
 
 ### Requirement: Shutdown script uses absolute interpreter path
 The ExecStop shutdown script SHALL use an absolute path to `sh` in the shebang (e.g. `#!/nix/store/.../bin/sh`), resolved at script generation time. This ensures the script executes correctly in systemd's minimal environment where `/usr/bin/env sh` may not resolve.

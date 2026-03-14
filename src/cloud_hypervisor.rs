@@ -14,6 +14,7 @@ pub struct CloudHypervisorConfig<'a> {
     pub fs_args: &'a [String],
     pub api_socket: Option<&'a str>,
     pub mac: &'a str,
+    pub console_log: &'a str,
 }
 
 /// Build cloud-hypervisor CLI arguments from structured inputs.
@@ -34,7 +35,7 @@ pub fn build_args(config: &CloudHypervisorConfig) -> Vec<String> {
         "--serial".to_string(),
         format!("socket={}", config.serial_socket),
         "--console".to_string(),
-        "off".to_string(),
+        format!("file={}", config.console_log),
         "--cmdline".to_string(),
         config.cmdline.to_string(),
         "--net".to_string(),
@@ -136,6 +137,41 @@ mod tests {
         assert!(content.contains(
             "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock shutdown-vmm || true\n"
         ));
+    }
+
+    fn test_config() -> CloudHypervisorConfig<'static> {
+        CloudHypervisorConfig {
+            kernel: "/nix/store/abc/vmlinuz",
+            initrd: None,
+            disk_path: "/tmp/inst/disk.img",
+            seed_iso: "/tmp/inst/epidata.iso",
+            cpus: 2,
+            memory_mib: 1024,
+            cmdline: "console=hvc0 console=ttyS0 root=LABEL=nixos rw init=/nix/store/xyz/init",
+            serial_socket: "/tmp/inst/serial.sock",
+            passt_socket: "/tmp/inst/passt.sock",
+            fs_args: &[],
+            api_socket: Some("/tmp/inst/api.sock"),
+            mac: "02:ab:cd:ef:01:23",
+            console_log: "/tmp/inst/console.log",
+        }
+    }
+
+    #[test]
+    fn build_args_emits_console_file() {
+        let config = test_config();
+        let args = build_args(&config);
+        let console_idx = args.iter().position(|a| a == "--console").unwrap();
+        assert_eq!(args[console_idx + 1], "file=/tmp/inst/console.log");
+    }
+
+    #[test]
+    fn build_args_passes_cmdline_through() {
+        let config = test_config();
+        let args = build_args(&config);
+        let cmdline_idx = args.iter().position(|a| a == "--cmdline").unwrap();
+        let cmdline = &args[cmdline_idx + 1];
+        assert_eq!(cmdline, config.cmdline);
     }
 
     #[test]

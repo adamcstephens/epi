@@ -310,9 +310,6 @@ fn cmd_launch(
         )?;
     }
 
-    // Start console capture in background
-    console::start_capture(instance)?;
-
     let no_wait = no_wait
         || std::env::var("EPI_NO_WAIT")
             .map(|v| v == "true" || v == "1")
@@ -435,8 +432,6 @@ fn cmd_start(instance: &str, attach_console: bool, no_wait: bool, wait_timeout: 
             None,
         )?;
     }
-
-    console::start_capture(instance)?;
 
     if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
         let config = ssh::config_path(instance);
@@ -705,8 +700,6 @@ fn cmd_rebuild(instance: &str) -> Result<()> {
             None,
         )?;
     }
-
-    console::start_capture(instance)?;
 
     if let Some(ssh_port) = ssh_port {
         let config = ssh::config_path(instance);

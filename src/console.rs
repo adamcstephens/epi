@@ -159,43 +159,6 @@ impl Drop for RawModeGuard {
     }
 }
 
-/// Start a background console capture thread
-pub fn start_capture(instance_name: &str) -> Result<()> {
-    let runtime = match instance_store::find_runtime(instance_name)? {
-        Some(r) => r,
-        None => return Ok(()),
-    };
-
-    if runtime.serial_socket.is_empty() {
-        return Ok(());
-    }
-
-    let log_path = instance_store::console_log_path(instance_name);
-    let socket_path = runtime.serial_socket.clone();
-
-    std::thread::spawn(move || -> Result<()> {
-        let mut stream = connect_socket(&socket_path, 60, Duration::from_secs(1))?;
-        let mut file = File::create(&log_path)?;
-        let mut buf = [0u8; 4096];
-        loop {
-            match stream.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    file.write_all(&buf[..n])?;
-                    file.flush()?;
-                }
-                Err(e) => {
-                    eprintln!("console capture error: {e}");
-                    break;
-                }
-            }
-        }
-        Ok(())
-    });
-
-    Ok(())
-}
-
 /// Show captured console log
 pub fn show_log(instance_name: &str) -> Result<()> {
     let path = instance_store::console_log_path(instance_name);
