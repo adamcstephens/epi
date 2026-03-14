@@ -132,9 +132,38 @@ fn e2e_lifecycle() {
     let name = unique_name("lifecycle");
     let _guard = InstanceGuard::new(&name);
 
-    // Provision
-    let runtime = provision_and_wait(&name);
+    // Provision with a port mapping (:8080 = auto-allocate host, guest 8080)
+    let mut resolved = default_resolved();
+    resolved.ports = vec![":8080".to_string()];
+    let runtime = provision_and_wait_with(&name, resolved.clone());
     assert!(runtime.ssh_port.is_some());
+
+    // Verify port mapping was stored in runtime
+    assert_eq!(runtime.ports.len(), 1, "expected 1 port mapping");
+    assert_eq!(runtime.ports[0].guest, 8080);
+    assert!(runtime.ports[0].host > 0, "host port should be allocated");
+    assert_eq!(runtime.ports[0].protocol, "tcp");
+
+    // Verify port mapping persisted to state
+    let loaded = instance_store::find_runtime(&name).unwrap().unwrap();
+    assert_eq!(loaded.ports.len(), 1);
+    assert_eq!(loaded.ports[0].guest, 8080);
+
+    // Verify passt was started with the additional port forwarding arg
+    let unit_id = &runtime.unit_id;
+    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+    let passt_cmd = process::run(
+        &process::systemctl_bin(),
+        &["--user", "show", &passt_unit, "--property=ExecStart"],
+    )
+    .expect("failed to query passt unit");
+    let host_port = runtime.ports[0].host;
+    let expected_fwd = format!("{host_port}:8080");
+    assert!(
+        passt_cmd.stdout.contains(&expected_fwd),
+        "passt should have --tcp-ports {expected_fwd}, got: {}",
+        passt_cmd.stdout
+    );
 
     // Verify SSH works
     let out = ssh_exec(&runtime, "echo hello");
@@ -166,8 +195,13 @@ fn e2e_lifecycle() {
     // Target still exists
     assert!(instance_store::find(&name).unwrap().is_some());
 
-    // Restart
-    let runtime2 = provision_and_wait(&name);
+    // Restart (with same port mapping)
+    let runtime2 = provision_and_wait_with(&name, resolved);
+    assert_eq!(
+        runtime2.ports.len(),
+        1,
+        "port mapping should persist across restart"
+    );
     let out = ssh_exec(&runtime2, "echo back");
     assert!(
         out.success(),
