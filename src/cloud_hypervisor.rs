@@ -190,4 +190,31 @@ mod tests {
         assert_eq!(props.len(), 1);
         assert_eq!(props[0], "After=helper.service");
     }
+
+    #[test]
+    fn build_args_multiple_fs_single_flag() {
+        let fs = vec![
+            "tag=hostfs-0,socket=/tmp/virtiofsd-0.sock".to_string(),
+            "tag=hostfs-1,socket=/tmp/virtiofsd-1.sock".to_string(),
+        ];
+        let config = CloudHypervisorConfig {
+            fs_args: &fs,
+            ..test_config()
+        };
+        let args = build_args(&config);
+
+        // cloud-hypervisor takes a single --fs with variadic device specs
+        let fs_count = args.iter().filter(|a| *a == "--fs").count();
+        assert_eq!(fs_count, 1, "expected single --fs flag");
+        let fs_idx = args.iter().position(|a| a == "--fs").unwrap();
+        assert_eq!(args[fs_idx + 1], fs[0]);
+        assert_eq!(args[fs_idx + 2], fs[1]);
+    }
+
+    #[test]
+    fn build_args_no_fs_when_empty() {
+        let config = test_config();
+        let args = build_args(&config);
+        assert!(!args.iter().any(|a| a == "--fs"));
+    }
 }

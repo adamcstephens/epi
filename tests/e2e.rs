@@ -295,12 +295,16 @@ fn e2e_mount() {
     let _guard = InstanceGuard::new(&name);
     let (target_str, _) = &*DESCRIPTOR;
 
-    // Create a temp dir with a marker file to mount
-    let mount_dir = TempDir::new().unwrap();
-    fs::write(mount_dir.path().join("marker.txt"), "epi-mount-test").unwrap();
+    // Create two temp dirs with distinct markers to test multiple mounts
+    let mount_dir_a = TempDir::new().unwrap();
+    fs::write(mount_dir_a.path().join("marker.txt"), "mount-a").unwrap();
+    let mount_path_a = mount_dir_a.path().to_string_lossy().to_string();
 
-    let mount_path = mount_dir.path().to_string_lossy().to_string();
-    let mounts = vec![mount_path.clone()];
+    let mount_dir_b = TempDir::new().unwrap();
+    fs::write(mount_dir_b.path().join("marker.txt"), "mount-b").unwrap();
+    let mount_path_b = mount_dir_b.path().to_string_lossy().to_string();
+
+    let mounts = vec![mount_path_a.clone(), mount_path_b.clone()];
 
     instance_store::set_launching(&name, target_str, mounts.clone(), None).unwrap();
 
@@ -330,16 +334,27 @@ fn e2e_mount() {
     .expect("generate ssh config failed");
     ssh::wait_for_ssh(&ssh::config_path(&name), &name, 120).expect("ssh wait failed");
 
-    // The guest mounts virtiofs at the same path as the host
-    let cat_cmd = format!("cat {}/marker.txt", mount_path);
-    let out = ssh_exec(&runtime, &cat_cmd);
+    // Verify first mount
+    let cat_a = format!("cat {}/marker.txt", mount_path_a);
+    let out = ssh_exec(&runtime, &cat_a);
     assert!(
         out.success(),
-        "cat marker.txt failed (exit {}): {}",
+        "cat mount-a marker failed (exit {}): {}",
         out.status,
         out.stderr
     );
-    assert_eq!(out.stdout, "epi-mount-test");
+    assert_eq!(out.stdout, "mount-a");
+
+    // Verify second mount
+    let cat_b = format!("cat {}/marker.txt", mount_path_b);
+    let out = ssh_exec(&runtime, &cat_b);
+    assert!(
+        out.success(),
+        "cat mount-b marker failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "mount-b");
 }
 
 #[test]
