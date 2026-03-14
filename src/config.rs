@@ -236,6 +236,31 @@ pub fn resolve_default_name() -> Result<String> {
     Ok(config.default_name.unwrap_or_else(|| "default".to_string()))
 }
 
+/// Generate a TOML config string from a Config struct.
+/// Only includes fields that are Some.
+pub fn generate_toml(config: &Config) -> String {
+    let mut lines = Vec::new();
+    if let Some(ref target) = config.target {
+        lines.push(format!("target = {}", toml::Value::String(target.clone())));
+    }
+    if let Some(ref default_name) = config.default_name {
+        lines.push(format!(
+            "default_name = {}",
+            toml::Value::String(default_name.clone())
+        ));
+    }
+    if let Some(cpus) = config.cpus {
+        lines.push(format!("cpus = {cpus}"));
+    }
+    if let Some(memory) = config.memory {
+        lines.push(format!("memory = {memory}"));
+    }
+    if !lines.is_empty() {
+        lines.push(String::new()); // trailing newline
+    }
+    lines.join("\n")
+}
+
 /// Parse a config from a TOML string with a base path for relative mount resolution.
 /// Exposed for testing.
 pub fn parse(content: &str, base: &Path) -> Result<Config> {
@@ -459,6 +484,49 @@ memory = 2048
             None,
         );
         assert_eq!(config.default_name.unwrap(), "dev");
+    }
+
+    #[test]
+    fn generate_toml_full() {
+        let config = Config {
+            target: Some(".#dev".into()),
+            default_name: Some("myvm".into()),
+            cpus: Some(4),
+            memory: Some(2048),
+            ..Config::default()
+        };
+        let toml_str = generate_toml(&config);
+        assert!(toml_str.contains("target = \".#dev\""));
+        assert!(toml_str.contains("default_name = \"myvm\""));
+        assert!(toml_str.contains("cpus = 4"));
+        assert!(toml_str.contains("memory = 2048"));
+
+        // Round-trip: parse the generated TOML
+        let parsed = parse(&toml_str, Path::new("/")).unwrap();
+        assert_eq!(parsed.target.unwrap(), ".#dev");
+        assert_eq!(parsed.default_name.unwrap(), "myvm");
+        assert_eq!(parsed.cpus.unwrap(), 4);
+        assert_eq!(parsed.memory.unwrap(), 2048);
+    }
+
+    #[test]
+    fn generate_toml_target_only() {
+        let config = Config {
+            target: Some(".#dev".into()),
+            ..Config::default()
+        };
+        let toml_str = generate_toml(&config);
+        assert!(toml_str.contains("target = \".#dev\""));
+        assert!(!toml_str.contains("default_name"));
+        assert!(!toml_str.contains("cpus"));
+        assert!(!toml_str.contains("memory"));
+    }
+
+    #[test]
+    fn generate_toml_empty() {
+        let config = Config::default();
+        let toml_str = generate_toml(&config);
+        assert_eq!(toml_str, "");
     }
 
     #[test]
