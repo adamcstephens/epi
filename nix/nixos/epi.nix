@@ -220,7 +220,10 @@ in
     system.extraDependencies =
       (lib.attrValues cfg.hooks.post-launch) ++ (lib.attrValues cfg.hooks.pre-stop);
 
-    environment.systemPackages = [ pkgs.jq pkgs.rsync ];
+    environment.systemPackages = [
+      pkgs.jq
+      pkgs.rsync
+    ];
 
     fileSystems."/" = {
       device = "/dev/disk/by-label/nixos";
@@ -242,7 +245,7 @@ in
     networking.useDHCP = true;
 
     nix.settings = {
-      extra-experimental-features = "nix-command flakes";
+      experimental-features = "nix-command flakes";
     };
 
     systemd.services.epi-init = {
