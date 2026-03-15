@@ -50,8 +50,8 @@ pub fn cmd_launch(
         mounts: &resolved.mounts,
         disk_size: &resolved.disk_size,
         rebuild,
-        cpus_override: resolved.cpus,
-        memory_override: resolved.memory,
+        cpus: resolved.cpus,
+        memory_mib: resolved.memory,
         port_specs: &resolved.ports,
     }) {
         Ok(r) => {
@@ -204,8 +204,8 @@ pub fn cmd_start(
         mounts: &mounts,
         disk_size: "40G",
         rebuild: false,
-        cpus_override: None,
-        memory_override: None,
+        cpus: 1,
+        memory_mib: 1024,
         port_specs: &config_ports,
     })?;
     step.finish(&format!("Started {instance}"));
@@ -348,8 +348,8 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         mounts: &mounts,
         disk_size: "40G",
         rebuild: true,
-        cpus_override: None,
-        memory_override: None,
+        cpus: 1,
+        memory_mib: 1024,
         port_specs: &config_ports,
     })?;
     step.finish(&format!("Rebuilt {instance}"));

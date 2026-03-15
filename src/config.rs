@@ -20,8 +20,8 @@ pub struct Resolved {
     pub target: String,
     pub mounts: Vec<String>,
     pub disk_size: String,
-    pub cpus: Option<u32>,
-    pub memory: Option<u32>,
+    pub cpus: u32,
+    pub memory: u32,
     pub default_name: String,
     pub ports: Vec<String>,
 }
@@ -216,8 +216,8 @@ pub fn resolve(
         .or(config.disk_size)
         .unwrap_or_else(|| "40G".to_string());
 
-    let cpus = cli_cpus.or(config.cpus);
-    let memory = cli_memory.or(config.memory);
+    let cpus = cli_cpus.or(config.cpus).unwrap_or(1);
+    let memory = cli_memory.or(config.memory).unwrap_or(1024);
     let default_name = config.default_name.unwrap_or_else(|| "default".to_string());
 
     // CLI ports are merged with config ports (union)
@@ -864,6 +864,8 @@ disk_size = "30G"
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
         assert_eq!(resolved.disk_size, "40G");
+        assert_eq!(resolved.cpus, 1);
+        assert_eq!(resolved.memory, 1024);
     }
 
     #[test]
@@ -892,9 +894,9 @@ cpus = 4
         unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
-        assert_eq!(resolved.cpus, Some(8));
+        assert_eq!(resolved.cpus, 8);
         // memory falls through from user config (project didn't set it)
-        assert_eq!(resolved.memory, Some(1024));
+        assert_eq!(resolved.memory, 1024);
     }
 
     #[test]

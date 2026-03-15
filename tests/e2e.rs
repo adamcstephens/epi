@@ -62,8 +62,8 @@ fn default_resolved() -> config::Resolved {
         target: target_str.clone(),
         mounts: vec![],
         disk_size: "40G".to_string(),
-        cpus: None,
-        memory: None,
+        cpus: 1,
+        memory: 1024,
         default_name: "default".to_string(),
         ports: vec![],
     }
@@ -92,8 +92,8 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
         mounts: &resolved.mounts,
         disk_size: &resolved.disk_size,
         rebuild: false,
-        cpus_override: resolved.cpus,
-        memory_override: resolved.memory,
+        cpus: resolved.cpus,
+        memory_mib: resolved.memory,
         port_specs: &resolved.ports,
     })
     .expect("provision failed");
@@ -343,8 +343,8 @@ fn e2e_mount() {
         mounts: &mounts,
         disk_size: "40G",
         rebuild: false,
-        cpus_override: None,
-        memory_override: None,
+        cpus: 1,
+        memory_mib: 1024,
         port_specs: &[],
     })
     .expect("provision failed");
@@ -699,7 +699,7 @@ fn e2e_memory_override() {
     let _guard = InstanceGuard::new(&name);
 
     let mut resolved = default_resolved();
-    resolved.memory = Some(2048);
+    resolved.memory = 2048;
 
     let runtime = provision_and_wait_with(&name, resolved);
 
@@ -735,7 +735,7 @@ fn e2e_cpus_override() {
     let _guard = InstanceGuard::new(&name);
 
     let mut resolved = default_resolved();
-    resolved.cpus = Some(2);
+    resolved.cpus = 2;
 
     let runtime = provision_and_wait_with(&name, resolved);
 

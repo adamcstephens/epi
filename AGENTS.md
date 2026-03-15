@@ -108,9 +108,11 @@ bd close bd-42 --reason "Completed" --json
 
 1. **Check ready work**: `bd ready` shows unblocked issues
 2. **Claim your task atomically**: `bd update <id> --claim`
+6. **Describe change** : use current empty, or new, jj change with desc: WIP <id> <description>
 3. **Work on it**: Implement, test, document
 4. **Discover new work?** Create linked issue:
    - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
+6. **Describe change** : finalize jj change and commit, with desc: <id> <description>
 5. **Complete**: `bd close <id> --reason "Done"`
 
 ### Auto-Sync
@@ -133,7 +135,7 @@ bd automatically syncs via Dolt:
 
 For more details, see README.md and docs/QUICKSTART.md.
 
-## Landing the Plane (Session Completion)
+## Landing the Plane - land it - (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below.
 
