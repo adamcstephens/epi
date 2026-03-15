@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Show only filenames during `cp` instead of per-file rsync progress summaries
+
 ## [0.6.0] - 2026-03-15
 
 ### Changed
