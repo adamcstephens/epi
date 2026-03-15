@@ -80,13 +80,14 @@ pub struct InstanceState {
 }
 
 pub fn state_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("EPI_STATE_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local/state/epi");
-    }
-    PathBuf::from(".epi-state")
+    let path = if let Ok(dir) = std::env::var("EPI_STATE_DIR") {
+        PathBuf::from(dir)
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".local/state/epi")
+    } else {
+        PathBuf::from(".epi-state")
+    };
+    std::path::absolute(&path).unwrap_or(path)
 }
 
 pub fn instance_dir(name: &str) -> PathBuf {
@@ -768,5 +769,14 @@ mod tests {
         let json = r#"{"target": ".#test", "mounts": []}"#;
         let state: InstanceState = serde_json::from_str(json).unwrap();
         assert!(state.descriptor.is_none());
+    }
+
+    #[test]
+    fn state_dir_returns_absolute_path() {
+        let dir = state_dir();
+        assert!(
+            dir.is_absolute(),
+            "state_dir() returned relative path: {dir:?}"
+        );
     }
 }

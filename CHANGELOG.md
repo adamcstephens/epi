@@ -6,6 +6,9 @@
 - Create nix GC roots for instance store paths (kernel, disk, initrd, hooks) to prevent `nix-collect-garbage` from breaking stopped instances
 - Store resolved descriptor in state.json for self-contained instance state
 
+### Fixed
+- Canonicalize `state_dir()` and `cache_dir()` to absolute paths when env vars contain relative paths
+
 ### Changed
 - Show only filenames during `cp` instead of per-file rsync progress summaries
 - `info`: Show cpu/memory in resources, ssh port only (not full command), ssh_config path, full slice name, console log path, and tilde-shorten all paths

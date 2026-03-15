@@ -65,7 +65,10 @@ pub fn cmd_info(instance: &str) -> Result<()> {
         println!("  slice:    {}", slice);
         println!("  serial:   {}", strip_home(&rt.serial_socket));
         println!("  disk:     {}", strip_home(&rt.disk));
-        println!("  console:  {}", strip_home(&instance_store::console_log_path(instance).to_string_lossy()));
+        println!(
+            "  console:  {}",
+            strip_home(&instance_store::console_log_path(instance).to_string_lossy())
+        );
     }
 
     Ok(())
