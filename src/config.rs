@@ -702,4 +702,247 @@ ports = ["8080:80", ":443"]
         assert!(mounts.contains(&"/config/mount".to_string()));
         assert!(mounts.contains(&"/cli/mount".to_string()));
     }
+
+    // --- Tests that exercise resolve() through env vars ---
+    //
+    // These tests mutate process-wide env vars and must not run in parallel
+    // with each other. Use the RESOLVE_LOCK mutex to serialize them.
+
+    use std::sync::Mutex;
+    static RESOLVE_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Helper: write a TOML config to a temp file, returning the temp dir
+    /// (must be kept alive for the file to exist).
+    fn write_temp_config(content: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, content).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn resolve_three_way_mount_union() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(
+            r#"
+target = ".#user-target"
+mounts = ["/user/mount"]
+"#,
+        );
+        let (_proj_dir, proj_path) = write_temp_config(
+            r#"
+mounts = ["/project/mount"]
+"#,
+        );
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let resolved = resolve(
+            None,
+            &["/cli/mount".into()],
+            None,
+            None,
+            None,
+            &[],
+            true, // no_project_mount to avoid auto-mount side effects
+        )
+        .unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.target, ".#user-target");
+        assert_eq!(resolved.mounts.len(), 3);
+        assert!(resolved.mounts.contains(&"/user/mount".to_string()));
+        assert!(resolved.mounts.contains(&"/project/mount".to_string()));
+        assert!(resolved.mounts.contains(&"/cli/mount".to_string()));
+    }
+
+    #[test]
+    fn resolve_three_way_mount_dedup() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(
+            r#"
+target = ".#dev"
+mounts = ["/shared/mount", "/user/only"]
+"#,
+        );
+        let (_proj_dir, proj_path) = write_temp_config(
+            r#"
+mounts = ["/shared/mount", "/project/only"]
+"#,
+        );
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let resolved =
+            resolve(None, &["/shared/mount".into()], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.mounts.len(), 3);
+        assert!(resolved.mounts.contains(&"/shared/mount".to_string()));
+        assert!(resolved.mounts.contains(&"/user/only".to_string()));
+        assert!(resolved.mounts.contains(&"/project/only".to_string()));
+    }
+
+    #[test]
+    fn resolve_cli_target_overrides_configs() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"target = ".#user""#);
+        let (_proj_dir, proj_path) = write_temp_config(r#"target = ".#project""#);
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let resolved = resolve(Some(".#cli"), &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.target, ".#cli");
+    }
+
+    #[test]
+    fn resolve_project_target_overrides_user() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"target = ".#user""#);
+        let (_proj_dir, proj_path) = write_temp_config(r#"target = ".#project""#);
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.target, ".#project");
+    }
+
+    #[test]
+    fn resolve_cli_disk_size_overrides_config() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(
+            r#"
+target = ".#dev"
+disk_size = "30G"
+"#,
+        );
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let resolved = resolve(None, &[], Some("80G"), None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.disk_size, "80G");
+    }
+
+    #[test]
+    fn resolve_disk_size_default_when_unset() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"target = ".#dev""#);
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.disk_size, "40G");
+    }
+
+    #[test]
+    fn resolve_cpus_memory_precedence() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(
+            r#"
+target = ".#dev"
+cpus = 2
+memory = 1024
+"#,
+        );
+        let (_proj_dir, proj_path) = write_temp_config(
+            r#"
+cpus = 4
+"#,
+        );
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        // CLI cpus override everything
+        let resolved = resolve(None, &[], None, Some(8), None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.cpus, Some(8));
+        // memory falls through from user config (project didn't set it)
+        assert_eq!(resolved.memory, Some(1024));
+    }
+
+    #[test]
+    fn resolve_ports_three_way_union() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(
+            r#"
+target = ".#dev"
+ports = ["8080:80"]
+"#,
+        );
+        let (_proj_dir, proj_path) = write_temp_config(
+            r#"
+ports = [":443"]
+"#,
+        );
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let resolved = resolve(None, &[], None, None, None, &["9090:90".into()], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.ports.len(), 3);
+        assert!(resolved.ports.contains(&"8080:80".to_string()));
+        assert!(resolved.ports.contains(&":443".to_string()));
+        assert!(resolved.ports.contains(&"9090:90".to_string()));
+    }
+
+    #[test]
+    fn resolve_no_target_errors() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"mounts = ["/a"]"#);
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let result = resolve(None, &[], None, None, None, &[], true);
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("no target specified"));
+    }
 }
