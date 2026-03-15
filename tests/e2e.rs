@@ -81,10 +81,10 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
             runtime: None,
             mounts: instance_store::canonicalize_mounts(&resolved.mounts),
             project_dir: None,
-            disk_size: Some(resolved.disk_size.clone()),
+            disk_size: resolved.disk_size.clone(),
             cpus: resolved.cpus,
             memory_mib: resolved.memory,
-            port_specs: Some(resolved.ports.clone()),
+            port_specs: resolved.ports.clone(),
         },
     )
     .expect("save_state failed");
@@ -175,8 +175,8 @@ fn e2e_lifecycle() {
 
     // Verify resolved VM params persisted in InstanceState
     let state = instance_store::load_state(&name).unwrap().unwrap();
-    assert_eq!(state.disk_size.as_deref(), Some("40G"));
-    assert_eq!(state.port_specs, Some(vec![":8080".to_string()]));
+    assert_eq!(state.disk_size, "40G");
+    assert_eq!(state.port_specs, vec![":8080".to_string()]);
     assert_eq!(state.cpus, 2);
     assert_eq!(state.memory_mib, 512);
 
@@ -344,10 +344,10 @@ fn e2e_mount() {
             runtime: None,
             mounts: instance_store::canonicalize_mounts(&mounts),
             project_dir: None,
-            disk_size: Some("40G".into()),
+            disk_size: "40G".into(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         },
     )
     .unwrap();

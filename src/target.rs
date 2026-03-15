@@ -34,7 +34,6 @@ fn default_cmdline() -> String {
     "console=ttyS0 root=/dev/vda2 ro".to_string()
 }
 
-
 impl HooksDescriptor {
     /// Sorted hook script paths for a given hook point.
     pub fn post_launch_scripts(&self) -> Vec<String> {

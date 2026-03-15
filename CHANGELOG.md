@@ -5,7 +5,7 @@
 ### Changed
 - **Breaking:** Rename `status` subcommand to `info` with expanded output (resources, mounts, project dir, SSH command, grouped sections)
 - Switch shell completions to dynamic clap_complete for instance name tab-completion
-- Persist disk size in instance state for display in `info`
+- Persist all resolved VM params (cpus, memory, disk_size, port_specs) in instance state; start/rebuild read stored values directly
 
 ### Fixed
 - Fix virtiofsd mount permission issues by switching to `--sandbox none` and removing uid/gid mapping flags
