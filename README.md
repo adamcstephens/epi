@@ -2,6 +2,11 @@
 
 Create ephemeral virtual machines using nixosConfigurations.
 
+## Requirements
+
+- nix
+- systemd user environment
+
 ## Quick start
 
 ```bash
@@ -27,8 +32,10 @@ epi rm myvm
 epi merges configuration from three layers (highest priority first):
 
 1. **CLI flags** — `--cpus`, `--memory`, `--mount`, `--port`, `--disk-size`
-2. **Project config** — `.epi/config.toml` in the project directory
+2. **Project config** — `.epi/config.toml` in the current directory
 3. **User config** — `~/.config/epi/config.toml`
+
+For scalar values (target, cpus, memory, disk_size, default_name), the highest-priority layer wins. For list values (mounts, ports), all layers are merged (union, deduplicated).
 
 ```toml
 # .epi/config.toml
@@ -42,7 +49,17 @@ ports = [":8080", "3000:3000"]
 project_mount = true
 ```
 
-All resolved values (cpus, memory, disk size, ports) are persisted in instance state at launch time. Subsequent `start` and `rebuild` commands use the stored values.
+All resolved values (cpus, memory, disk size, ports) are persisted in instance state at launch time. Subsequent `start` and `rebuild` commands use the stored values — they do not re-read config.
+
+### Projects
+
+epi detects a project when `.epi/config.toml` exists in the current directory. When inside a project:
+
+- The project directory is automatically mounted into the guest (disable with `project_mount = false` or `--no-project-mount`)
+- The project directory path is recorded in instance state and shown in `info` and `list` output
+- `default_name` from the project config becomes the default instance name, so you can run `epi launch` without specifying one
+
+Mount paths in config are resolved relative to the config file's directory, so `mounts = ["data"]` in `.epi/config.toml` mounts `<project>/data`. Tilde (`~/`) paths are expanded.
 
 ### Project initialization
 
