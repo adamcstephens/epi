@@ -45,9 +45,7 @@ pub fn cmd_launch(
         },
     )?;
 
-    let step = ui::Step::start(&format!("Provisioning {instance}"));
-
-    let runtime = match vm_launch::provision(&vm_launch::ProvisionParams {
+    let params = vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &resolved.target,
         mounts: &resolved.mounts,
@@ -56,13 +54,11 @@ pub fn cmd_launch(
         cpus: resolved.cpus,
         memory_mib: resolved.memory,
         port_specs: &resolved.ports,
-    }) {
-        Ok(r) => {
-            step.finish(&format!("Provisioned {instance}"));
-            r
-        }
+    };
+
+    let runtime = match prepare_and_provision(&params) {
+        Ok(r) => r,
         Err(e) => {
-            step.fail(&format!("Provisioning {instance} failed"));
             if pre_existing {
                 let _ = instance_store::clear_runtime(instance);
             } else {
@@ -154,6 +150,82 @@ pub fn cmd_launch(
     Ok(())
 }
 
+fn prepare_and_provision(params: &vm_launch::ProvisionParams) -> Result<instance_store::Runtime> {
+    let group = ui::Group::start("Preparing");
+
+    // Resolve target descriptor
+    let cache_result = match resolve_with_ui(&group, params.target_str, params.rebuild) {
+        Ok(r) => r,
+        Err(e) => {
+            group.fail("Preparation failed");
+            return Err(e);
+        }
+    };
+    let desc = cache_result.descriptor();
+
+    target::validate_descriptor(desc)?;
+
+    // Build missing artifacts individually
+    let missing = target::missing_artifacts(desc);
+    for artifact in &missing {
+        let dim = ::console::Style::new().for_stderr().dim();
+        let label = format!(
+            "Building {} {}",
+            artifact.kind.label(),
+            dim.apply_to(&artifact.store_path)
+        );
+        let step = group.step(&label);
+        match target::build_artifact(params.target_str, artifact) {
+            Ok(()) => step.finish(&format!(
+                "Built {} {}",
+                artifact.kind.label(),
+                dim.apply_to(&artifact.store_path)
+            )),
+            Err(e) => {
+                step.fail(&format!("Building {} failed", artifact.kind.label()));
+                group.fail("Preparation failed");
+                return Err(e);
+            }
+        }
+    }
+
+    // Build hook store paths if needed
+    target::ensure_hook_paths(params.target_str, desc)?;
+
+    group.finish("Prepared");
+
+    // Launch VM
+    let step = ui::Step::start(&format!("Launching {}", params.instance_name));
+    match vm_launch::provision_with_descriptor(params, desc) {
+        Ok(r) => {
+            step.finish(&format!("Launched {}", params.instance_name));
+            Ok(r)
+        }
+        Err(e) => {
+            step.fail(&format!("Launching {} failed", params.instance_name));
+            Err(e)
+        }
+    }
+}
+
+fn resolve_with_ui(
+    group: &ui::Group,
+    target_str: &str,
+    rebuild: bool,
+) -> Result<target::CacheResult> {
+    let step = group.step(&format!("Resolving {target_str}"));
+    let result = target::resolve_descriptor_cached(target_str, rebuild)?;
+    match &result {
+        target::CacheResult::Cached(_) => {
+            step.finish_cached(&format!("Cached {target_str}"));
+        }
+        target::CacheResult::Resolved(_) => {
+            step.finish(&format!("Evaluated {target_str}"));
+        }
+    }
+    Ok(result)
+}
+
 fn run_post_launch_hooks(
     instance: &str,
     target_str: &str,
@@ -197,8 +269,7 @@ pub fn cmd_start(
 
     let mounts = state.mounts.clone();
 
-    let step = ui::Step::start(&format!("Starting {instance}"));
-    let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
+    let params = vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
         mounts: &mounts,
@@ -207,8 +278,8 @@ pub fn cmd_start(
         cpus: state.cpus,
         memory_mib: state.memory_mib,
         port_specs: &state.port_specs,
-    })?;
-    step.finish(&format!("Started {instance}"));
+    };
+    let runtime = prepare_and_provision(&params)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;
@@ -337,9 +408,8 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         std::fs::remove_file(&disk_path)?;
     }
 
-    let step = ui::Step::start(&format!("Rebuilding {instance}"));
     let mounts = state.mounts.clone();
-    let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
+    let params = vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
         mounts: &mounts,
@@ -348,8 +418,8 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         cpus: state.cpus,
         memory_mib: state.memory_mib,
         port_specs: &state.port_specs,
-    })?;
-    step.finish(&format!("Rebuilt {instance}"));
+    };
+    let runtime = prepare_and_provision(&params)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;

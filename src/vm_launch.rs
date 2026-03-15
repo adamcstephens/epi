@@ -55,6 +55,11 @@ pub fn provision(params: &ProvisionParams) -> Result<Runtime> {
     target::validate_descriptor(desc)?;
     target::ensure_paths_exist(params.target_str, desc)?;
 
+    provision_with_descriptor(params, desc)
+}
+
+/// Provision a VM with an already-resolved descriptor (skips resolution/build).
+pub fn provision_with_descriptor(params: &ProvisionParams, desc: &Descriptor) -> Result<Runtime> {
     let config = LaunchConfig {
         instance_name: params.instance_name,
         desc,
