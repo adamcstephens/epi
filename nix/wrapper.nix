@@ -33,7 +33,7 @@ runCommand "epi"
     }
 
     installShellCompletion --cmd epi \
-      --bash <($out/bin/epi completions bash) \
-      --fish <($out/bin/epi completions fish) \
-      --zsh <($out/bin/epi completions zsh)
+      --bash <(COMPLETE=bash $out/bin/epi) \
+      --fish <(COMPLETE=fish $out/bin/epi) \
+      --zsh <(COMPLETE=zsh $out/bin/epi)
   ''
