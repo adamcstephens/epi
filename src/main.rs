@@ -111,8 +111,8 @@ enum Command {
         instance: Option<String>,
     },
 
-    /// Show instance status.
-    Status {
+    /// Show detailed instance information.
+    Info {
         /// Instance name
         #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
@@ -277,7 +277,7 @@ fn run(command: Command) -> Result<()> {
             commands::cmd_start(&instance, console, no_wait, wait_timeout)
         }
         Command::Stop { instance } => commands::cmd_stop(&resolve_instance_name(instance)?),
-        Command::Status { instance } => commands::cmd_status(&resolve_instance_name(instance)?),
+        Command::Info { instance } => commands::cmd_info(&resolve_instance_name(instance)?),
         Command::Rm { instance, force } => {
             commands::cmd_rm(&resolve_instance_name(instance)?, force)
         }

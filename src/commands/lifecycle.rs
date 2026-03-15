@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use epi::{config, console, hooks, instance_store, ssh, target, ui, vm_launch};
 
-use super::info::cmd_status;
+use super::info::cmd_info;
 
 pub fn cmd_launch(
     instance: &str,
@@ -18,7 +18,7 @@ pub fn cmd_launch(
         if attach_console {
             return console::attach(instance, None, None);
         }
-        return cmd_status(instance);
+        return cmd_info(instance);
     }
 
     // If instance exists but stale, stop it first
@@ -36,6 +36,7 @@ pub fn cmd_launch(
         &resolved.target,
         resolved.mounts.clone(),
         project_dir,
+        Some(resolved.disk_size.clone()),
     )?;
 
     let step = ui::Step::start(&format!("Provisioning {instance}"));

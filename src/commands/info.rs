@@ -1,30 +1,72 @@
 use anyhow::{Result, bail};
 use std::os::unix::process::CommandExt;
 
-use epi::{instance_store, ssh, ui};
+use epi::{instance_store, ssh, target, ui};
 
-pub fn cmd_status(instance: &str) -> Result<()> {
+pub fn cmd_info(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
 
     let running = instance_store::instance_is_running(instance)?;
 
-    println!("instance:  {}", ui::bold(instance));
-    println!("target:    {}", state.target);
-    println!("status:    {}", ui::status_dot(running));
+    // Identity
+    println!("instance:   {}", ui::bold(instance));
+    println!("target:     {}", state.target);
+    if let Some(ref project) = state.project_dir {
+        println!("project:    {}", strip_home(project));
+    }
+    println!("status:     {}", ui::status_dot(running));
 
-    if let Some(ref rt) = state.runtime {
-        if let Some(port) = rt.ssh_port {
-            println!("ssh port:  {port}");
+    // Resources — resolve from target descriptor cache
+    if let Ok(cache_result) = target::resolve_descriptor_cached(&state.target, false) {
+        let desc = cache_result.descriptor();
+        println!();
+        println!("resources:");
+        println!("  cpus:     {}", desc.cpus);
+        println!("  memory:   {} MiB", desc.memory_mib);
+        if let Some(ref disk_size) = state.disk_size {
+            println!("  disk:     {disk_size}");
         }
-        if !rt.ports.is_empty() {
-            for pm in &rt.ports {
-                println!("port:      {}:{} ({})", pm.host, pm.guest, pm.protocol);
+    }
+
+    // Network
+    if let Some(ref rt) = state.runtime {
+        let has_ssh = rt.ssh_port.is_some();
+        let has_ports = !rt.ports.is_empty();
+        if has_ssh || has_ports {
+            println!();
+            println!("network:");
+            if let Some(port) = rt.ssh_port {
+                println!("  ssh:      ssh -p {port} root@127.0.0.1");
+            }
+            if has_ports {
+                for (i, pm) in rt.ports.iter().enumerate() {
+                    if i == 0 {
+                        println!("  ports:    {}:{} ({})", pm.host, pm.guest, pm.protocol);
+                    } else {
+                        println!("            {}:{} ({})", pm.host, pm.guest, pm.protocol);
+                    }
+                }
             }
         }
-        println!("serial:    {}", rt.serial_socket);
-        println!("disk:      {}", rt.disk);
-        println!("unit id:   {}", rt.unit_id);
+    }
+
+    // Mounts
+    if !state.mounts.is_empty() {
+        println!();
+        println!("mounts:");
+        for mount in &state.mounts {
+            println!("  {}", strip_home(mount));
+        }
+    }
+
+    // Runtime
+    if let Some(ref rt) = state.runtime {
+        println!();
+        println!("runtime:");
+        println!("  serial:   {}", rt.serial_socket);
+        println!("  disk:     {}", rt.disk);
+        println!("  unit id:  {}", rt.unit_id);
     }
 
     Ok(())

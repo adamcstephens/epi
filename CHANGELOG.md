@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** Rename `status` subcommand to `info` with expanded output (resources, mounts, project dir, SSH command, grouped sections)
+- Persist disk size in instance state for display in `info`
+
 ### Fixed
 - Fix virtiofsd mount permission issues by switching to `--sandbox none` and removing uid/gid mapping flags
 

@@ -98,7 +98,7 @@ The CLI SHALL treat lifecycle commands as operating on instance identity, not on
 If a lifecycle command is invoked without an instance name and `default` does not exist, the CLI MUST fail with a clear message explaining how to create `default` or specify another instance.
 
 #### Scenario: Default missing on lifecycle command
-- **WHEN** a user runs `epi status` and no `default` instance exists
+- **WHEN** a user runs `epi info` and no `default` instance exists
 - **THEN** the CLI exits non-zero
 - **AND** the error message mentions `default` was not found
 - **AND** the error message suggests running `epi launch --target <flake#config>` or passing an instance name
@@ -129,10 +129,10 @@ After a successful `epi launch`, the CLI SHALL print the host port forwarded to 
 - **THEN** the CLI prints a "checkmark" prefixed message indicating the instance is ready with the SSH port number
 
 ### Requirement: Status includes forwarded SSH port
-The `epi status` command SHALL display instance details in a labeled field format. The output SHALL include the instance name (bold), target, and running status with a colored dot indicator. When the instance is running with runtime metadata, the output SHALL additionally include SSH port, serial socket path, disk path, and unit ID.
+The `epi info` command SHALL display instance details in a labeled field format. The output SHALL include the instance name (bold), target, and running status with a colored dot indicator. When the instance is running with runtime metadata, the output SHALL additionally include SSH port, serial socket path, disk path, and unit ID.
 
 #### Scenario: Status shows full runtime details for running instance
-- **WHEN** a user runs `epi status dev-a` and `dev-a` is running with SSH port 54321
+- **WHEN** a user runs `epi info dev-a` and `dev-a` is running with SSH port 54321
 - **THEN** the output shows `instance:  dev-a` with the name in bold
 - **AND** the output shows `target:    .#dev-a`
 - **AND** the output shows `status:    ● running` with the dot in green
@@ -140,7 +140,7 @@ The `epi status` command SHALL display instance details in a labeled field forma
 - **AND** the output shows `serial:`, `disk:`, and `unit id:` fields
 
 #### Scenario: Status shows runtime fields even when stopped
-- **WHEN** a user runs `epi status dev-a` and `dev-a` is stopped but has stored runtime metadata
+- **WHEN** a user runs `epi info dev-a` and `dev-a` is stopped but has stored runtime metadata
 - **THEN** the output shows `instance:  dev-a` with the name in bold
 - **AND** the output shows `target:    .#dev-a`
 - **AND** the output shows `status:    ○ stopped` with the dot dimmed
