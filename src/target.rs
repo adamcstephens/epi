@@ -133,6 +133,120 @@ pub fn is_nix_store_path(path: &str) -> bool {
     path.starts_with("/nix/store/")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtifactKind {
+    Kernel,
+    Initrd,
+    Image,
+}
+
+impl ArtifactKind {
+    fn nix_build_attr(&self) -> &str {
+        match self {
+            ArtifactKind::Kernel => "config.system.build.kernel",
+            ArtifactKind::Initrd => "config.system.build.initialRamdisk",
+            ArtifactKind::Image => "config.system.build.image",
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            ArtifactKind::Kernel => "kernel",
+            ArtifactKind::Initrd => "initrd",
+            ArtifactKind::Image => "image",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Artifact {
+    pub kind: ArtifactKind,
+    pub store_path: String,
+}
+
+impl Artifact {
+    pub fn nix_attr(&self, canonical_target: &str) -> String {
+        format!("{canonical_target}.{}", self.kind.nix_build_attr())
+    }
+}
+
+/// Return artifacts from the descriptor whose store paths are missing.
+pub fn missing_artifacts(desc: &Descriptor) -> Vec<Artifact> {
+    let mut missing = Vec::new();
+
+    if !Path::new(&desc.kernel).exists() {
+        missing.push(Artifact {
+            kind: ArtifactKind::Kernel,
+            store_path: desc.kernel.clone(),
+        });
+    }
+
+    if let Some(ref initrd) = desc.initrd
+        && !Path::new(initrd).exists()
+    {
+        missing.push(Artifact {
+            kind: ArtifactKind::Initrd,
+            store_path: initrd.clone(),
+        });
+    }
+
+    if !Path::new(&desc.disk).exists() {
+        missing.push(Artifact {
+            kind: ArtifactKind::Image,
+            store_path: desc.disk.clone(),
+        });
+    }
+
+    missing
+}
+
+/// Build a single artifact by its nix attribute.
+pub fn build_artifact(target: &str, artifact: &Artifact) -> Result<()> {
+    let canonical = canonicalize(target);
+    let attr = artifact.nix_attr(&canonical);
+    let out = process::run("nix", &["build", &attr, "--no-link"])?;
+    if !out.success() {
+        bail!(
+            "nix build {} failed (exit {}): {}",
+            artifact.kind.label(),
+            out.status,
+            out.stderr
+        );
+    }
+    if !Path::new(&artifact.store_path).exists() {
+        bail!(
+            "path does not exist after building {}: {}",
+            artifact.kind.label(),
+            artifact.store_path
+        );
+    }
+    Ok(())
+}
+
+/// Ensure hook store paths exist by building toplevel if needed.
+pub fn ensure_hook_paths(target: &str, desc: &Descriptor) -> Result<()> {
+    let hook_paths = descriptor_hook_store_paths(desc);
+    let any_missing = hook_paths.iter().any(|p| !Path::new(p).exists());
+    if any_missing {
+        let canonical = canonicalize(target);
+        let toplevel = format!("{canonical}.config.system.build.toplevel");
+        let out = process::run("nix", &["build", &toplevel, "--no-link"])?;
+        if !out.success() {
+            bail!(
+                "nix build hooks failed (exit {}): {}",
+                out.status,
+                out.stderr
+            );
+        }
+    }
+    for path in &hook_paths {
+        if !Path::new(path).exists() {
+            bail!("hook path does not exist after build: {path}");
+        }
+    }
+    Ok(())
+}
+
 /// Ensure all nix store paths from the descriptor are built.
 /// If any are missing, builds the flake target to produce them.
 pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
@@ -159,6 +273,26 @@ pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
 
 pub fn validate_descriptor(_desc: &Descriptor) -> Result<()> {
     Ok(())
+}
+
+fn descriptor_hook_store_paths(desc: &Descriptor) -> Vec<&str> {
+    let mut paths = Vec::new();
+    for script in desc.hooks.post_launch.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
+    for script in desc.hooks.pre_stop.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
+    for script in desc.hooks.guest_init.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
+    paths
 }
 
 fn descriptor_store_paths(desc: &Descriptor) -> Vec<&str> {
@@ -359,6 +493,101 @@ mod tests {
         assert_eq!(expand_tilde("~#config"), format!("{home}#config"));
         assert_eq!(expand_tilde(".#config"), ".#config");
         assert_eq!(expand_tilde("/abs/path#config"), "/abs/path#config");
+    }
+
+    #[test]
+    fn missing_artifacts_all_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("kernel");
+        let disk = dir.path().join("disk");
+        let initrd = dir.path().join("initrd");
+        fs::write(&kernel, "").unwrap();
+        fs::write(&disk, "").unwrap();
+        fs::write(&initrd, "").unwrap();
+
+        let desc = Descriptor {
+            kernel: kernel.to_string_lossy().into(),
+            disk: disk.to_string_lossy().into(),
+            initrd: Some(initrd.to_string_lossy().into()),
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+
+        let missing = missing_artifacts(&desc);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn missing_artifacts_some_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("kernel");
+        fs::write(&kernel, "").unwrap();
+
+        let desc = Descriptor {
+            kernel: kernel.to_string_lossy().into(),
+            disk: "/nonexistent/disk".into(),
+            initrd: Some("/nonexistent/initrd".into()),
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+
+        let missing = missing_artifacts(&desc);
+        assert_eq!(missing.len(), 2);
+        assert!(missing.iter().any(|a| a.kind == ArtifactKind::Image));
+        assert!(missing.iter().any(|a| a.kind == ArtifactKind::Initrd));
+    }
+
+    #[test]
+    fn missing_artifacts_no_initrd() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("kernel");
+        let disk = dir.path().join("disk");
+        fs::write(&kernel, "").unwrap();
+        fs::write(&disk, "").unwrap();
+
+        let desc = Descriptor {
+            kernel: kernel.to_string_lossy().into(),
+            disk: disk.to_string_lossy().into(),
+            initrd: None,
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+
+        let missing = missing_artifacts(&desc);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn artifact_nix_attr_formats() {
+        let a = Artifact {
+            kind: ArtifactKind::Kernel,
+            store_path: "/nix/store/abc-kernel".into(),
+        };
+        assert_eq!(
+            a.nix_attr(".#nixosConfigurations.dev"),
+            ".#nixosConfigurations.dev.config.system.build.kernel"
+        );
+
+        let a = Artifact {
+            kind: ArtifactKind::Image,
+            store_path: "/nix/store/abc-image".into(),
+        };
+        assert_eq!(
+            a.nix_attr(".#nixosConfigurations.dev"),
+            ".#nixosConfigurations.dev.config.system.build.image"
+        );
+
+        let a = Artifact {
+            kind: ArtifactKind::Initrd,
+            store_path: "/nix/store/abc-initrd".into(),
+        };
+        assert_eq!(
+            a.nix_attr(".#nixosConfigurations.dev"),
+            ".#nixosConfigurations.dev.config.system.build.initialRamdisk"
+        );
     }
 
     #[test]

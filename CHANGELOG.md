@@ -2,8 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-15
+
 ### Changed
 - **Breaking:** Rename `--no-wait` flag to `--no-provision` (and `EPI_NO_WAIT` env var to `EPI_NO_PROVISION`)
+- Show discrete build steps (evaluate, kernel, initrd, image) with grouped spinners instead of a single opaque "Provisioning" spinner
 
 ## [0.5.0] - 2026-03-14
 
