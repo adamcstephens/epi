@@ -1,6 +1,101 @@
 # epi - Ephemeral Instances
 
-Create ephemeral virtual machines using nixosConfigurations
+Create ephemeral virtual machines using nixosConfigurations.
+
+## Quick start
+
+```bash
+# Launch a VM from a flake target
+epi launch myvm --target '.#myConfig'
+
+# SSH into it
+epi ssh myvm
+
+# Execute a command
+epi exec myvm -- ls /
+
+# Copy files
+epi cp ./local-file myvm:/tmp/
+
+# Stop and remove
+epi stop myvm
+epi rm myvm
+```
+
+## Configuration
+
+epi merges configuration from three layers (highest priority first):
+
+1. **CLI flags** — `--cpus`, `--memory`, `--mount`, `--port`, `--disk-size`
+2. **Project config** — `.epi/config.toml` in the project directory
+3. **User config** — `~/.config/epi/config.toml`
+
+```toml
+# .epi/config.toml
+target = ".#myConfig"
+default_name = "dev"
+cpus = 4
+memory = 2048
+disk_size = "80G"
+mounts = ["/home/user/data"]
+ports = [":8080", "3000:3000"]
+project_mount = true
+```
+
+All resolved values (cpus, memory, disk size, ports) are persisted in instance state at launch time. Subsequent `start` and `rebuild` commands use the stored values.
+
+### Project initialization
+
+```bash
+epi init
+```
+
+Interactively creates a `.epi/config.toml` with target selection and default settings.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `launch` | Create and start an instance from a flake target |
+| `start` | Start an existing stopped instance |
+| `stop` | Stop an instance |
+| `rm` | Remove an instance |
+| `rebuild` | Rebuild an instance (re-evaluates target, fresh disk) |
+| `info` | Show detailed instance information |
+| `list` | List known instances |
+| `ssh` | Open SSH session |
+| `exec` | Execute a command in an instance |
+| `cp` | Copy files between host and instance via rsync |
+| `console` | Attach to serial console |
+| `console-log` | Show captured console output |
+| `logs` | Show instance logs |
+| `ssh-config` | Output SSH config block for an instance |
+| `init` | Initialize a new epi project |
+| `completions` | Generate shell completions (fish, bash, zsh) |
+
+## Port mapping
+
+Map TCP ports from host to guest with `--port`:
+
+```bash
+# Auto-assign host port, forward to guest port 8080
+epi launch myvm --port :8080
+
+# Explicit host:guest mapping
+epi launch myvm --port 3000:3000 --port 8443:443
+```
+
+Ports can also be set in config via `ports = [":8080", "3000:3000"]`.
+
+## Shell completions
+
+```bash
+epi completions fish | source                          # fish
+source <(epi completions bash)                         # bash
+source <(epi completions zsh)                          # zsh
+```
+
+Completions include dynamic instance name tab-completion.
 
 ## Hooks
 
