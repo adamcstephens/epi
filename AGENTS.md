@@ -11,6 +11,7 @@
 - Avoid unsafe code, ask before adding.
 - Format code with `just format`
 - Always check code linting with `just lint`
+- Construct structs with direct literal syntax (`Foo { field: value, .. }`) instead of builder patterns or multi-argument `new()` functions
 - Canonicalize relative paths to absolute paths as early as possible
 
 ## Dependencies
