@@ -82,9 +82,9 @@ pub fn load_project() -> Result<Option<Config>> {
 
 /// Returns the canonicalized project directory if .epi/config.toml exists.
 pub fn project_dir() -> Result<Option<String>> {
-    let (path, _) = project_config_path();
+    let (path, base) = project_config_path();
     if path.exists() {
-        let dir = path.parent().unwrap_or(Path::new(".")).canonicalize()?;
+        let dir = base.as_deref().unwrap_or(Path::new(".")).canonicalize()?;
         Ok(Some(dir.to_string_lossy().to_string()))
     } else {
         Ok(None)
@@ -866,6 +866,24 @@ disk_size = "30G"
         assert_eq!(resolved.disk_size, "40G");
         assert_eq!(resolved.cpus, 1);
         assert_eq!(resolved.memory, 1024);
+    }
+
+    #[test]
+    fn project_dir_returns_project_root() {
+        // In the default case (no EPI_PROJECT_CONFIG_FILE env var),
+        // project_dir() should return the project root, not .epi/.
+        // .epi/config.toml exists in the project root where tests run.
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        let result = project_dir().unwrap();
+        if let Some(dir) = result {
+            let path = PathBuf::from(&dir);
+            assert!(
+                !dir.ends_with(".epi"),
+                "project_dir() should return project root, got .epi/ subdir: {path:?}"
+            );
+        }
     }
 
     #[test]
