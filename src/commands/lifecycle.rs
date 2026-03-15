@@ -39,6 +39,9 @@ pub fn cmd_launch(
             mounts: instance_store::canonicalize_mounts(&resolved.mounts),
             project_dir,
             disk_size: Some(resolved.disk_size.clone()),
+            cpus: resolved.cpus,
+            memory_mib: resolved.memory,
+            port_specs: Some(resolved.ports.clone()),
         },
     )?;
 
@@ -195,18 +198,21 @@ pub fn cmd_start(
     let mounts = state.mounts.clone();
 
     let step = ui::Step::start(&format!("Starting {instance}"));
-    let config_ports = config::load_project()?
-        .and_then(|c| c.ports)
+    let port_specs = state
+        .port_specs
+        .clone()
+        .or_else(|| config::load_project().ok().flatten().and_then(|c| c.ports))
         .unwrap_or_default();
+    let disk_size = state.disk_size.clone().unwrap_or_else(|| "40G".into());
     let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
         mounts: &mounts,
-        disk_size: "40G",
+        disk_size: &disk_size,
         rebuild: false,
-        cpus: 1,
-        memory_mib: 1024,
-        port_specs: &config_ports,
+        cpus: state.cpus,
+        memory_mib: state.memory_mib,
+        port_specs: &port_specs,
     })?;
     step.finish(&format!("Started {instance}"));
 
@@ -339,18 +345,21 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
 
     let step = ui::Step::start(&format!("Rebuilding {instance}"));
     let mounts = state.mounts.clone();
-    let config_ports = config::load_project()?
-        .and_then(|c| c.ports)
+    let port_specs = state
+        .port_specs
+        .clone()
+        .or_else(|| config::load_project().ok().flatten().and_then(|c| c.ports))
         .unwrap_or_default();
+    let disk_size = state.disk_size.clone().unwrap_or_else(|| "40G".into());
     let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
         mounts: &mounts,
-        disk_size: "40G",
+        disk_size: &disk_size,
         rebuild: true,
-        cpus: 1,
-        memory_mib: 1024,
-        port_specs: &config_ports,
+        cpus: state.cpus,
+        memory_mib: state.memory_mib,
+        port_specs: &port_specs,
     })?;
     step.finish(&format!("Rebuilt {instance}"));
 

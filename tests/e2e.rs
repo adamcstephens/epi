@@ -82,6 +82,9 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
             mounts: instance_store::canonicalize_mounts(&resolved.mounts),
             project_dir: None,
             disk_size: Some(resolved.disk_size.clone()),
+            cpus: resolved.cpus,
+            memory_mib: resolved.memory,
+            port_specs: Some(resolved.ports.clone()),
         },
     )
     .expect("save_state failed");
@@ -154,6 +157,8 @@ fn e2e_lifecycle() {
     // Provision with a port mapping (:8080 = auto-allocate host, guest 8080)
     let mut resolved = default_resolved();
     resolved.ports = vec![":8080".to_string()];
+    resolved.cpus = 2;
+    resolved.memory = 512;
     let runtime = provision_and_wait_with(&name, resolved.clone());
     assert!(runtime.ssh_port.is_some());
 
@@ -167,6 +172,13 @@ fn e2e_lifecycle() {
     let loaded = instance_store::find_runtime(&name).unwrap().unwrap();
     assert_eq!(loaded.ports.len(), 1);
     assert_eq!(loaded.ports[0].guest, 8080);
+
+    // Verify resolved VM params persisted in InstanceState
+    let state = instance_store::load_state(&name).unwrap().unwrap();
+    assert_eq!(state.disk_size.as_deref(), Some("40G"));
+    assert_eq!(state.port_specs, Some(vec![":8080".to_string()]));
+    assert_eq!(state.cpus, 2);
+    assert_eq!(state.memory_mib, 512);
 
     // Verify passt was started with the additional port forwarding arg
     let unit_id = &runtime.unit_id;
@@ -333,6 +345,9 @@ fn e2e_mount() {
             mounts: instance_store::canonicalize_mounts(&mounts),
             project_dir: None,
             disk_size: Some("40G".into()),
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         },
     )
     .unwrap();
