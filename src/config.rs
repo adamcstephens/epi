@@ -84,10 +84,7 @@ pub fn load_project() -> Result<Option<Config>> {
 pub fn project_dir() -> Result<Option<String>> {
     let (path, _) = project_config_path();
     if path.exists() {
-        let dir = path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .canonicalize()?;
+        let dir = path.parent().unwrap_or(Path::new(".")).canonicalize()?;
         Ok(Some(dir.to_string_lossy().to_string()))
     } else {
         Ok(None)

@@ -95,11 +95,11 @@ The CLI SHALL place all systemd units for a given instance launch under a single
 The CLI SHALL query `systemctl --user is-active <unit>` to determine whether a process is running, instead of sending signal 0 to a stored PID. The unit name is constructed from the escaped instance name and the `unit_id` stored in the runtime file.
 
 #### Scenario: Running VM is detected as alive
-- **WHEN** `epi status dev-a` is run and the VM service for `dev-a` is active
+- **WHEN** `epi info dev-a` is run and the VM service for `dev-a` is active
 - **THEN** the CLI reports `dev-a` as running
 
 #### Scenario: Stopped VM is detected as not running
-- **WHEN** `epi status dev-a` is run and the VM service for `dev-a` is inactive
+- **WHEN** `epi info dev-a` is run and the VM service for `dev-a` is inactive
 - **THEN** the CLI reports `dev-a` as not running
 
 ### Requirement: CLI stops instances by stopping the systemd slice

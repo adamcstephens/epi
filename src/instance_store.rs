@@ -54,6 +54,8 @@ pub struct InstanceState {
     pub mounts: Vec<String>,
     #[serde(default)]
     pub project_dir: Option<String>,
+    #[serde(default)]
+    pub disk_size: Option<String>,
 }
 
 pub fn state_dir() -> PathBuf {
@@ -111,6 +113,7 @@ pub fn save_target(name: &str, target: &str) -> Result<()> {
         runtime: None,
         mounts: vec![],
         project_dir: None,
+        disk_size: None,
     };
     save_state(name, &state)
 }
@@ -120,6 +123,7 @@ pub fn set_launching(
     target: &str,
     mounts: Vec<String>,
     project_dir: Option<String>,
+    disk_size: Option<String>,
 ) -> Result<()> {
     let canonical_mounts: Vec<String> = mounts
         .iter()
@@ -135,6 +139,7 @@ pub fn set_launching(
         runtime: None,
         mounts: canonical_mounts,
         project_dir,
+        disk_size,
     };
     save_state(name, &state)
 }
@@ -286,6 +291,7 @@ mod tests {
             }),
             mounts: vec!["/a".into(), "/b".into()],
             project_dir: None,
+            disk_size: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -301,6 +307,7 @@ mod tests {
             runtime: None,
             mounts: vec![],
             project_dir: None,
+            disk_size: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -315,6 +322,7 @@ mod tests {
             runtime: None,
             mounts: vec!["/home".into(), "/opt".into()],
             project_dir: None,
+            disk_size: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -329,6 +337,7 @@ mod tests {
             runtime: None,
             mounts: vec!["/home".into()],
             project_dir: None,
+            disk_size: None,
         };
         write_state(dir.path(), "myvm", &state);
 
@@ -352,6 +361,7 @@ mod tests {
             runtime: None,
             mounts: vec!["/mnt".into()],
             project_dir: None,
+            disk_size: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -390,6 +400,7 @@ mod tests {
             }),
             mounts: vec![],
             project_dir: None,
+            disk_size: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -411,6 +422,7 @@ mod tests {
             runtime: None,
             mounts: vec!["/mnt".into()],
             project_dir: None,
+            disk_size: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -447,6 +459,7 @@ mod tests {
                     runtime: None,
                     mounts: vec![],
                     project_dir: None,
+                    disk_size: None,
                 },
             );
         };
@@ -481,6 +494,7 @@ mod tests {
                 runtime: None,
                 mounts: vec![],
                 project_dir: None,
+                disk_size: None,
             },
         );
         assert!(dir.path().join("vm1").exists());
@@ -506,6 +520,7 @@ mod tests {
             runtime: None,
             mounts: vec![],
             project_dir: Some("/home/user/myproject".into()),
+            disk_size: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
