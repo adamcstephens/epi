@@ -31,12 +31,15 @@ pub fn cmd_launch(
 
     let pre_existing = instance_store::find(instance)?.is_some();
     let project_dir = config::project_dir()?;
-    instance_store::set_launching(
+    instance_store::save_state(
         instance,
-        &resolved.target,
-        resolved.mounts.clone(),
-        project_dir,
-        Some(resolved.disk_size.clone()),
+        &instance_store::InstanceState {
+            target: resolved.target.clone(),
+            runtime: None,
+            mounts: instance_store::canonicalize_mounts(&resolved.mounts),
+            project_dir,
+            disk_size: Some(resolved.disk_size.clone()),
+        },
     )?;
 
     let step = ui::Step::start(&format!("Provisioning {instance}"));
