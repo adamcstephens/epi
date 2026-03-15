@@ -53,6 +53,10 @@ fn default_memory_mib() -> u32 {
     1024
 }
 
+fn default_disk_size() -> String {
+    "40G".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceState {
     pub target: String,
@@ -62,14 +66,14 @@ pub struct InstanceState {
     pub mounts: Vec<String>,
     #[serde(default)]
     pub project_dir: Option<String>,
-    #[serde(default)]
-    pub disk_size: Option<String>,
+    #[serde(default = "default_disk_size")]
+    pub disk_size: String,
     #[serde(default = "default_cpus")]
     pub cpus: u32,
     #[serde(default = "default_memory_mib")]
     pub memory_mib: u32,
     #[serde(default)]
-    pub port_specs: Option<Vec<String>>,
+    pub port_specs: Vec<String>,
 }
 
 pub fn state_dir() -> PathBuf {
@@ -280,10 +284,10 @@ mod tests {
             }),
             mounts: vec!["/a".into(), "/b".into()],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -299,10 +303,10 @@ mod tests {
             runtime: None,
             mounts: vec![],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -317,10 +321,10 @@ mod tests {
             runtime: None,
             mounts: vec!["/home".into(), "/opt".into()],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -335,10 +339,10 @@ mod tests {
             runtime: None,
             mounts: vec!["/home".into()],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         write_state(dir.path(), "myvm", &state);
 
@@ -362,10 +366,10 @@ mod tests {
             runtime: None,
             mounts: vec!["/mnt".into()],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -404,10 +408,10 @@ mod tests {
             }),
             mounts: vec![],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -429,10 +433,10 @@ mod tests {
             runtime: None,
             mounts: vec!["/mnt".into()],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -469,10 +473,10 @@ mod tests {
                     runtime: None,
                     mounts: vec![],
                     project_dir: None,
-                    disk_size: None,
+                    disk_size: String::new(),
                     cpus: 0,
                     memory_mib: 0,
-                    port_specs: None,
+                    port_specs: vec![],
                 },
             );
         };
@@ -507,10 +511,10 @@ mod tests {
                 runtime: None,
                 mounts: vec![],
                 project_dir: None,
-                disk_size: None,
+                disk_size: String::new(),
                 cpus: 0,
                 memory_mib: 0,
-                port_specs: None,
+                port_specs: vec![],
             },
         );
         assert!(dir.path().join("vm1").exists());
@@ -536,10 +540,10 @@ mod tests {
             runtime: None,
             mounts: vec![],
             project_dir: Some("/home/user/myproject".into()),
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: None,
+            port_specs: vec![],
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -576,7 +580,7 @@ mod tests {
         assert_eq!(state.target, ".#test");
         assert_eq!(state.cpus, 1);
         assert_eq!(state.memory_mib, 1024);
-        assert!(state.port_specs.is_none());
+        assert!(state.port_specs.is_empty());
     }
 
     #[test]
@@ -587,10 +591,10 @@ mod tests {
             runtime: None,
             mounts: vec![],
             project_dir: None,
-            disk_size: Some("40G".into()),
+            disk_size: "40G".into(),
             cpus: 4,
             memory_mib: 2048,
-            port_specs: None,
+            port_specs: vec![],
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -606,16 +610,16 @@ mod tests {
             runtime: None,
             mounts: vec![],
             project_dir: None,
-            disk_size: None,
+            disk_size: String::new(),
             cpus: 0,
             memory_mib: 0,
-            port_specs: Some(vec!["8080:80".into(), ":443".into()]),
+            port_specs: vec!["8080:80".into(), ":443".into()],
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.port_specs,
-            Some(vec!["8080:80".to_string(), ":443".to_string()])
+            vec!["8080:80".to_string(), ":443".to_string()]
         );
     }
 

@@ -18,11 +18,9 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     println!("status:     {}", ui::status_dot(running));
 
     // Resources
-    if let Some(ref disk_size) = state.disk_size {
-        println!();
-        println!("resources:");
-        println!("  disk:     {disk_size}");
-    }
+    println!();
+    println!("resources:");
+    println!("  disk:     {}", state.disk_size);
 
     // Network
     if let Some(ref rt) = state.runtime {

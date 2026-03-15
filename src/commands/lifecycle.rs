@@ -38,10 +38,10 @@ pub fn cmd_launch(
             runtime: None,
             mounts: instance_store::canonicalize_mounts(&resolved.mounts),
             project_dir,
-            disk_size: Some(resolved.disk_size.clone()),
+            disk_size: resolved.disk_size.clone(),
             cpus: resolved.cpus,
             memory_mib: resolved.memory,
-            port_specs: Some(resolved.ports.clone()),
+            port_specs: resolved.ports.clone(),
         },
     )?;
 
@@ -198,21 +198,15 @@ pub fn cmd_start(
     let mounts = state.mounts.clone();
 
     let step = ui::Step::start(&format!("Starting {instance}"));
-    let port_specs = state
-        .port_specs
-        .clone()
-        .or_else(|| config::load_project().ok().flatten().and_then(|c| c.ports))
-        .unwrap_or_default();
-    let disk_size = state.disk_size.clone().unwrap_or_else(|| "40G".into());
     let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
         mounts: &mounts,
-        disk_size: &disk_size,
+        disk_size: &state.disk_size,
         rebuild: false,
         cpus: state.cpus,
         memory_mib: state.memory_mib,
-        port_specs: &port_specs,
+        port_specs: &state.port_specs,
     })?;
     step.finish(&format!("Started {instance}"));
 
@@ -345,21 +339,15 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
 
     let step = ui::Step::start(&format!("Rebuilding {instance}"));
     let mounts = state.mounts.clone();
-    let port_specs = state
-        .port_specs
-        .clone()
-        .or_else(|| config::load_project().ok().flatten().and_then(|c| c.ports))
-        .unwrap_or_default();
-    let disk_size = state.disk_size.clone().unwrap_or_else(|| "40G".into());
     let runtime = vm_launch::provision(&vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
         mounts: &mounts,
-        disk_size: &disk_size,
+        disk_size: &state.disk_size,
         rebuild: true,
         cpus: state.cpus,
         memory_mib: state.memory_mib,
-        port_specs: &port_specs,
+        port_specs: &state.port_specs,
     })?;
     step.finish(&format!("Rebuilt {instance}"));
 
