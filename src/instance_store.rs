@@ -45,6 +45,14 @@ pub struct Runtime {
     pub ports: Vec<PortMapping>,
 }
 
+fn default_cpus() -> u32 {
+    1
+}
+
+fn default_memory_mib() -> u32 {
+    1024
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceState {
     pub target: String,
@@ -56,6 +64,12 @@ pub struct InstanceState {
     pub project_dir: Option<String>,
     #[serde(default)]
     pub disk_size: Option<String>,
+    #[serde(default = "default_cpus")]
+    pub cpus: u32,
+    #[serde(default = "default_memory_mib")]
+    pub memory_mib: u32,
+    #[serde(default)]
+    pub port_specs: Option<Vec<String>>,
 }
 
 pub fn state_dir() -> PathBuf {
@@ -267,6 +281,9 @@ mod tests {
             mounts: vec!["/a".into(), "/b".into()],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -283,6 +300,9 @@ mod tests {
             mounts: vec![],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -298,6 +318,9 @@ mod tests {
             mounts: vec!["/home".into(), "/opt".into()],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -313,6 +336,9 @@ mod tests {
             mounts: vec!["/home".into()],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         write_state(dir.path(), "myvm", &state);
 
@@ -337,6 +363,9 @@ mod tests {
             mounts: vec!["/mnt".into()],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -376,6 +405,9 @@ mod tests {
             mounts: vec![],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -398,6 +430,9 @@ mod tests {
             mounts: vec!["/mnt".into()],
             project_dir: None,
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -435,6 +470,9 @@ mod tests {
                     mounts: vec![],
                     project_dir: None,
                     disk_size: None,
+                    cpus: 0,
+                    memory_mib: 0,
+                    port_specs: None,
                 },
             );
         };
@@ -470,6 +508,9 @@ mod tests {
                 mounts: vec![],
                 project_dir: None,
                 disk_size: None,
+                cpus: 0,
+                memory_mib: 0,
+                port_specs: None,
             },
         );
         assert!(dir.path().join("vm1").exists());
@@ -496,6 +537,9 @@ mod tests {
             mounts: vec![],
             project_dir: Some("/home/user/myproject".into()),
             disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -522,6 +566,57 @@ mod tests {
         let json = serde_json::to_string(&rt).unwrap();
         let parsed: Runtime = serde_json::from_str(&json).unwrap();
         assert!(parsed.ssh_port.is_none());
+    }
+
+    #[test]
+    fn deserialize_missing_new_vm_param_fields() {
+        // epi-a93: existing state.json without cpus, memory_mib, port_specs should deserialize
+        let json = r#"{"target": ".#test", "mounts": [], "disk_size": "40G"}"#;
+        let state: InstanceState = serde_json::from_str(json).unwrap();
+        assert_eq!(state.target, ".#test");
+        assert_eq!(state.cpus, 1);
+        assert_eq!(state.memory_mib, 1024);
+        assert!(state.port_specs.is_none());
+    }
+
+    #[test]
+    fn state_with_cpus_and_memory_roundtrip() {
+        // epi-zeq: cpus and memory_mib persist in state
+        let state = InstanceState {
+            target: ".#dev".into(),
+            runtime: None,
+            mounts: vec![],
+            project_dir: None,
+            disk_size: Some("40G".into()),
+            cpus: 4,
+            memory_mib: 2048,
+            port_specs: None,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: InstanceState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.cpus, 4);
+        assert_eq!(parsed.memory_mib, 2048);
+    }
+
+    #[test]
+    fn state_with_port_specs_roundtrip() {
+        // epi-ch5: port_specs persist in state
+        let state = InstanceState {
+            target: ".#dev".into(),
+            runtime: None,
+            mounts: vec![],
+            project_dir: None,
+            disk_size: None,
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: Some(vec!["8080:80".into(), ":443".into()]),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: InstanceState = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.port_specs,
+            Some(vec!["8080:80".to_string(), ":443".to_string()])
+        );
     }
 
     #[test]
