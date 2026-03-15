@@ -46,7 +46,7 @@ A minimal set of CLI tests SHALL spawn the `epi` binary to verify that argument 
 
 #### Scenario: Help output is correct
 - **WHEN** a CLI smoke test runs `epi launch --help=plain`
-- **THEN** the output includes expected flags (`--target`, `--rebuild`, `--mount`, `--no-wait`)
+- **THEN** the output includes expected flags (`--target`, `--rebuild`, `--mount`, `--no-provision`)
 
 #### Scenario: Missing required arguments produce errors
 - **WHEN** a CLI smoke test runs `epi launch` without a `--target` flag and no existing instance

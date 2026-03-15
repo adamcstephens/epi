@@ -9,7 +9,7 @@ pub fn cmd_launch(
     resolved: &config::Resolved,
     attach_console: bool,
     rebuild: bool,
-    no_wait: bool,
+    no_provision: bool,
     wait_timeout: u64,
 ) -> Result<()> {
     // Check if already running
@@ -89,15 +89,15 @@ pub fn cmd_launch(
         )?;
     }
 
-    let no_wait = no_wait
-        || std::env::var("EPI_NO_WAIT")
+    let no_provision = no_provision
+        || std::env::var("EPI_NO_PROVISION")
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
     if attach_console {
         // Run SSH wait + hooks in background so console attaches immediately
         // Skip spinners — raw terminal mode would be corrupted
-        let wait_handle = if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
+        let wait_handle = if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
             let inst = instance.to_string();
             let key = ssh_key_path.clone();
             let tgt = resolved.target.clone();
@@ -123,7 +123,7 @@ pub fn cmd_launch(
         if let Some(handle) = wait_handle {
             let _ = handle.join();
         }
-    } else if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
+    } else if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
         let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -181,7 +181,7 @@ fn run_post_launch_hooks(
 pub fn cmd_start(
     instance: &str,
     attach_console: bool,
-    no_wait: bool,
+    no_provision: bool,
     wait_timeout: u64,
 ) -> Result<()> {
     if instance_store::instance_is_running(instance)? {
@@ -226,7 +226,7 @@ pub fn cmd_start(
         )?;
     }
 
-    if let Some(ssh_port) = ssh_port.filter(|_| !no_wait) {
+    if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
         let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
         ssh::wait_for_ssh(&config, instance, wait_timeout)?;
