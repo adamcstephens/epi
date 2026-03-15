@@ -7,7 +7,9 @@
 - Store resolved descriptor in state.json for self-contained instance state
 
 ### Fixed
+- `info`: Display disk size as GiB (e.g. "40 GiB") instead of raw qemu-img suffix, and label ssh port field as `ssh_port`
 - Canonicalize `state_dir()` and `cache_dir()` to absolute paths when env vars contain relative paths
+- `project_dir()` now returns the project root instead of the `.epi/` subdirectory
 
 ### Changed
 - Show only filenames during `cp` instead of per-file rsync progress summaries

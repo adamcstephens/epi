@@ -22,7 +22,7 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     println!("resources:");
     println!("  cpus:     {}", state.cpus);
     println!("  memory:   {} MiB", state.memory_mib);
-    println!("  disk:     {}", state.disk_size);
+    println!("  disk:     {}", format_disk_size(&state.disk_size));
 
     // Network
     if let Some(ref rt) = state.runtime {
@@ -32,7 +32,7 @@ pub fn cmd_info(instance: &str) -> Result<()> {
             println!();
             println!("network:");
             if let Some(port) = rt.ssh_port {
-                println!("  ssh:      {port}");
+                println!("  ssh_port: {port}");
                 let config = ssh::config_path(instance);
                 println!("  ssh_config: {}", strip_home(&config.to_string_lossy()));
             }
@@ -72,6 +72,20 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Format a qemu-img size string (e.g. "40G") for human display (e.g. "40 GiB").
+/// qemu-img uses powers of 1024 for K/M/G/T/P/E suffixes.
+fn format_disk_size(size: &str) -> String {
+    let suffixes = [('K', "KiB"), ('M', "MiB"), ('G', "GiB"), ('T', "TiB"), ('P', "PiB"), ('E', "EiB")];
+    if let Some(last) = size.chars().last() {
+        for (ch, label) in &suffixes {
+            if last == *ch {
+                return format!("{} {label}", &size[..size.len() - 1]);
+            }
+        }
+    }
+    size.to_string()
 }
 
 fn strip_home(path: &str) -> String {
@@ -186,4 +200,24 @@ pub fn cmd_ssh_config(instance: &str, print: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_disk_size_gib() {
+        assert_eq!(format_disk_size("40G"), "40 GiB");
+    }
+
+    #[test]
+    fn format_disk_size_mib() {
+        assert_eq!(format_disk_size("512M"), "512 MiB");
+    }
+
+    #[test]
+    fn format_disk_size_no_suffix() {
+        assert_eq!(format_disk_size("1024"), "1024");
+    }
 }
