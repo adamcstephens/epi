@@ -166,18 +166,6 @@ in
       description = "Kernel command line used by epi up cloud-hypervisor launch.";
     };
 
-    cpus = lib.mkOption {
-      type = lib.types.int;
-      default = 1;
-      description = "vCPU count used by epi up cloud-hypervisor launch.";
-    };
-
-    memory_mib = lib.mkOption {
-      type = lib.types.int;
-      default = 1024;
-      description = "Memory in MiB used by epi up cloud-hypervisor launch.";
-    };
-
     configuredUsers = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       readOnly = true;
@@ -211,8 +199,6 @@ in
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
       disk = "${config.system.build.image}/${config.image.baseName}.raw";
       cmdline = "console=ttyS0 console=hvc0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
-      cpus = 1;
-      memory_mib = 1024;
       configuredUsers = builtins.attrNames config.users.users;
     };
 

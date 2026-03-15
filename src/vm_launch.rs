@@ -42,8 +42,8 @@ pub struct ProvisionParams<'a> {
     pub mounts: &'a [String],
     pub disk_size: &'a str,
     pub rebuild: bool,
-    pub cpus_override: Option<u32>,
-    pub memory_override: Option<u32>,
+    pub cpus: u32,
+    pub memory_mib: u32,
     pub port_specs: &'a [String],
 }
 
@@ -60,8 +60,8 @@ pub fn provision(params: &ProvisionParams) -> Result<Runtime> {
         desc,
         mounts: params.mounts,
         disk_size: params.disk_size,
-        cpus: params.cpus_override.unwrap_or(desc.cpus),
-        memory_mib: params.memory_override.unwrap_or(desc.memory_mib),
+        cpus: params.cpus,
+        memory_mib: params.memory_mib,
         port_specs: params.port_specs,
     };
 

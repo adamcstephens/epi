@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use std::os::unix::process::CommandExt;
 
-use epi::{instance_store, ssh, target, ui};
+use epi::{instance_store, ssh, ui};
 
 pub fn cmd_info(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
@@ -17,16 +17,11 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     }
     println!("status:     {}", ui::status_dot(running));
 
-    // Resources — resolve from target descriptor cache
-    if let Ok(cache_result) = target::resolve_descriptor_cached(&state.target, false) {
-        let desc = cache_result.descriptor();
+    // Resources
+    if let Some(ref disk_size) = state.disk_size {
         println!();
         println!("resources:");
-        println!("  cpus:     {}", desc.cpus);
-        println!("  memory:   {} MiB", desc.memory_mib);
-        if let Some(ref disk_size) = state.disk_size {
-            println!("  disk:     {disk_size}");
-        }
+        println!("  disk:     {disk_size}");
     }
 
     // Network

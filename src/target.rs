@@ -24,10 +24,6 @@ pub struct Descriptor {
     pub initrd: Option<String>,
     #[serde(default = "default_cmdline")]
     pub cmdline: String,
-    #[serde(default = "default_cpus")]
-    pub cpus: u32,
-    #[serde(default = "default_memory_mib")]
-    pub memory_mib: u32,
     #[serde(default, alias = "configuredUsers")]
     pub configured_users: Vec<String>,
     #[serde(default)]
@@ -38,13 +34,6 @@ fn default_cmdline() -> String {
     "console=ttyS0 root=/dev/vda2 ro".to_string()
 }
 
-fn default_cpus() -> u32 {
-    1
-}
-
-fn default_memory_mib() -> u32 {
-    1024
-}
 
 impl HooksDescriptor {
     /// Sorted hook script paths for a given hook point.
@@ -169,13 +158,7 @@ pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
     Ok(())
 }
 
-pub fn validate_descriptor(desc: &Descriptor) -> Result<()> {
-    if desc.cpus == 0 {
-        bail!("descriptor cpus must be > 0");
-    }
-    if desc.memory_mib == 0 {
-        bail!("descriptor memory_mib must be > 0");
-    }
+pub fn validate_descriptor(_desc: &Descriptor) -> Result<()> {
     Ok(())
 }
 
@@ -326,56 +309,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_descriptor_rejects_zero_cpus() {
-        let desc = Descriptor {
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            initrd: None,
-            cmdline: "".into(),
-            cpus: 0,
-            memory_mib: 512,
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        assert!(validate_descriptor(&desc).is_err());
-    }
-
-    #[test]
-    fn validate_descriptor_rejects_zero_memory() {
-        let desc = Descriptor {
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            initrd: None,
-            cmdline: "".into(),
-            cpus: 2,
-            memory_mib: 0,
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        assert!(validate_descriptor(&desc).is_err());
-    }
-
-    #[test]
-    fn validate_descriptor_accepts_valid() {
-        let desc = Descriptor {
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            initrd: None,
-            cmdline: "".into(),
-            cpus: 2,
-            memory_mib: 1024,
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        assert!(validate_descriptor(&desc).is_ok());
-    }
-
-    #[test]
     fn descriptor_deserialize_defaults() {
         let json = r#"{"kernel": "/k", "disk": "/d"}"#;
         let desc: Descriptor = serde_json::from_str(json).unwrap();
-        assert_eq!(desc.cpus, 1);
-        assert_eq!(desc.memory_mib, 1024);
         assert_eq!(desc.cmdline, "console=ttyS0 root=/dev/vda2 ro");
         assert!(desc.initrd.is_none());
         assert!(desc.configured_users.is_empty());
@@ -388,8 +324,6 @@ mod tests {
             "disk": "/nix/store/abc/image.img",
             "initrd": "/nix/store/abc/initrd",
             "cmdline": "console=ttyS0",
-            "cpus": 4,
-            "memory_mib": 2048,
             "configured_users": ["root", "admin"],
             "hooks": {
                 "post_launch": {"00-hook": "/nix/store/hook1"},
@@ -397,8 +331,6 @@ mod tests {
             }
         }"#;
         let desc: Descriptor = serde_json::from_str(json).unwrap();
-        assert_eq!(desc.cpus, 4);
-        assert_eq!(desc.memory_mib, 2048);
         assert_eq!(desc.initrd.unwrap(), "/nix/store/abc/initrd");
         assert_eq!(desc.configured_users.len(), 2);
         assert_eq!(desc.hooks.post_launch.len(), 1);
@@ -437,14 +369,11 @@ mod tests {
             disk: "/d".into(),
             initrd: Some("/i".into()),
             cmdline: "boot".into(),
-            cpus: 2,
-            memory_mib: 1024,
             configured_users: vec!["root".into()],
             hooks: HooksDescriptor::default(),
         };
         let json = serde_json::to_string(&desc).unwrap();
         let parsed: Descriptor = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.kernel, desc.kernel);
-        assert_eq!(parsed.cpus, desc.cpus);
     }
 }
