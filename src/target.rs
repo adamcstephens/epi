@@ -321,13 +321,14 @@ fn descriptor_store_paths(desc: &Descriptor) -> Vec<&str> {
 // --- Caching ---
 
 fn cache_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("EPI_CACHE_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".cache/epi");
-    }
-    PathBuf::from(".epi/cache")
+    let path = if let Ok(dir) = std::env::var("EPI_CACHE_DIR") {
+        PathBuf::from(dir)
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".cache/epi")
+    } else {
+        PathBuf::from(".epi/cache")
+    };
+    std::path::absolute(&path).unwrap_or(path)
 }
 
 fn target_cache_path(target: &str) -> PathBuf {
@@ -603,5 +604,14 @@ mod tests {
         let json = serde_json::to_string(&desc).unwrap();
         let parsed: Descriptor = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.kernel, desc.kernel);
+    }
+
+    #[test]
+    fn cache_dir_returns_absolute_path() {
+        let dir = cache_dir();
+        assert!(
+            dir.is_absolute(),
+            "cache_dir() returned relative path: {dir:?}"
+        );
     }
 }
