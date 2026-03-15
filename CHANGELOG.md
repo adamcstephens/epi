@@ -8,6 +8,7 @@
 
 ### Changed
 - Show only filenames during `cp` instead of per-file rsync progress summaries
+- `info`: Show cpu/memory in resources, ssh port only (not full command), ssh_config path, full slice name, console log path, and tilde-shorten all paths
 
 ## [0.6.0] - 2026-03-15
 

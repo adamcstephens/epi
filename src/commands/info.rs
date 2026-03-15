@@ -20,6 +20,8 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     // Resources
     println!();
     println!("resources:");
+    println!("  cpus:     {}", state.cpus);
+    println!("  memory:   {} MiB", state.memory_mib);
     println!("  disk:     {}", state.disk_size);
 
     // Network
@@ -30,7 +32,9 @@ pub fn cmd_info(instance: &str) -> Result<()> {
             println!();
             println!("network:");
             if let Some(port) = rt.ssh_port {
-                println!("  ssh:      ssh -p {port} root@127.0.0.1");
+                println!("  ssh:      {port}");
+                let config = ssh::config_path(instance);
+                println!("  ssh_config: {}", strip_home(&config.to_string_lossy()));
             }
             if has_ports {
                 for (i, pm) in rt.ports.iter().enumerate() {
@@ -55,11 +59,13 @@ pub fn cmd_info(instance: &str) -> Result<()> {
 
     // Runtime
     if let Some(ref rt) = state.runtime {
+        let slice = instance_store::slice_name(instance, &rt.unit_id)?;
         println!();
         println!("runtime:");
-        println!("  serial:   {}", rt.serial_socket);
-        println!("  disk:     {}", rt.disk);
-        println!("  unit id:  {}", rt.unit_id);
+        println!("  slice:    {}", slice);
+        println!("  serial:   {}", strip_home(&rt.serial_socket));
+        println!("  disk:     {}", strip_home(&rt.disk));
+        println!("  console:  {}", strip_home(&instance_store::console_log_path(instance).to_string_lossy()));
     }
 
     Ok(())
