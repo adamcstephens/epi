@@ -9,6 +9,8 @@
 - Switch shell completions to dynamic clap_complete for instance name tab-completion
 - Persist all resolved VM params (cpus, memory, disk_size, port_specs) in instance state; start/rebuild read stored values directly
 
+## [0.4.1] - 2026-03-14
+
 ### Fixed
 - Fix virtiofsd mount permission issues by switching to `--sandbox none` and removing uid/gid mapping flags
 
