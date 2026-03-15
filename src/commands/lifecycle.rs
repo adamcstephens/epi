@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use epi::{config, console, hooks, instance_store, ssh, target, ui, vm_launch};
+use epi::{config, console, gcroots, hooks, instance_store, ssh, target, ui, vm_launch};
 
 use super::info::cmd_info;
 
@@ -42,6 +42,7 @@ pub fn cmd_launch(
             cpus: resolved.cpus,
             memory_mib: resolved.memory,
             port_specs: resolved.ports.clone(),
+            descriptor: None,
         },
     )?;
 
@@ -56,7 +57,7 @@ pub fn cmd_launch(
         port_specs: &resolved.ports,
     };
 
-    let runtime = match prepare_and_provision(&params) {
+    let (runtime, descriptor) = match prepare_and_provision(&params) {
         Ok(r) => r,
         Err(e) => {
             if pre_existing {
@@ -71,7 +72,7 @@ pub fn cmd_launch(
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;
 
-    instance_store::set_provisioned(instance, runtime)?;
+    instance_store::set_provisioned(instance, runtime, Some(descriptor))?;
 
     // Write SSH config immediately — port and key are known
     if let Some(ssh_port) = ssh_port {
@@ -150,7 +151,9 @@ pub fn cmd_launch(
     Ok(())
 }
 
-fn prepare_and_provision(params: &vm_launch::ProvisionParams) -> Result<instance_store::Runtime> {
+fn prepare_and_provision(
+    params: &vm_launch::ProvisionParams,
+) -> Result<(instance_store::Runtime, target::Descriptor)> {
     let group = ui::Group::start("Preparing");
 
     // Resolve target descriptor
@@ -161,12 +164,12 @@ fn prepare_and_provision(params: &vm_launch::ProvisionParams) -> Result<instance
             return Err(e);
         }
     };
-    let desc = cache_result.descriptor();
+    let desc = cache_result.descriptor().clone();
 
-    target::validate_descriptor(desc)?;
+    target::validate_descriptor(&desc)?;
 
     // Build missing artifacts individually
-    let missing = target::missing_artifacts(desc);
+    let missing = target::missing_artifacts(&desc);
     for artifact in &missing {
         let dim = ::console::Style::new().for_stderr().dim();
         let label = format!(
@@ -190,16 +193,19 @@ fn prepare_and_provision(params: &vm_launch::ProvisionParams) -> Result<instance
     }
 
     // Build hook store paths if needed
-    target::ensure_hook_paths(params.target_str, desc)?;
+    target::ensure_hook_paths(params.target_str, &desc)?;
+
+    // Create GC roots to prevent nix-collect-garbage from sweeping store paths
+    gcroots::create(params.instance_name, &desc)?;
 
     group.finish("Prepared");
 
     // Launch VM
     let step = ui::Step::start(&format!("Launching {}", params.instance_name));
-    match vm_launch::provision_with_descriptor(params, desc) {
+    match vm_launch::provision_with_descriptor(params, &desc) {
         Ok(r) => {
             step.finish(&format!("Launched {}", params.instance_name));
-            Ok(r)
+            Ok((r, desc))
         }
         Err(e) => {
             step.fail(&format!("Launching {} failed", params.instance_name));
@@ -267,8 +273,32 @@ pub fn cmd_start(
     let state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found — use 'launch' first"))?;
 
-    let mounts = state.mounts.clone();
+    // Use stored descriptor if available, otherwise resolve fresh
+    let desc = match state.descriptor {
+        Some(desc) => {
+            ui::info(&format!("using stored descriptor for {}", state.target));
+            desc
+        }
+        None => {
+            let cache_result = target::resolve_descriptor_cached(&state.target, false)?;
+            cache_result.descriptor().clone()
+        }
+    };
 
+    target::validate_descriptor(&desc)?;
+
+    // Build any missing artifacts
+    let missing = target::missing_artifacts(&desc);
+    for artifact in &missing {
+        target::build_artifact(&state.target, artifact)?;
+    }
+    target::ensure_hook_paths(&state.target, &desc)?;
+
+    // Create GC roots
+    gcroots::create(instance, &desc)?;
+
+    // Launch VM
+    let mounts = state.mounts.clone();
     let params = vm_launch::ProvisionParams {
         instance_name: instance,
         target_str: &state.target,
@@ -279,12 +309,23 @@ pub fn cmd_start(
         memory_mib: state.memory_mib,
         port_specs: &state.port_specs,
     };
-    let runtime = prepare_and_provision(&params)?;
+
+    let step = ui::Step::start(&format!("Launching {instance}"));
+    let runtime = match vm_launch::provision_with_descriptor(&params, &desc) {
+        Ok(r) => {
+            step.finish(&format!("Launched {instance}"));
+            r
+        }
+        Err(e) => {
+            step.fail(&format!("Launching {instance} failed"));
+            return Err(e);
+        }
+    };
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;
 
-    instance_store::set_provisioned(instance, runtime)?;
+    instance_store::set_provisioned(instance, runtime, Some(desc))?;
 
     if let Some(ssh_port) = ssh_port {
         ssh::generate_config(
@@ -419,12 +460,12 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         memory_mib: state.memory_mib,
         port_specs: &state.port_specs,
     };
-    let runtime = prepare_and_provision(&params)?;
+    let (runtime, descriptor) = prepare_and_provision(&params)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_port = runtime.ssh_port;
 
-    instance_store::set_provisioned(instance, runtime)?;
+    instance_store::set_provisioned(instance, runtime, Some(descriptor))?;
 
     if let Some(ssh_port) = ssh_port {
         ssh::generate_config(

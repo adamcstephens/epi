@@ -85,6 +85,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
             cpus: resolved.cpus,
             memory_mib: resolved.memory,
             port_specs: resolved.ports.clone(),
+            descriptor: None,
         },
     )
     .expect("save_state failed");
@@ -101,7 +102,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
     })
     .expect("provision failed");
 
-    instance_store::set_provisioned(name, runtime.clone()).expect("set_provisioned failed");
+    instance_store::set_provisioned(name, runtime.clone(), None).expect("set_provisioned failed");
 
     let ssh_port = runtime.ssh_port.expect("no ssh port");
     ssh::generate_config(
@@ -348,6 +349,7 @@ fn e2e_mount() {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         },
     )
     .unwrap();
@@ -364,7 +366,7 @@ fn e2e_mount() {
     })
     .expect("provision failed");
 
-    instance_store::set_provisioned(&name, runtime.clone()).unwrap();
+    instance_store::set_provisioned(&name, runtime.clone(), None).unwrap();
 
     let ssh_port = runtime.ssh_port.expect("no ssh port");
     ssh::generate_config(

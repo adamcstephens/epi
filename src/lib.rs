@@ -2,6 +2,7 @@ pub mod cloud_hypervisor;
 pub mod config;
 pub mod console;
 pub mod cp;
+pub mod gcroots;
 pub mod hooks;
 pub mod instance_store;
 pub mod process;

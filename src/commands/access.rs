@@ -93,7 +93,14 @@ pub fn cmd_cp(source: &str, dest: &str) -> Result<()> {
     };
 
     let err = std::process::Command::new("rsync")
-        .args(["-a", "--info=name1", "-e", &ssh_cmd, &rsync_src, &rsync_dest])
+        .args([
+            "-a",
+            "--info=name1",
+            "-e",
+            &ssh_cmd,
+            &rsync_src,
+            &rsync_dest,
+        ])
         .exec();
 
     bail!("failed to exec rsync: {err}");

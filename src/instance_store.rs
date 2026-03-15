@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::process;
+use crate::target;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortMapping {
@@ -74,6 +75,8 @@ pub struct InstanceState {
     pub memory_mib: u32,
     #[serde(default)]
     pub port_specs: Vec<String>,
+    #[serde(default)]
+    pub descriptor: Option<target::Descriptor>,
 }
 
 pub fn state_dir() -> PathBuf {
@@ -151,10 +154,17 @@ pub fn set_partial_runtime(name: &str, unit_id: &str) -> Result<()> {
     save_state(name, &state)
 }
 
-pub fn set_provisioned(name: &str, runtime: Runtime) -> Result<()> {
+pub fn set_provisioned(
+    name: &str,
+    runtime: Runtime,
+    descriptor: Option<target::Descriptor>,
+) -> Result<()> {
     let mut state =
         load_state(name)?.ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
     state.runtime = Some(runtime);
+    if let Some(desc) = descriptor {
+        state.descriptor = Some(desc);
+    }
     save_state(name, &state)
 }
 
@@ -288,6 +298,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -307,6 +318,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -325,6 +337,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -343,6 +356,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         write_state(dir.path(), "myvm", &state);
 
@@ -370,6 +384,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -412,6 +427,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -437,6 +453,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -477,6 +494,7 @@ mod tests {
                     cpus: 0,
                     memory_mib: 0,
                     port_specs: vec![],
+                    descriptor: None,
                 },
             );
         };
@@ -515,6 +533,7 @@ mod tests {
                 cpus: 0,
                 memory_mib: 0,
                 port_specs: vec![],
+                descriptor: None,
             },
         );
         assert!(dir.path().join("vm1").exists());
@@ -544,6 +563,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -595,6 +615,7 @@ mod tests {
             cpus: 4,
             memory_mib: 2048,
             port_specs: vec![],
+            descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -614,6 +635,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec!["8080:80".into(), ":443".into()],
+            descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -698,5 +720,53 @@ mod tests {
         let json = r#"{"unit_id":"abc","serial_socket":"/s","disk":"/d","ssh_port":2222,"ssh_key_path":"/k"}"#;
         let parsed: Runtime = serde_json::from_str(json).unwrap();
         assert!(parsed.ports.is_empty());
+    }
+
+    #[test]
+    fn state_with_descriptor_roundtrip() {
+        use crate::target::{Descriptor, HooksDescriptor};
+        use std::collections::BTreeMap;
+
+        let mut post_launch = BTreeMap::new();
+        post_launch.insert("00-hook".into(), "/nix/store/hook1/script".into());
+
+        let desc = Descriptor {
+            kernel: "/nix/store/abc-kernel/bzImage".into(),
+            disk: "/nix/store/def-image/image.img".into(),
+            initrd: Some("/nix/store/ghi-initrd/initrd".into()),
+            cmdline: "console=ttyS0 root=/dev/vda2 ro".into(),
+            configured_users: vec!["root".into()],
+            hooks: HooksDescriptor {
+                post_launch,
+                pre_stop: BTreeMap::new(),
+                guest_init: BTreeMap::new(),
+            },
+        };
+
+        let state = InstanceState {
+            target: ".#dev".into(),
+            runtime: None,
+            mounts: vec![],
+            project_dir: None,
+            disk_size: String::new(),
+            cpus: 0,
+            memory_mib: 0,
+            port_specs: vec![],
+            descriptor: Some(desc),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: InstanceState = serde_json::from_str(&json).unwrap();
+        let d = parsed.descriptor.unwrap();
+        assert_eq!(d.kernel, "/nix/store/abc-kernel/bzImage");
+        assert_eq!(d.disk, "/nix/store/def-image/image.img");
+        assert_eq!(d.initrd.unwrap(), "/nix/store/ghi-initrd/initrd");
+        assert_eq!(d.hooks.post_launch.len(), 1);
+    }
+
+    #[test]
+    fn state_without_descriptor_deserializes_none() {
+        let json = r#"{"target": ".#test", "mounts": []}"#;
+        let state: InstanceState = serde_json::from_str(json).unwrap();
+        assert!(state.descriptor.is_none());
     }
 }

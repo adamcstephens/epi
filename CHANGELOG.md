@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Create nix GC roots for instance store paths (kernel, disk, initrd, hooks) to prevent `nix-collect-garbage` from breaking stopped instances
+- Store resolved descriptor in state.json for self-contained instance state
+
 ### Changed
 - Show only filenames during `cp` instead of per-file rsync progress summaries
 
