@@ -107,25 +107,8 @@ pub fn save_state(name: &str, state: &InstanceState) -> Result<()> {
     Ok(())
 }
 
-pub fn save_target(name: &str, target: &str) -> Result<()> {
-    let state = InstanceState {
-        target: target.to_string(),
-        runtime: None,
-        mounts: vec![],
-        project_dir: None,
-        disk_size: None,
-    };
-    save_state(name, &state)
-}
-
-pub fn set_launching(
-    name: &str,
-    target: &str,
-    mounts: Vec<String>,
-    project_dir: Option<String>,
-    disk_size: Option<String>,
-) -> Result<()> {
-    let canonical_mounts: Vec<String> = mounts
+pub fn canonicalize_mounts(mounts: &[String]) -> Vec<String> {
+    mounts
         .iter()
         .map(|m| {
             std::path::Path::new(m)
@@ -133,15 +116,7 @@ pub fn set_launching(
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| m.clone())
         })
-        .collect();
-    let state = InstanceState {
-        target: target.to_string(),
-        runtime: None,
-        mounts: canonical_mounts,
-        project_dir,
-        disk_size,
-    };
-    save_state(name, &state)
+        .collect()
 }
 
 pub fn set_partial_runtime(name: &str, unit_id: &str) -> Result<()> {
