@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** Rename `--no-wait` flag to `--no-provision` (and `EPI_NO_WAIT` env var to `EPI_NO_PROVISION`)
+
 ## [0.5.0] - 2026-03-14
 
 ### Changed

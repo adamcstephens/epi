@@ -2,7 +2,7 @@
 Define the CLI surface for managing development VM instances, including creation, lifecycle operations, and instance inventory.
 ## Requirements
 ### Requirement: Launch command creates or starts an instance from a target
-The CLI SHALL provide a `launch` command that accepts an optional positional instance name and an optional `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use the `default_name` from config, falling back to `default` if not configured. If `--target` is omitted, the CLI SHALL look for a `target` value in the project config file (`.epi/config.toml`). If neither CLI nor config provides a target, the CLI MUST exit non-zero with an error message explaining both ways to provide a target. The command SHALL accept `--no-wait` to skip SSH polling, `--wait-timeout` to configure the SSH wait duration, `--cpus` to override the descriptor CPU count, and `--memory` to override the descriptor memory size.
+The CLI SHALL provide a `launch` command that accepts an optional positional instance name and an optional `--target <flake#config>` option. If the instance name is omitted, the CLI MUST use the `default_name` from config, falling back to `default` if not configured. If `--target` is omitted, the CLI SHALL look for a `target` value in the project config file (`.epi/config.toml`). If neither CLI nor config provides a target, the CLI MUST exit non-zero with an error message explaining both ways to provide a target. The command SHALL accept `--no-provision` to skip post-launch provisioning (SSH wait, host key trust, hooks), `--wait-timeout` to configure the SSH wait duration, `--cpus` to override the descriptor CPU count, and `--memory` to override the descriptor memory size.
 
 During launch, the CLI SHALL show step-based progress output on stderr: a spinner during provisioning with elapsed time, and a spinner during SSH wait with elapsed time. On completion, the CLI SHALL display a success message with the SSH port. When `--console` is active, the CLI SHALL skip spinners (to avoid corrupting raw terminal mode) and use plain text messages instead.
 
@@ -29,8 +29,8 @@ During launch, the CLI SHALL show step-based progress output on stderr: a spinne
 - **WHEN** a user runs `epi launch --memory 4096`
 - **THEN** the VM is launched with 4096 MiB of memory regardless of the descriptor value
 
-#### Scenario: --no-wait flag skips SSH polling
-- **WHEN** a user runs `epi launch dev-a --target .#dev-a --no-wait`
+#### Scenario: --no-provision flag skips post-launch provisioning
+- **WHEN** a user runs `epi launch dev-a --target .#dev-a --no-provision`
 - **THEN** the command returns after the VM process is verified running
 - **AND** no SSH polling is performed
 

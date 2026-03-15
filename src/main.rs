@@ -76,9 +76,9 @@ enum Command {
         #[arg(long)]
         no_project_mount: bool,
 
-        /// Return immediately without waiting for SSH
+        /// Skip post-launch provisioning (SSH wait, host key trust, hooks)
         #[arg(long)]
-        no_wait: bool,
+        no_provision: bool,
 
         /// Max seconds to wait for SSH
         #[arg(long, default_value_t = 120)]
@@ -95,9 +95,9 @@ enum Command {
         #[arg(long)]
         console: bool,
 
-        /// Return immediately without waiting for SSH
+        /// Skip post-launch provisioning (SSH wait, host key trust, hooks)
         #[arg(long)]
-        no_wait: bool,
+        no_provision: bool,
 
         /// Max seconds to wait for SSH
         #[arg(long, default_value_t = 120)]
@@ -243,7 +243,7 @@ fn run(command: Command) -> Result<()> {
             memory,
             port,
             no_project_mount,
-            no_wait,
+            no_provision,
             wait_timeout,
         } => {
             let instance = resolve_instance_name(instance)?;
@@ -263,18 +263,18 @@ fn run(command: Command) -> Result<()> {
                 &resolved,
                 console,
                 rebuild,
-                no_wait,
+                no_provision,
                 wait_timeout,
             )
         }
         Command::Start {
             instance,
             console,
-            no_wait,
+            no_provision,
             wait_timeout,
         } => {
             let instance = resolve_instance_name(instance)?;
-            commands::cmd_start(&instance, console, no_wait, wait_timeout)
+            commands::cmd_start(&instance, console, no_provision, wait_timeout)
         }
         Command::Stop { instance } => commands::cmd_stop(&resolve_instance_name(instance)?),
         Command::Info { instance } => commands::cmd_info(&resolve_instance_name(instance)?),

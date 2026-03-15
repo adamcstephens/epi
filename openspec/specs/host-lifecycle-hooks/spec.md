@@ -61,9 +61,9 @@ The `post-launch` hook point SHALL execute host-side hook scripts after the VM's
 - **AND** `.epi/hooks/post-launch.d/setup.sh` exists and is executable
 - **THEN** `setup.sh` runs after SSH is confirmed ready
 
-#### Scenario: Post-launch hooks do not run with --no-wait
-- **WHEN** a user runs `epi launch dev --target .#dev --no-wait`
-- **THEN** post-launch hooks do NOT run (SSH readiness is not confirmed)
+#### Scenario: Post-launch hooks do not run with --no-provision
+- **WHEN** a user runs `epi launch dev --target .#dev --no-provision`
+- **THEN** post-launch hooks do NOT run (post-launch provisioning is skipped)
 
 ### Requirement: Pre-stop hooks run before VM termination
 The `pre-stop` hook point SHALL execute host-side hook scripts before the VM's systemd units are stopped. Scripts are discovered from `pre-stop.d/` directories.
