@@ -53,9 +53,11 @@
           {
             devShells.default = pkgs.mkShell {
               packages = [
+                pkgs.beans
+                pkgs.just
+
                 self'.packages.cloud-hypervisor
                 pkgs.jq
-                pkgs.just
                 pkgs.nixfmt
                 pkgs.openssh
                 pkgs.passt
