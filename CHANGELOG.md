@@ -4,6 +4,7 @@
 
 ### Added
 - `ssh`: Auto-cd into project directory when connecting to a project instance via `RemoteCommand`
+- `hooks`: Pass `EPI_PROJECT_DIR` environment variable to post-launch and pre-stop hooks
 - Create nix GC roots for instance store paths (kernel, disk, initrd, hooks) to prevent `nix-collect-garbage` from breaking stopped instances
 - Store resolved descriptor in state.json for self-contained instance state
 

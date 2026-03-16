@@ -11,6 +11,7 @@ pub struct HookEnv {
     pub ssh_key_path: String,
     pub ssh_user: String,
     pub state_dir: String,
+    pub project_dir: Option<String>,
 }
 
 fn user_hooks_dir() -> PathBuf {
@@ -112,7 +113,7 @@ pub fn execute(env: &HookEnv, scripts: &[PathBuf]) -> Result<()> {
         .unwrap_or_else(|_| "epi".to_string());
 
     let port_str = env.ssh_port.to_string();
-    let env_vars: Vec<(&str, &str)> = vec![
+    let mut env_vars: Vec<(&str, &str)> = vec![
         ("EPI_INSTANCE", &env.instance_name),
         ("EPI_SSH_PORT", &port_str),
         ("EPI_SSH_KEY", &env.ssh_key_path),
@@ -120,6 +121,9 @@ pub fn execute(env: &HookEnv, scripts: &[PathBuf]) -> Result<()> {
         ("EPI_STATE_DIR", &env.state_dir),
         ("EPI_BIN", &epi_bin),
     ];
+    if let Some(ref dir) = env.project_dir {
+        env_vars.push(("EPI_PROJECT_DIR", dir));
+    }
 
     for script in scripts {
         let script_str = script.to_string_lossy();
@@ -241,11 +245,68 @@ mod tests {
             ssh_key_path: "/tmp/key".into(),
             ssh_user: "root".into(),
             state_dir: "/tmp/state".into(),
+            project_dir: None,
         };
         execute(&env, &[script1, script2]).unwrap();
 
         let output = fs::read_to_string(&log).unwrap();
         assert_eq!(output.trim(), "first\nsecond");
+    }
+
+    #[test]
+    fn execute_passes_project_dir_env() {
+        let dir = TempDir::new().unwrap();
+        let log = dir.path().join("log.txt");
+        let log_path = log.to_string_lossy();
+
+        let script = dir.path().join("check.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$EPI_PROJECT_DIR\" > {log_path}\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let env = HookEnv {
+            instance_name: "test".into(),
+            ssh_port: 2222,
+            ssh_key_path: "/tmp/key".into(),
+            ssh_user: "root".into(),
+            state_dir: "/tmp/state".into(),
+            project_dir: Some("/home/user/myproject".into()),
+        };
+        execute(&env, &[script]).unwrap();
+
+        let output = fs::read_to_string(&log).unwrap();
+        assert_eq!(output.trim(), "/home/user/myproject");
+    }
+
+    #[test]
+    fn execute_omits_project_dir_when_none() {
+        let dir = TempDir::new().unwrap();
+        let log = dir.path().join("log.txt");
+        let log_path = log.to_string_lossy();
+
+        let script = dir.path().join("check.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"${{EPI_PROJECT_DIR:-unset}}\" > {log_path}\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let env = HookEnv {
+            instance_name: "test".into(),
+            ssh_port: 2222,
+            ssh_key_path: "/tmp/key".into(),
+            ssh_user: "root".into(),
+            state_dir: "/tmp/state".into(),
+            project_dir: None,
+        };
+        execute(&env, &[script]).unwrap();
+
+        let output = fs::read_to_string(&log).unwrap();
+        assert_eq!(output.trim(), "unset");
     }
 
     #[test]
@@ -261,6 +322,7 @@ mod tests {
             ssh_key_path: "/tmp/key".into(),
             ssh_user: "root".into(),
             state_dir: "/tmp/state".into(),
+            project_dir: None,
         };
         let result = execute(&env, &[script]);
         assert!(result.is_err());

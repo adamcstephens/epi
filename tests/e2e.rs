@@ -446,6 +446,7 @@ fn e2e_hooks() {
         ssh_key_path: runtime.ssh_key_path.clone(),
         ssh_user: "root".to_string(),
         state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+        project_dir: None,
     };
     hooks::execute(&env, &hook_scripts).expect("hook execution failed");
 

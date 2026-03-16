@@ -117,7 +117,7 @@ pub fn cmd_launch(
                     pdir.as_deref(),
                 )?;
                 eprintln!("instance {inst} is ready (ssh port {ssh_port})");
-                run_post_launch_hooks(&inst, &tgt, ssh_port, &key)?;
+                run_post_launch_hooks(&inst, &tgt, ssh_port, &key, pdir)?;
                 Ok(())
             }))
         } else {
@@ -155,7 +155,13 @@ pub fn cmd_launch(
             project_dir_ref.as_deref(),
         )?;
 
-        run_post_launch_hooks(instance, &resolved.target, ssh_port, &ssh_key_path)?;
+        run_post_launch_hooks(
+            instance,
+            &resolved.target,
+            ssh_port,
+            &ssh_key_path,
+            project_dir_ref,
+        )?;
     }
 
     Ok(())
@@ -247,6 +253,7 @@ fn run_post_launch_hooks(
     target_str: &str,
     ssh_port: u16,
     ssh_key_path: &str,
+    project_dir: Option<String>,
 ) -> Result<()> {
     let desc_hooks = target::resolve_descriptor_cached(target_str, false)
         .map(|c| c.descriptor().hooks.post_launch_scripts())
@@ -260,6 +267,7 @@ fn run_post_launch_hooks(
             ssh_key_path: ssh_key_path.to_string(),
             ssh_user: ssh::user(),
             state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+            project_dir,
         };
         hooks::execute(&env, &hook_scripts)?;
     }
@@ -404,6 +412,7 @@ pub fn cmd_stop(instance: &str) -> Result<()> {
                 ssh_key_path: rt.ssh_key_path.clone(),
                 ssh_user: ssh::user(),
                 state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+                project_dir: st.project_dir.clone(),
             };
             hooks::execute(&env, &hook_scripts)?;
         }
@@ -520,6 +529,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
                 ssh_key_path,
                 ssh_user: ssh::user(),
                 state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+                project_dir: state.project_dir.clone(),
             };
             hooks::execute(&env, &hook_scripts)?;
         }
