@@ -31,6 +31,7 @@ pub fn cmd_launch(
 
     let pre_existing = instance_store::find(instance)?.is_some();
     let project_dir = config::project_dir()?;
+    let project_dir_ref = project_dir.clone();
     instance_store::save_state(
         instance,
         &instance_store::InstanceState {
@@ -83,6 +84,7 @@ pub fn cmd_launch(
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
+            project_dir_ref.as_deref(),
         )?;
     }
 
@@ -98,6 +100,7 @@ pub fn cmd_launch(
             let inst = instance.to_string();
             let key = ssh_key_path.clone();
             let tgt = resolved.target.clone();
+            let pdir = project_dir_ref.clone();
             let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -106,7 +109,13 @@ pub fn cmd_launch(
                 let config = ssh::config_path(&inst);
                 eprintln!("waiting for SSH on port {ssh_port}...");
                 ssh::wait_for_ssh(&config, &inst, timeout)?;
-                ssh::trust_host_key(&inst, ssh_port, &ssh::user(), std::path::Path::new(&key))?;
+                ssh::trust_host_key(
+                    &inst,
+                    ssh_port,
+                    &ssh::user(),
+                    std::path::Path::new(&key),
+                    pdir.as_deref(),
+                )?;
                 eprintln!("instance {inst} is ready (ssh port {ssh_port})");
                 run_post_launch_hooks(&inst, &tgt, ssh_port, &key)?;
                 Ok(())
@@ -143,6 +152,7 @@ pub fn cmd_launch(
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
+            project_dir_ref.as_deref(),
         )?;
 
         run_post_launch_hooks(instance, &resolved.target, ssh_port, &ssh_key_path)?;
@@ -335,6 +345,7 @@ pub fn cmd_start(
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
+            state.project_dir.as_deref(),
         )?;
     }
 
@@ -351,6 +362,7 @@ pub fn cmd_start(
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
+            state.project_dir.as_deref(),
         )?;
     }
 
@@ -475,6 +487,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
+            state.project_dir.as_deref(),
         )?;
     }
 
@@ -491,6 +504,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
+            state.project_dir.as_deref(),
         )?;
 
         // Run post-launch hooks

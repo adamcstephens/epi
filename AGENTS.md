@@ -2,6 +2,16 @@
 - **IMPORTANT**: before you do anything else, run the `beans prime` command and heed its output.
 - Always use red/green TDD when implementing
 
+## Definition of done
+- lints pass
+- tests pass
+- changelog updated
+- ticket marked done
+- code committed with all ticket changes included
+  - Ticket ID in the body
+  - Co-Authored-By line always included
+  - Use jj commit, never git commit
+
 ## Code style
 - Avoid abstractions
 - Avoid wrapping single expressions in standalone functions

@@ -77,7 +77,14 @@ pub fn cmd_info(instance: &str) -> Result<()> {
 /// Format a qemu-img size string (e.g. "40G") for human display (e.g. "40 GiB").
 /// qemu-img uses powers of 1024 for K/M/G/T/P/E suffixes.
 fn format_disk_size(size: &str) -> String {
-    let suffixes = [('K', "KiB"), ('M', "MiB"), ('G', "GiB"), ('T', "TiB"), ('P', "PiB"), ('E', "EiB")];
+    let suffixes = [
+        ('K', "KiB"),
+        ('M', "MiB"),
+        ('G', "GiB"),
+        ('T', "TiB"),
+        ('P', "PiB"),
+        ('E', "EiB"),
+    ];
     if let Some(last) = size.chars().last() {
         for (ch, label) in &suffixes {
             if last == *ch {
