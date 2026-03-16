@@ -170,6 +170,25 @@ impl Artifact {
     }
 }
 
+/// Return all artifacts referenced by the descriptor.
+pub fn all_artifacts(desc: &Descriptor) -> Vec<Artifact> {
+    let mut artifacts = vec![Artifact {
+        kind: ArtifactKind::Kernel,
+        store_path: desc.kernel.clone(),
+    }];
+    if let Some(ref initrd) = desc.initrd {
+        artifacts.push(Artifact {
+            kind: ArtifactKind::Initrd,
+            store_path: initrd.clone(),
+        });
+    }
+    artifacts.push(Artifact {
+        kind: ArtifactKind::Image,
+        store_path: desc.disk.clone(),
+    });
+    artifacts
+}
+
 /// Return artifacts from the descriptor whose store paths are missing.
 pub fn missing_artifacts(desc: &Descriptor) -> Vec<Artifact> {
     let mut missing = Vec::new();
@@ -613,5 +632,38 @@ mod tests {
             dir.is_absolute(),
             "cache_dir() returned relative path: {dir:?}"
         );
+    }
+
+    #[test]
+    fn all_artifacts_with_initrd() {
+        let desc = Descriptor {
+            kernel: "/k".into(),
+            disk: "/d".into(),
+            initrd: Some("/i".into()),
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+        let arts = all_artifacts(&desc);
+        assert_eq!(arts.len(), 3);
+        assert_eq!(arts[0].kind, ArtifactKind::Kernel);
+        assert_eq!(arts[1].kind, ArtifactKind::Initrd);
+        assert_eq!(arts[2].kind, ArtifactKind::Image);
+    }
+
+    #[test]
+    fn all_artifacts_without_initrd() {
+        let desc = Descriptor {
+            kernel: "/k".into(),
+            disk: "/d".into(),
+            initrd: None,
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+        let arts = all_artifacts(&desc);
+        assert_eq!(arts.len(), 2);
+        assert_eq!(arts[0].kind, ArtifactKind::Kernel);
+        assert_eq!(arts[1].kind, ArtifactKind::Image);
     }
 }
