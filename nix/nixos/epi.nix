@@ -122,6 +122,30 @@ let
     '';
   };
 
+  epiSshEntry = pkgs.writeShellApplication {
+    name = "epi-ssh-entry";
+
+    bashOptions = [ ];
+
+    runtimeInputs = [ ];
+
+    text = ''
+      PROJECT_DIR="''${1:-}"
+
+      if [ -z "$PROJECT_DIR" ]; then
+        exec "$SHELL" -l
+      fi
+
+      if [ ! -d "$PROJECT_DIR" ]; then
+        echo "warning: project directory $PROJECT_DIR does not exist in guest" >&2
+        exec "$SHELL" -l
+      fi
+
+      cd "$PROJECT_DIR" || exit
+      exec "$SHELL" -l
+    '';
+  };
+
   imageStorePaths = [ config.system.build.toplevel ] ++ cfg.extraStorePaths;
 
   closureInfo = pkgs.closureInfo {
@@ -208,6 +232,7 @@ in
     environment.systemPackages = [
       pkgs.jq
       pkgs.rsync
+      epiSshEntry
     ];
 
     fileSystems."/" = {

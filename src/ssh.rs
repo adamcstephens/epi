@@ -26,12 +26,13 @@ pub fn generate_config(
     username: &str,
     ssh_key_path: &Path,
     known_hosts: Option<&Path>,
+    project_dir: Option<&str>,
 ) -> Result<()> {
     let (strict_checking, known_hosts_file) = match known_hosts {
         Some(path) => ("yes", path.display().to_string()),
         None => ("no", "/dev/null".to_string()),
     };
-    let contents = format!(
+    let mut contents = format!(
         "Host {instance}\n\
          \x20   HostName 127.0.0.1\n\
          \x20   Port {ssh_port}\n\
@@ -43,6 +44,12 @@ pub fn generate_config(
          \x20   LogLevel ERROR\n",
         key = ssh_key_path.display(),
     );
+    if let Some(dir) = project_dir {
+        contents.push_str(&format!(
+            "    RemoteCommand epi-ssh-entry {dir}\n\
+             \x20   RequestTTY force\n"
+        ));
+    }
     std::fs::write(output, &contents)?;
     Ok(())
 }
@@ -77,6 +84,7 @@ pub fn trust_host_key(
     ssh_port: u16,
     username: &str,
     ssh_key_path: &Path,
+    project_dir: Option<&str>,
 ) -> Result<()> {
     let known_hosts = known_hosts_path(instance);
     if record_host_key(ssh_port, &known_hosts)? {
@@ -87,6 +95,7 @@ pub fn trust_host_key(
             username,
             ssh_key_path,
             Some(&known_hosts),
+            project_dir,
         )?;
     } else {
         eprintln!(
@@ -139,7 +148,7 @@ mod tests {
         let config = dir.path().join("ssh_config");
         let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
 
-        generate_config(&config, "myvm", 12345, "adam", key_path, None).unwrap();
+        generate_config(&config, "myvm", 12345, "adam", key_path, None, None).unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         assert!(contents.starts_with("Host myvm\n"));
@@ -161,13 +170,57 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_config_with_project_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("ssh_config");
+        let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
+
+        generate_config(
+            &config,
+            "myvm",
+            12345,
+            "adam",
+            key_path,
+            None,
+            Some("/home/adam/projects/myproject"),
+        )
+        .unwrap();
+
+        let contents = std::fs::read_to_string(&config).unwrap();
+        assert!(contents.contains("RemoteCommand epi-ssh-entry /home/adam/projects/myproject"));
+        assert!(contents.contains("RequestTTY force"));
+    }
+
+    #[test]
+    fn test_generate_config_without_project_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("ssh_config");
+        let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
+
+        generate_config(&config, "myvm", 12345, "adam", key_path, None, None).unwrap();
+
+        let contents = std::fs::read_to_string(&config).unwrap();
+        assert!(!contents.contains("RemoteCommand"));
+        assert!(!contents.contains("RequestTTY"));
+    }
+
+    #[test]
     fn test_generate_config_trusted() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("ssh_config");
         let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
         let known_hosts = dir.path().join("known_hosts");
 
-        generate_config(&config, "myvm", 12345, "adam", key_path, Some(&known_hosts)).unwrap();
+        generate_config(
+            &config,
+            "myvm",
+            12345,
+            "adam",
+            key_path,
+            Some(&known_hosts),
+            None,
+        )
+        .unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         assert!(contents.contains("StrictHostKeyChecking yes"));
