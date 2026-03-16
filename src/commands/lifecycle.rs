@@ -14,7 +14,7 @@ pub fn cmd_launch(
 ) -> Result<()> {
     // Check if already running
     if instance_store::instance_is_running(instance)? {
-        ui::info(&format!("instance {instance} is already running"));
+        ui::info(&format!("Instance {instance} is already running"));
         if attach_console {
             return console::attach(instance, None, None);
         }
@@ -24,7 +24,7 @@ pub fn cmd_launch(
     // If instance exists but stale, stop it first
     if instance_store::find_runtime(instance)?.is_some() {
         ui::info(&format!(
-            "instance {instance} has stale runtime, cleaning up"
+            "Instance {instance} has stale runtime, cleaning up"
         ));
         let _ = vm_launch::stop_instance(instance);
     }
@@ -107,7 +107,7 @@ pub fn cmd_launch(
                 .unwrap_or(wait_timeout);
             Some(std::thread::spawn(move || -> Result<()> {
                 let config = ssh::config_path(&inst);
-                eprintln!("waiting for SSH on port {ssh_port}...");
+                eprintln!("Waiting for SSH...");
                 ssh::wait_for_ssh(&config, &inst, timeout)?;
                 ssh::trust_host_key(
                     &inst,
@@ -116,7 +116,7 @@ pub fn cmd_launch(
                     std::path::Path::new(&key),
                     pdir.as_deref(),
                 )?;
-                eprintln!("instance {inst} is ready (ssh port {ssh_port})");
+                eprintln!("Instance {inst} is ready");
                 run_post_launch_hooks(&inst, &tgt, ssh_port, &key, pdir)?;
                 Ok(())
             }))
@@ -138,9 +138,7 @@ pub fn cmd_launch(
         let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
         match ssh::wait_for_ssh(&config, instance, timeout) {
-            Ok(()) => step.finish(&format!(
-                "instance {instance} is ready (ssh port {ssh_port})"
-            )),
+            Ok(()) => step.finish(&format!("Instance {instance} is ready")),
             Err(e) => {
                 step.fail("SSH wait failed");
                 return Err(e);
@@ -184,27 +182,36 @@ fn prepare_and_provision(
 
     target::validate_descriptor(&desc)?;
 
-    // Build missing artifacts individually
+    // Show artifact status (cached or building)
+    let all = target::all_artifacts(&desc);
     let missing = target::missing_artifacts(&desc);
-    for artifact in &missing {
-        let dim = ::console::Style::new().for_stderr().dim();
-        let label = format!(
-            "Building {} {}",
-            artifact.kind.label(),
-            dim.apply_to(&artifact.store_path)
-        );
-        let step = group.step(&label);
-        match target::build_artifact(params.target_str, artifact) {
-            Ok(()) => step.finish(&format!(
-                "Built {} {}",
+    let dim = ::console::Style::new().for_stderr().dim();
+    for artifact in &all {
+        if missing.iter().any(|m| m.kind == artifact.kind) {
+            let label = format!(
+                "Building {} {}",
                 artifact.kind.label(),
                 dim.apply_to(&artifact.store_path)
-            )),
-            Err(e) => {
-                step.fail(&format!("Building {} failed", artifact.kind.label()));
-                group.fail("Preparation failed");
-                return Err(e);
+            );
+            let step = group.step(&label);
+            match target::build_artifact(params.target_str, artifact) {
+                Ok(()) => step.finish(&format!(
+                    "Built {} {}",
+                    artifact.kind.label(),
+                    dim.apply_to(&artifact.store_path)
+                )),
+                Err(e) => {
+                    step.fail(&format!("Building {} failed", artifact.kind.label()));
+                    group.fail("Preparation failed");
+                    return Err(e);
+                }
             }
+        } else {
+            group.cached(&format!(
+                "Cached {} {}",
+                artifact.kind.label(),
+                dim.apply_to(&artifact.store_path)
+            ));
         }
     }
 
@@ -235,7 +242,7 @@ fn resolve_with_ui(
     target_str: &str,
     rebuild: bool,
 ) -> Result<target::CacheResult> {
-    let step = group.step(&format!("Resolving {target_str}"));
+    let step = group.step(&format!("Evaluating {target_str}"));
     let result = target::resolve_descriptor_cached(target_str, rebuild)?;
     match &result {
         target::CacheResult::Cached(_) => {
@@ -281,7 +288,7 @@ pub fn cmd_start(
     wait_timeout: u64,
 ) -> Result<()> {
     if instance_store::instance_is_running(instance)? {
-        ui::info(&format!("instance {instance} is already running"));
+        ui::info(&format!("Instance {instance} is already running"));
         if attach_console {
             return console::attach(instance, None, None);
         }
@@ -294,7 +301,7 @@ pub fn cmd_start(
     // Use stored descriptor if available, otherwise resolve fresh
     let desc = match state.descriptor {
         Some(desc) => {
-            ui::info(&format!("using stored descriptor for {}", state.target));
+            ui::info(&format!("Using stored descriptor for {}", state.target));
             desc
         }
         None => {
@@ -361,9 +368,7 @@ pub fn cmd_start(
         let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
         ssh::wait_for_ssh(&config, instance, wait_timeout)?;
-        step.finish(&format!(
-            "instance {instance} is ready (ssh port {ssh_port})"
-        ));
+        step.finish(&format!("Instance {instance} is ready"));
 
         ssh::trust_host_key(
             instance,
@@ -386,10 +391,10 @@ pub fn cmd_stop(instance: &str) -> Result<()> {
         if instance_store::find_runtime(instance)?.is_some() {
             instance_store::clear_runtime(instance)?;
             ui::info(&format!(
-                "stop: instance {instance} was already stopped (stale runtime cleared)"
+                "Instance {instance} was already stopped (stale runtime cleared)"
             ));
         } else {
-            ui::info(&format!("instance {instance} is not running"));
+            ui::info(&format!("Instance {instance} is not running"));
         }
         return Ok(());
     }
@@ -429,7 +434,7 @@ pub fn cmd_rm(instance: &str, force: bool) -> Result<()> {
 
     if !exists {
         if force {
-            ui::info(&format!("no instance {instance} found"));
+            ui::info(&format!("No instance {instance} found"));
             return Ok(());
         }
         anyhow::bail!("instance {instance} not found");
@@ -504,9 +509,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         let config = ssh::config_path(instance);
         let step = ui::Step::start("Waiting for SSH");
         ssh::wait_for_ssh(&config, instance, 120)?;
-        step.finish(&format!(
-            "instance {instance} rebuilt and ready (ssh port {ssh_port})"
-        ));
+        step.finish(&format!("Instance {instance} rebuilt and ready"));
 
         ssh::trust_host_key(
             instance,

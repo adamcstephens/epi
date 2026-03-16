@@ -1,15 +1,17 @@
 use console::{Style, Term};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct Step {
     bar: ProgressBar,
     is_tty: bool,
+    started_at: Instant,
 }
 
 impl Step {
     pub fn start(msg: &str) -> Self {
         let is_tty = Term::stderr().is_term();
+        let started_at = Instant::now();
         if is_tty {
             let bar = ProgressBar::new_spinner();
             bar.set_style(
@@ -20,30 +22,45 @@ impl Step {
             );
             bar.set_message(msg.to_string());
             bar.enable_steady_tick(Duration::from_millis(80));
-            Self { bar, is_tty }
+            Self {
+                bar,
+                is_tty,
+                started_at,
+            }
         } else {
             eprintln!("{msg}...");
             Self {
                 bar: ProgressBar::hidden(),
                 is_tty,
+                started_at,
             }
         }
     }
 
     pub fn finish(&self, msg: &str) {
         let style = Style::new().for_stderr().green();
+        let dim = Style::new().for_stderr().dim();
         if self.is_tty {
             self.bar.finish_and_clear();
         }
-        eprintln!("{} {msg}", style.apply_to("✓"));
+        eprintln!(
+            "{} {msg} {}",
+            style.apply_to("✓"),
+            dim.apply_to(format_elapsed(self.started_at.elapsed()))
+        );
     }
 
     pub fn fail(&self, msg: &str) {
         let style = Style::new().for_stderr().red();
+        let dim = Style::new().for_stderr().dim();
         if self.is_tty {
             self.bar.finish_and_clear();
         }
-        eprintln!("{} {msg}", style.apply_to("✗"));
+        eprintln!(
+            "{} {msg} {}",
+            style.apply_to("✗"),
+            dim.apply_to(format_elapsed(self.started_at.elapsed()))
+        );
     }
 }
 
@@ -85,12 +102,17 @@ impl Group {
             );
             bar.set_message(msg.to_string());
             bar.enable_steady_tick(Duration::from_millis(80));
-            GroupStep { bar, is_tty: true }
+            GroupStep {
+                bar,
+                is_tty: true,
+                started_at: Instant::now(),
+            }
         } else {
             eprintln!("  {msg}...");
             GroupStep {
                 bar: ProgressBar::hidden(),
                 is_tty: false,
+                started_at: Instant::now(),
             }
         }
     }
@@ -132,6 +154,7 @@ impl Group {
 pub struct GroupStep {
     bar: ProgressBar,
     is_tty: bool,
+    started_at: Instant,
 }
 
 impl GroupStep {
@@ -151,13 +174,27 @@ impl GroupStep {
     }
 
     fn finish_with_icon(&self, icon: &str, msg: &str) {
+        let dim = Style::new().for_stderr().dim();
+        let elapsed = dim.apply_to(format_elapsed(self.started_at.elapsed()));
         if self.is_tty {
             self.bar
                 .set_style(ProgressStyle::with_template("{msg}").expect("invalid template"));
-            self.bar.finish_with_message(format!("  {icon} {msg}"));
+            self.bar
+                .finish_with_message(format!("  {icon} {msg} {elapsed}"));
         } else {
-            eprintln!("  {msg}");
+            eprintln!("  {msg} {elapsed}");
         }
+    }
+}
+
+pub fn format_elapsed(d: Duration) -> String {
+    let total_secs = d.as_secs_f64();
+    if total_secs < 60.0 {
+        format!("{total_secs:.1}s")
+    } else {
+        let mins = total_secs as u64 / 60;
+        let secs = total_secs - (mins as f64 * 60.0);
+        format!("{mins}m{secs:.1}s")
     }
 }
 
@@ -272,7 +309,7 @@ mod tests {
     fn group_step_finish_cached() {
         console::set_colors_enabled_stderr(false);
         let group = Group::start("Preparing");
-        let step = group.step("Resolving .#config");
+        let step = group.step("Evaluating .#config");
         step.finish_cached("Cached .#config");
         group.finish("Prepared");
     }
@@ -283,5 +320,19 @@ mod tests {
         let group = Group::start("Preparing");
         group.cached("Cached .#config");
         group.finish("Prepared");
+    }
+
+    #[test]
+    fn format_elapsed_seconds() {
+        assert_eq!(format_elapsed(Duration::from_secs_f64(0.0)), "0.0s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(1.23)), "1.2s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(59.9)), "59.9s");
+    }
+
+    #[test]
+    fn format_elapsed_minutes() {
+        assert_eq!(format_elapsed(Duration::from_secs_f64(60.0)), "1m0.0s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(90.5)), "1m30.5s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(125.3)), "2m5.3s");
     }
 }

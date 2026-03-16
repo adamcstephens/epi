@@ -14,6 +14,11 @@
 - `project_dir()` now returns the project root instead of the `.epi/` subdirectory
 
 ### Changed
+- `launch`: Rename "Resolving" step to "Evaluating" for consistency with actual operation
+- `launch`: Capitalize first word of all status messages consistently
+- `launch`: Drop SSH port from ready messages
+- `launch`: Show cached/present store paths (kernel, initrd, image) alongside build steps
+- `launch`: Show elapsed time on completed step lines with sub-second granularity
 - Show only filenames during `cp` instead of per-file rsync progress summaries
 - `info`: Show cpu/memory in resources, ssh port only (not full command), ssh_config path, full slice name, console log path, and tilde-shorten all paths
 
