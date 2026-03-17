@@ -32,6 +32,8 @@ pub fn build_args(config: &CloudHypervisorConfig) -> Vec<String> {
         format!("boot={},nested=on", config.cpus),
         "--memory".to_string(),
         format!("size={}M,shared=on", config.memory_mib),
+        "--balloon".to_string(),
+        "size=0,deflate_on_oom=on,free_page_reporting=on".to_string(),
         "--serial".to_string(),
         format!("socket={}", config.serial_socket),
         "--console".to_string(),
@@ -189,6 +191,17 @@ mod tests {
         let props = service_properties(None, &helpers);
         assert_eq!(props.len(), 1);
         assert_eq!(props[0], "After=helper.service");
+    }
+
+    #[test]
+    fn build_args_includes_balloon() {
+        let config = test_config();
+        let args = build_args(&config);
+        let balloon_idx = args.iter().position(|a| a == "--balloon").unwrap();
+        assert_eq!(
+            args[balloon_idx + 1],
+            "size=0,deflate_on_oom=on,free_page_reporting=on"
+        );
     }
 
     #[test]

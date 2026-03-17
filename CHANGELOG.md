@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Enable virtio memory balloon device on all VMs with `deflate_on_oom` and `free_page_reporting` for host memory reclaim
 - `ssh`: Auto-cd into project directory when connecting to a project instance via `RemoteCommand`
 - `hooks`: Pass `EPI_PROJECT_DIR` environment variable to post-launch and pre-stop hooks
 - Create nix GC roots for instance store paths (kernel, disk, initrd, hooks) to prevent `nix-collect-garbage` from breaking stopped instances
