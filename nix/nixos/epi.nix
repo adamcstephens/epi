@@ -249,6 +249,7 @@ in
       "virtio_blk"
       "virtio_net"
       "virtio_console"
+      "virtio_balloon"
       "virtiofs"
       "ext4"
     ];
