@@ -193,8 +193,8 @@ pub fn format_elapsed(d: Duration) -> String {
         format!("{total_secs:.1}s")
     } else {
         let mins = total_secs as u64 / 60;
-        let secs = total_secs - (mins as f64 * 60.0);
-        format!("{mins}m{secs:.1}s")
+        let secs = total_secs as u64 % 60;
+        format!("{mins}m{secs}s")
     }
 }
 
@@ -331,8 +331,8 @@ mod tests {
 
     #[test]
     fn format_elapsed_minutes() {
-        assert_eq!(format_elapsed(Duration::from_secs_f64(60.0)), "1m0.0s");
-        assert_eq!(format_elapsed(Duration::from_secs_f64(90.5)), "1m30.5s");
-        assert_eq!(format_elapsed(Duration::from_secs_f64(125.3)), "2m5.3s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(60.0)), "1m0s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(90.5)), "1m30s");
+        assert_eq!(format_elapsed(Duration::from_secs_f64(125.3)), "2m5s");
     }
 }
