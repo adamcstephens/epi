@@ -84,7 +84,6 @@ pub fn cmd_launch(
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
-            project_dir_ref.as_deref(),
         )?;
     }
 
@@ -114,7 +113,6 @@ pub fn cmd_launch(
                     ssh_port,
                     &ssh::user(),
                     std::path::Path::new(&key),
-                    pdir.as_deref(),
                 )?;
                 eprintln!("Instance {inst} is ready");
                 run_post_launch_hooks(&inst, &tgt, ssh_port, &key, pdir)?;
@@ -150,7 +148,6 @@ pub fn cmd_launch(
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
-            project_dir_ref.as_deref(),
         )?;
 
         run_post_launch_hooks(
@@ -360,7 +357,6 @@ pub fn cmd_start(
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
-            state.project_dir.as_deref(),
         )?;
     }
 
@@ -375,7 +371,6 @@ pub fn cmd_start(
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
-            state.project_dir.as_deref(),
         )?;
     }
 
@@ -501,7 +496,6 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
-            state.project_dir.as_deref(),
         )?;
     }
 
@@ -516,7 +510,6 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
             ssh_port,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
-            state.project_dir.as_deref(),
         )?;
 
         // Run post-launch hooks

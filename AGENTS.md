@@ -2,10 +2,11 @@
 - **IMPORTANT**: before you do anything else, run the `beans prime` command and heed its output.
 - Always use red/green TDD when implementing
 
-## Definition of done
+## Definition of done steps
 - lints pass
 - tests pass
 - changelog updated
+- wait for user confirmation
 - ticket marked done
 - code committed with all ticket changes included
   - Ticket ID in the body
@@ -25,7 +26,7 @@
 - Canonicalize relative paths to absolute paths as early as possible
 
 ## Dependencies
-- Rust deps are in `.cargo-home` — read code from there for correct versions without needing the internet.
+- Rust deps are in `./.cargo-home` — read code from there for correct versions without needing the internet.
 - *Always* ask before adding dependencies.
 - When adding dependencies, *always* check the internet for the latest version
 

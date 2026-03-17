@@ -26,9 +26,20 @@ pub fn cmd_ssh(instance: &str) -> Result<()> {
     ensure_running(instance)?;
 
     let config = ssh::config_path(instance);
-    let err = std::process::Command::new("ssh")
-        .args(["-F", &config.to_string_lossy(), instance])
-        .exec();
+    let config_str = config.to_string_lossy();
+
+    let mut args = vec!["-F", &config_str, instance];
+
+    let state = instance_store::load_state(instance)?
+        .ok_or_else(|| anyhow::anyhow!("no state for instance {instance}"))?;
+
+    let remote_cmd_opt;
+    if let Some(ref dir) = state.project_dir {
+        remote_cmd_opt = format!("RemoteCommand=epi-ssh-entry {dir}");
+        args.extend(["-o", "RequestTTY=force", "-o", &remote_cmd_opt]);
+    }
+
+    let err = std::process::Command::new("ssh").args(&args).exec();
 
     bail!("failed to exec ssh: {err}");
 }
