@@ -112,7 +112,6 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,
-        None,
     )
     .expect("generate ssh config failed");
     ssh::wait_for_ssh(&ssh::config_path(name), name, 120).expect("ssh wait failed");
@@ -265,7 +264,6 @@ fn e2e_ssh_config_trusted_after_launch() {
         ssh_port,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
-        None,
     )
     .expect("trust_host_key failed");
 
@@ -377,7 +375,6 @@ fn e2e_mount() {
         ssh_port,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
-        None,
         None,
     )
     .expect("generate ssh config failed");
