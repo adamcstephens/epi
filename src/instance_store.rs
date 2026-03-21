@@ -169,6 +169,13 @@ pub fn set_provisioned(
     save_state(name, &state)
 }
 
+pub fn update_descriptor(name: &str, descriptor: target::Descriptor) -> Result<()> {
+    let mut state =
+        load_state(name)?.ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
+    state.descriptor = Some(descriptor);
+    save_state(name, &state)
+}
+
 pub fn clear_runtime(name: &str) -> Result<()> {
     if let Some(mut state) = load_state(name)? {
         state.runtime = None;
