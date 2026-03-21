@@ -189,6 +189,40 @@ pub fn all_artifacts(desc: &Descriptor) -> Vec<Artifact> {
     artifacts
 }
 
+/// Return artifacts needed for an upgrade (kernel + initrd, no disk image).
+pub fn upgrade_artifacts(desc: &Descriptor) -> Vec<Artifact> {
+    let mut artifacts = vec![Artifact {
+        kind: ArtifactKind::Kernel,
+        store_path: desc.kernel.clone(),
+    }];
+    if let Some(ref initrd) = desc.initrd {
+        artifacts.push(Artifact {
+            kind: ArtifactKind::Initrd,
+            store_path: initrd.clone(),
+        });
+    }
+    artifacts
+}
+
+/// Build the system toplevel and return its store path.
+/// This also builds kernel and initrd as part of the toplevel closure.
+pub fn build_toplevel(target: &str) -> Result<String> {
+    let canonical = canonicalize(target);
+    let attr = format!("{canonical}.config.system.build.toplevel");
+    let out = process::run("nix", &["build", &attr, "--no-link", "--print-out-paths"])?;
+    if !out.success() {
+        bail!(
+            "nix build toplevel failed (exit {}): {}",
+            out.status,
+            out.stderr
+        );
+    }
+    if out.stdout.is_empty() {
+        bail!("nix build toplevel produced no output path");
+    }
+    Ok(out.stdout)
+}
+
 /// Return artifacts from the descriptor whose store paths are missing.
 pub fn missing_artifacts(desc: &Descriptor) -> Vec<Artifact> {
     let mut missing = Vec::new();
@@ -665,5 +699,38 @@ mod tests {
         assert_eq!(arts.len(), 2);
         assert_eq!(arts[0].kind, ArtifactKind::Kernel);
         assert_eq!(arts[1].kind, ArtifactKind::Image);
+    }
+
+    #[test]
+    fn upgrade_artifacts_with_initrd() {
+        let desc = Descriptor {
+            kernel: "/k".into(),
+            disk: "/d".into(),
+            initrd: Some("/i".into()),
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+        let arts = upgrade_artifacts(&desc);
+        assert_eq!(arts.len(), 2);
+        assert_eq!(arts[0].kind, ArtifactKind::Kernel);
+        assert_eq!(arts[1].kind, ArtifactKind::Initrd);
+        // No image artifact
+        assert!(!arts.iter().any(|a| a.kind == ArtifactKind::Image));
+    }
+
+    #[test]
+    fn upgrade_artifacts_without_initrd() {
+        let desc = Descriptor {
+            kernel: "/k".into(),
+            disk: "/d".into(),
+            initrd: None,
+            cmdline: "boot".into(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+        let arts = upgrade_artifacts(&desc);
+        assert_eq!(arts.len(), 1);
+        assert_eq!(arts[0].kind, ArtifactKind::Kernel);
     }
 }

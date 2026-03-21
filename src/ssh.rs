@@ -96,6 +96,37 @@ pub fn trust_host_key(
     Ok(())
 }
 
+/// Copy a nix store closure to a running instance via SSH.
+pub fn nix_copy_closure(instance: &str, store_path: &str) -> Result<()> {
+    let config = config_path(instance);
+    let ssh_opts = format!("-F {}", config.display());
+    let target = format!("ssh://{instance}");
+    let out = process::run_with_env(
+        "nix",
+        &["copy", "--to", &target, store_path],
+        &[("NIX_SSHOPTS", &ssh_opts)],
+    )?;
+    if !out.success() {
+        bail!("nix copy failed (exit {}): {}", out.status, out.stderr);
+    }
+    Ok(())
+}
+
+/// Run a command on a running instance via SSH.
+pub fn run_on_guest(instance: &str, command: &str) -> Result<()> {
+    let config = config_path(instance);
+    let config_str = config.to_string_lossy();
+    let out = process::run("ssh", &["-F", &config_str, instance, "--", command])?;
+    if !out.success() {
+        bail!(
+            "remote command failed (exit {}): {}",
+            out.status,
+            out.stderr
+        );
+    }
+    Ok(())
+}
+
 /// Poll until SSH is reachable via the config file, or timeout.
 pub fn wait_for_ssh(config: &Path, instance: &str, timeout_seconds: u64) -> Result<()> {
     let start = std::time::Instant::now();
@@ -180,15 +211,7 @@ mod tests {
         let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
         let known_hosts = dir.path().join("known_hosts");
 
-        generate_config(
-            &config,
-            "myvm",
-            12345,
-            "adam",
-            key_path,
-            Some(&known_hosts),
-        )
-        .unwrap();
+        generate_config(&config, "myvm", 12345, "adam", key_path, Some(&known_hosts)).unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         assert!(contents.contains("StrictHostKeyChecking yes"));

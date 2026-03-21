@@ -3,6 +3,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 
+use commands::UpgradeMode;
 use epi::{config, instance_store, target, ui};
 
 mod commands;
@@ -165,6 +166,21 @@ enum Command {
         command: Vec<String>,
     },
 
+    /// Upgrade a running instance to a new configuration.
+    Upgrade {
+        /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
+        instance: Option<String>,
+
+        /// Upgrade mode: switch (default, live activation) or boot (reboot with new kernel)
+        #[arg(long, default_value = "switch")]
+        mode: UpgradeMode,
+
+        /// Max seconds to wait for SSH (boot mode only)
+        #[arg(long, default_value_t = 120)]
+        wait_timeout: u64,
+    },
+
     /// Rebuild an instance.
     Rebuild {
         /// Instance name
@@ -291,6 +307,11 @@ fn run(command: Command) -> Result<()> {
             commands::cmd_exec(&resolve_instance_name(instance)?, &command)
         }
         Command::Cp { source, dest } => commands::cmd_cp(&source, &dest),
+        Command::Upgrade {
+            instance,
+            mode,
+            wait_timeout,
+        } => commands::cmd_upgrade(&resolve_instance_name(instance)?, mode, wait_timeout),
         Command::Rebuild { instance } => commands::cmd_rebuild(&resolve_instance_name(instance)?),
         Command::Logs { instance } => commands::cmd_logs(&resolve_instance_name(instance)?),
         Command::SshConfig { instance, print } => {

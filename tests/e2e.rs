@@ -767,3 +767,52 @@ fn e2e_cpus_override() {
     );
     assert_eq!(out.stdout, "2", "expected 2 CPUs, got {}", out.stdout);
 }
+
+#[test]
+#[ignore]
+fn e2e_upgrade_switch() {
+    let name = unique_name("upgrade");
+    let _guard = InstanceGuard::new(&name);
+    let (target_str, _) = &*DESCRIPTOR;
+
+    let runtime = provision_and_wait(&name);
+
+    // Record the current system toplevel on guest
+    let out = ssh_exec(&runtime, "readlink /run/current-system");
+    assert!(
+        out.success(),
+        "readlink failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    let pre_toplevel = out.stdout.clone();
+    assert!(
+        !pre_toplevel.is_empty(),
+        "pre-upgrade toplevel should not be empty"
+    );
+
+    // Build toplevel
+    let toplevel = target::build_toplevel(target_str).expect("build_toplevel failed");
+    assert!(
+        std::path::Path::new(&toplevel).exists(),
+        "toplevel path should exist: {toplevel}"
+    );
+
+    // Copy closure to guest and activate
+    ssh::nix_copy_closure(&name, &toplevel).expect("nix_copy_closure failed");
+    let switch_cmd = format!("sudo {toplevel}/bin/switch-to-configuration switch");
+    ssh::run_on_guest(&name, &switch_cmd).expect("switch-to-configuration failed");
+
+    // Verify guest is still reachable and running the new toplevel
+    let out = ssh_exec(&runtime, "readlink /run/current-system");
+    assert!(
+        out.success(),
+        "post-upgrade readlink failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(
+        out.stdout, toplevel,
+        "post-upgrade toplevel should match the built toplevel"
+    );
+}
