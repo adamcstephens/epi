@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- NixOS module: Filter `configuredUsers` to only include normal users (`isNormalUser`), excluding system accounts (nixbld, nobody, sshd, etc.)
+
 ### Added
 - `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)
 - `ssh`: Add `nix_copy_closure` and `run_on_guest` library functions for copying nix store closures and running commands on instances via SSH

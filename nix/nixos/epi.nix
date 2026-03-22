@@ -223,7 +223,13 @@ in
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
       disk = "${config.system.build.image}/${config.image.baseName}.raw";
       cmdline = "console=ttyS0 console=hvc0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
-      configuredUsers = builtins.attrNames config.users.users;
+      configuredUsers =
+        let
+          normalUsers = lib.filterAttrs
+            (_: user: user.isNormalUser)
+            config.users.users;
+        in
+        builtins.attrNames normalUsers;
     };
 
     system.extraDependencies =
