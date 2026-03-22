@@ -416,12 +416,9 @@ pub fn descriptor_from_json(json: &str) -> Result<Descriptor> {
 pub fn resolve_descriptor_cached(target: &str, rebuild: bool) -> Result<CacheResult> {
     let cache_path = target_cache_path(target);
 
-    if rebuild {
-        let _ = fs::remove_file(&cache_path);
-    }
-
-    // Try loading from cache
-    if let Ok(content) = fs::read_to_string(&cache_path)
+    // Try loading from cache (skip when rebuild is requested)
+    if !rebuild
+        && let Ok(content) = fs::read_to_string(&cache_path)
         && let Ok(desc) = serde_json::from_str::<Descriptor>(&content)
     {
         // Verify cached paths still exist
@@ -436,12 +433,15 @@ pub fn resolve_descriptor_cached(target: &str, rebuild: bool) -> Result<CacheRes
     // Resolve fresh
     let desc = resolve_descriptor(target)?;
 
-    // Cache it
+    // Cache it atomically: write to a tempfile then rename into place,
+    // so concurrent readers always see either the old or new file.
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let content = serde_json::to_string_pretty(&desc)?;
-    fs::write(&cache_path, content)?;
+    let tmp_path = cache_path.with_extension("descriptor.tmp");
+    fs::write(&tmp_path, &content)?;
+    fs::rename(&tmp_path, &cache_path)?;
 
     Ok(CacheResult::Resolved(desc))
 }
