@@ -9,67 +9,91 @@ pub fn cmd_info(instance: &str) -> Result<()> {
 
     let running = instance_store::instance_is_running(instance)?;
 
-    // Identity
-    println!("instance:   {}", ui::bold(instance));
-    println!("target:     {}", strip_home(&state.target));
+    // Build sections
+    let mut sections = Vec::new();
+
+    // Instance
+    let mut identity_rows = vec![
+        ("name".into(), ui::bold(instance)),
+        ("target".into(), strip_home(&state.target)),
+    ];
     if let Some(ref project) = state.project_dir {
-        println!("project:    {}", strip_home(project));
+        identity_rows.push(("project".into(), strip_home(project)));
     }
-    println!("status:     {}", ui::status_dot(running));
+    identity_rows.push(("status".into(), ui::status_dot(running)));
+    sections.push(InfoSection {
+        heading: "instance".into(),
+        rows: identity_rows,
+    });
 
     // Resources
-    println!();
-    println!("resources:");
-    println!("  cpus:     {}", state.cpus);
-    println!("  memory:   {} MiB", state.memory_mib);
-    println!("  disk:     {}", format_disk_size(&state.disk_size));
+    sections.push(InfoSection {
+        heading: "resources".into(),
+        rows: vec![
+            ("cpus".into(), state.cpus.to_string()),
+            ("memory".into(), format!("{} MiB", state.memory_mib)),
+            ("disk".into(), format_disk_size(&state.disk_size)),
+        ],
+    });
 
     // Network
     if let Some(ref rt) = state.runtime {
-        let has_ssh = rt.ssh_port.is_some();
-        let has_ports = !rt.ports.is_empty();
-        if has_ssh || has_ports {
-            println!();
-            println!("network:");
-            if let Some(port) = rt.ssh_port {
-                println!("  ssh_port: {port}");
-                let config = ssh::config_path(instance);
-                println!("  ssh_config: {}", strip_home(&config.to_string_lossy()));
-            }
-            if has_ports {
-                for (i, pm) in rt.ports.iter().enumerate() {
-                    if i == 0 {
-                        println!("  ports:    {}:{} ({})", pm.host, pm.guest, pm.protocol);
-                    } else {
-                        println!("            {}:{} ({})", pm.host, pm.guest, pm.protocol);
-                    }
-                }
-            }
+        let mut net_rows = Vec::new();
+        if let Some(port) = rt.ssh_port {
+            net_rows.push(("ssh_port".into(), port.to_string()));
+            let config = ssh::config_path(instance);
+            net_rows.push(("ssh_config".into(), strip_home(&config.to_string_lossy())));
+        }
+        if !rt.ports.is_empty() {
+            let ports_str = rt
+                .ports
+                .iter()
+                .map(|pm| format!("{}:{} ({})", pm.host, pm.guest, pm.protocol))
+                .collect::<Vec<_>>()
+                .join(", ");
+            net_rows.push(("ports".into(), ports_str));
+        }
+        if !net_rows.is_empty() {
+            sections.push(InfoSection {
+                heading: "network".into(),
+                rows: net_rows,
+            });
         }
     }
 
     // Mounts
     if !state.mounts.is_empty() {
-        println!();
-        println!("mounts:");
-        for mount in &state.mounts {
-            println!("  {}", strip_home(mount));
-        }
+        let mounts_str = state
+            .mounts
+            .iter()
+            .map(|m| strip_home(m))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sections.push(InfoSection {
+            heading: "mounts".into(),
+            rows: vec![("paths".into(), mounts_str)],
+        });
     }
 
     // Runtime
     if let Some(ref rt) = state.runtime {
         let slice = instance_store::slice_name(instance, &rt.unit_id)?;
-        println!();
-        println!("runtime:");
-        println!("  slice:    {}", slice);
-        println!("  serial:   {}", strip_home(&rt.serial_socket));
-        println!("  disk:     {}", strip_home(&rt.disk));
-        println!(
-            "  console:  {}",
-            strip_home(&instance_store::console_log_path(instance).to_string_lossy())
-        );
+        sections.push(InfoSection {
+            heading: "runtime".into(),
+            rows: vec![
+                ("slice".into(), slice),
+                ("serial".into(), strip_home(&rt.serial_socket)),
+                ("disk".into(), strip_home(&rt.disk)),
+                (
+                    "console".into(),
+                    strip_home(&instance_store::console_log_path(instance).to_string_lossy()),
+                ),
+            ],
+        });
     }
+
+    let view = InfoView { sections };
+    println!("{}", render_info(&view));
 
     Ok(())
 }
@@ -107,20 +131,7 @@ pub fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    let has_projects = instances.iter().any(|(_, _, p)| p.is_some());
-
-    if has_projects {
-        println!(
-            "{:<16} {:<40} {:<14} {:<20} {:<24} PORTS",
-            "INSTANCE", "TARGET", "STATUS", "SSH", "PROJECT"
-        );
-    } else {
-        println!(
-            "{:<16} {:<40} {:<14} {:<20} PORTS",
-            "INSTANCE", "TARGET", "STATUS", "SSH"
-        );
-    }
-
+    let mut rows = Vec::new();
     for (name, target_str, project_dir) in &instances {
         let running = instance_store::instance_is_running(name)?;
         let status = ui::status_dot(running);
@@ -146,31 +157,17 @@ pub fn cmd_list() -> Result<()> {
             ("\u{2014}".to_string(), String::new())
         };
 
-        if has_projects {
-            let project = project_dir
-                .as_deref()
-                .map(strip_home)
-                .unwrap_or_else(|| "\u{2014}".to_string());
-            println!(
-                "{:<16} {:<40} {:<14} {:<20} {:<24} {}",
-                name,
-                strip_home(target_str),
-                status,
-                ssh,
-                project,
-                ports_str
-            );
-        } else {
-            println!(
-                "{:<16} {:<40} {:<14} {:<20} {}",
-                name,
-                strip_home(target_str),
-                status,
-                ssh,
-                ports_str
-            );
-        }
+        rows.push(ListRow {
+            name: name.clone(),
+            target: strip_home(target_str),
+            status,
+            ssh,
+            project: project_dir.as_deref().map(strip_home),
+            ports: ports_str,
+        });
     }
+
+    println!("{}", render_list(&rows));
 
     Ok(())
 }
@@ -213,6 +210,87 @@ pub fn cmd_ssh_config(instance: &str, print: bool) -> Result<()> {
     Ok(())
 }
 
+pub struct ListRow {
+    pub name: String,
+    pub target: String,
+    pub status: String,
+    pub ssh: String,
+    pub project: Option<String>,
+    pub ports: String,
+}
+
+pub fn render_list(rows: &[ListRow]) -> String {
+    use comfy_table::{ContentArrangement, Table, presets::NOTHING};
+
+    let has_projects = rows.iter().any(|r| r.project.is_some());
+
+    let mut table = Table::new();
+    table.load_preset(NOTHING);
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+
+    if has_projects {
+        table.set_header(vec![
+            "INSTANCE", "TARGET", "STATUS", "SSH", "PROJECT", "PORTS",
+        ]);
+    } else {
+        table.set_header(vec!["INSTANCE", "TARGET", "STATUS", "SSH", "PORTS"]);
+    }
+
+    for row in rows {
+        if has_projects {
+            let project = row.project.as_deref().unwrap_or("\u{2014}");
+            table.add_row(vec![
+                &row.name,
+                &row.target,
+                &row.status,
+                &row.ssh,
+                project,
+                &row.ports,
+            ]);
+        } else {
+            table.add_row(vec![
+                &row.name,
+                &row.target,
+                &row.status,
+                &row.ssh,
+                &row.ports,
+            ]);
+        }
+    }
+
+    table.to_string()
+}
+
+pub struct InfoSection {
+    pub heading: String,
+    pub rows: Vec<(String, String)>,
+}
+
+pub struct InfoView {
+    pub sections: Vec<InfoSection>,
+}
+
+pub fn render_info(view: &InfoView) -> String {
+    use comfy_table::{Table, presets::NOTHING};
+
+    let mut table = Table::new();
+    table.load_preset(NOTHING);
+
+    for (i, section) in view.sections.iter().enumerate() {
+        if i > 0 {
+            table.add_row(vec!["", ""]);
+        }
+        if !section.heading.is_empty() {
+            table.add_row(vec![&format!("{}:", section.heading), ""]);
+        }
+        for (key, value) in &section.rows {
+            table.add_row(vec![&format!("  {key}:"), value.as_str()]);
+        }
+    }
+
+    table.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +308,114 @@ mod tests {
     #[test]
     fn format_disk_size_no_suffix() {
         assert_eq!(format_disk_size("1024"), "1024");
+    }
+
+    #[test]
+    fn render_list_no_projects() {
+        let rows = vec![
+            ListRow {
+                name: "myvm".into(),
+                target: "~/.dotfiles#dev".into(),
+                status: "● running".into(),
+                ssh: "127.0.0.1:2222".into(),
+                project: None,
+                ports: "8080:80".into(),
+            },
+            ListRow {
+                name: "other".into(),
+                target: ".#test".into(),
+                status: "○ stopped".into(),
+                ssh: "\u{2014}".into(),
+                project: None,
+                ports: String::new(),
+            },
+        ];
+        let output = render_list(&rows);
+        assert!(output.contains("INSTANCE"), "should have INSTANCE header");
+        assert!(output.contains("myvm"), "should contain instance name");
+        assert!(output.contains("other"), "should contain second instance");
+        assert!(
+            !output.contains("PROJECT"),
+            "should not have PROJECT column"
+        );
+        assert!(output.contains("8080:80"), "should contain ports");
+    }
+
+    #[test]
+    fn render_list_with_projects() {
+        let rows = vec![
+            ListRow {
+                name: "myvm".into(),
+                target: "~/.dotfiles#dev".into(),
+                status: "● running".into(),
+                ssh: "127.0.0.1:2222".into(),
+                project: Some("~/projects/foo".into()),
+                ports: String::new(),
+            },
+            ListRow {
+                name: "other".into(),
+                target: ".#test".into(),
+                status: "○ stopped".into(),
+                ssh: "\u{2014}".into(),
+                project: None,
+                ports: String::new(),
+            },
+        ];
+        let output = render_list(&rows);
+        assert!(output.contains("PROJECT"), "should have PROJECT column");
+        assert!(
+            output.contains("~/projects/foo"),
+            "should contain project path"
+        );
+        assert!(
+            output.contains("\u{2014}"),
+            "should show dash for missing project"
+        );
+    }
+
+    #[test]
+    fn render_list_empty() {
+        let output = render_list(&[]);
+        // Empty table should just have headers
+        assert!(output.contains("INSTANCE"));
+    }
+
+    #[test]
+    fn render_info_basic() {
+        let view = InfoView {
+            sections: vec![InfoSection {
+                heading: "resources".into(),
+                rows: vec![
+                    ("cpus".into(), "4".into()),
+                    ("memory".into(), "2048 MiB".into()),
+                    ("disk".into(), "40 GiB".into()),
+                ],
+            }],
+        };
+        let output = render_info(&view);
+        assert!(output.contains("resources:"), "should have section heading");
+        assert!(output.contains("cpus:"), "should have key");
+        assert!(output.contains("4"), "should have value");
+        assert!(output.contains("2048 MiB"), "should have memory value");
+    }
+
+    #[test]
+    fn render_info_multiple_sections() {
+        let view = InfoView {
+            sections: vec![
+                InfoSection {
+                    heading: "resources".into(),
+                    rows: vec![("cpus".into(), "2".into())],
+                },
+                InfoSection {
+                    heading: "network".into(),
+                    rows: vec![("ssh_port".into(), "2222".into())],
+                },
+            ],
+        };
+        let output = render_info(&view);
+        assert!(output.contains("resources:"), "should have first section");
+        assert!(output.contains("network:"), "should have second section");
+        assert!(output.contains("2222"), "should have ssh port value");
     }
 }

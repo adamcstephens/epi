@@ -5,6 +5,7 @@
 ### Changed
 - NixOS module: Filter `configuredUsers` to only include normal users (`isNormalUser`), excluding system accounts (nixbld, nobody, sshd, etc.)
 - `list`/`info`: Replace home directory prefix with `~` in target paths
+- `list`/`info`: Replace manual text formatting with comfy-table for aligned column output
 - Reduce shutdown timeout from 15s to 10s before force-killing the VM
 
 ### Added
