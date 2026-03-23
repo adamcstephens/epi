@@ -231,6 +231,16 @@ pub fn bold(text: &str) -> String {
     format!("{}", style.apply_to(text))
 }
 
+/// Replace the home directory prefix with `~` for display.
+pub fn strip_home(path: &str) -> String {
+    if let Ok(home) = std::env::var("HOME")
+        && let Some(rest) = path.strip_prefix(&home)
+    {
+        return format!("~{rest}");
+    }
+    path.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +344,22 @@ mod tests {
         assert_eq!(format_elapsed(Duration::from_secs_f64(60.0)), "1m0s");
         assert_eq!(format_elapsed(Duration::from_secs_f64(90.5)), "1m30s");
         assert_eq!(format_elapsed(Duration::from_secs_f64(125.3)), "2m5s");
+    }
+
+    #[test]
+    fn strip_home_replaces_home_prefix() {
+        let home = std::env::var("HOME").unwrap();
+        let path = format!("{home}/.dotfiles#agents");
+        assert_eq!(strip_home(&path), "~/.dotfiles#agents");
+    }
+
+    #[test]
+    fn strip_home_leaves_non_home_path() {
+        assert_eq!(strip_home("/tmp/foo"), "/tmp/foo");
+    }
+
+    #[test]
+    fn strip_home_leaves_relative_path() {
+        assert_eq!(strip_home(".#manual-test"), ".#manual-test");
     }
 }

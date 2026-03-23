@@ -272,6 +272,12 @@ fn run(command: Command) -> Result<()> {
                 &port,
                 no_project_mount,
             )?;
+            if let Some(ref config_path) = resolved.project_config {
+                ui::info(&format!(
+                    "using project config: {}",
+                    ui::strip_home(&config_path.to_string_lossy())
+                ));
+            }
             resolved.target = target::expand_tilde(&resolved.target);
             target::validate(&resolved.target)?;
             commands::cmd_launch(
