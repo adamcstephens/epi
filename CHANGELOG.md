@@ -5,6 +5,7 @@
 ### Changed
 - NixOS module: Filter `configuredUsers` to only include normal users (`isNormalUser`), excluding system accounts (nixbld, nobody, sshd, etc.)
 - `list`/`info`: Replace home directory prefix with `~` in target paths
+- Reduce shutdown timeout from 15s to 10s before force-killing the VM
 
 ### Added
 - `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)
