@@ -96,7 +96,7 @@ use std::path::Path;
 ///
 /// The script performs:
 /// 1. ch-remote power-button (ACPI shutdown)
-/// 2. timeout 15s waiting for main process to exit
+/// 2. timeout 10s waiting for main process to exit
 /// 3. ch-remote shutdown-vmm (force fallback)
 pub fn generate_shutdown_script(
     api_socket: &str,
@@ -112,7 +112,7 @@ pub fn generate_shutdown_script(
     format!(
         "#!{sh_bin}\n\
          {ch_remote} --api-socket {api_socket} power-button\n\
-         {timeout_bin} 15 {tail_bin} --pid=$MAINPID -f /dev/null\n\
+         {timeout_bin} 10 {tail_bin} --pid=$MAINPID -f /dev/null\n\
          {ch_remote} --api-socket {api_socket} shutdown-vmm || true\n"
     )
 }
@@ -134,7 +134,7 @@ mod tests {
             "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock power-button\n"
         ));
         assert!(content.contains(
-            "/nix/store/def/bin/timeout 15 /nix/store/ghi/bin/tail --pid=$MAINPID -f /dev/null\n"
+            "/nix/store/def/bin/timeout 10 /nix/store/ghi/bin/tail --pid=$MAINPID -f /dev/null\n"
         ));
         assert!(content.contains(
             "/nix/store/abc/bin/ch-remote --api-socket /tmp/inst/api.sock shutdown-vmm || true\n"
