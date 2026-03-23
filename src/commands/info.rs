@@ -96,12 +96,7 @@ fn format_disk_size(size: &str) -> String {
 }
 
 fn strip_home(path: &str) -> String {
-    if let Ok(home) = std::env::var("HOME")
-        && let Some(rest) = path.strip_prefix(&home)
-    {
-        return format!("~{rest}");
-    }
-    path.to_string()
+    ui::strip_home(path)
 }
 
 pub fn cmd_list() -> Result<()> {
@@ -158,12 +153,21 @@ pub fn cmd_list() -> Result<()> {
                 .unwrap_or_else(|| "\u{2014}".to_string());
             println!(
                 "{:<16} {:<40} {:<14} {:<20} {:<24} {}",
-                name, strip_home(target_str), status, ssh, project, ports_str
+                name,
+                strip_home(target_str),
+                status,
+                ssh,
+                project,
+                ports_str
             );
         } else {
             println!(
                 "{:<16} {:<40} {:<14} {:<20} {}",
-                name, strip_home(target_str), status, ssh, ports_str
+                name,
+                strip_home(target_str),
+                status,
+                ssh,
+                ports_str
             );
         }
     }
@@ -226,22 +230,5 @@ mod tests {
     #[test]
     fn format_disk_size_no_suffix() {
         assert_eq!(format_disk_size("1024"), "1024");
-    }
-
-    #[test]
-    fn strip_home_replaces_home_prefix() {
-        let home = std::env::var("HOME").unwrap();
-        let path = format!("{home}/.dotfiles#agents");
-        assert_eq!(strip_home(&path), "~/.dotfiles#agents");
-    }
-
-    #[test]
-    fn strip_home_leaves_non_home_path() {
-        assert_eq!(strip_home("/tmp/foo"), "/tmp/foo");
-    }
-
-    #[test]
-    fn strip_home_leaves_relative_path() {
-        assert_eq!(strip_home(".#manual-test"), ".#manual-test");
     }
 }

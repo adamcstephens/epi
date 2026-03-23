@@ -66,6 +66,7 @@ fn default_resolved() -> config::Resolved {
         memory: 1024,
         default_name: "default".to_string(),
         ports: vec![],
+        project_config: None,
     }
 }
 

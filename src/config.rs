@@ -24,6 +24,8 @@ pub struct Resolved {
     pub memory: u32,
     pub default_name: String,
     pub ports: Vec<String>,
+    /// Path to the project config file, if one was detected and used.
+    pub project_config: Option<PathBuf>,
 }
 
 fn resolve_path(path: &str, base: &Path) -> PathBuf {
@@ -171,7 +173,13 @@ pub fn resolve(
     cli_no_project_mount: bool,
 ) -> Result<Resolved> {
     let user = load_user()?;
+    let (config_path, _) = project_config_path();
     let project = load_project()?;
+    let project_config = if project.is_some() {
+        config_path.canonicalize().ok()
+    } else {
+        None
+    };
     let config = merge_configs(user, project);
 
     let target = cli_target
@@ -237,6 +245,7 @@ pub fn resolve(
         memory,
         default_name,
         ports,
+        project_config,
     })
 }
 
@@ -964,5 +973,44 @@ ports = [":443"]
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("no target specified"));
+    }
+
+    #[test]
+    fn resolve_project_config_set_when_project_exists() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"target = ".#user""#);
+        let (_proj_dir, proj_path) = write_temp_config(r#"target = ".#project""#);
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert!(resolved.project_config.is_some());
+        assert_eq!(
+            resolved.project_config.unwrap(),
+            proj_path.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn resolve_project_config_none_when_no_project() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"target = ".#user""#);
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert!(resolved.project_config.is_none());
     }
 }

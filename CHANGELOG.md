@@ -8,6 +8,7 @@
 - Reduce shutdown timeout from 15s to 10s before force-killing the VM
 
 ### Added
+- Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
 - `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)
 - `ssh`: Add `nix_copy_closure` and `run_on_guest` library functions for copying nix store closures and running commands on instances via SSH
 - NixOS module: Add `@wheel` to `trusted-users` in guest nix config to allow `nix copy` from host
