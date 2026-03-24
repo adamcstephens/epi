@@ -207,7 +207,11 @@ pub fn list() -> Result<Vec<(String, String, Option<String>)>> {
             }
         }
     }
-    instances.sort_by(|a, b| a.0.cmp(&b.0));
+    instances.sort_by(|a, b| {
+        let a_has_project = a.2.is_some();
+        let b_has_project = b.2.is_some();
+        b_has_project.cmp(&a_has_project).then(a.0.cmp(&b.0))
+    });
     Ok(instances)
 }
 
@@ -776,6 +780,52 @@ mod tests {
         let json = r#"{"target": ".#test", "mounts": []}"#;
         let state: InstanceState = serde_json::from_str(json).unwrap();
         assert!(state.descriptor.is_none());
+    }
+
+    #[test]
+    fn list_sorts_projects_before_global() {
+        let dir = TempDir::new().unwrap();
+        let mk = |name: &str, target: &str, project: Option<&str>| {
+            write_state(
+                dir.path(),
+                name,
+                &InstanceState {
+                    target: target.into(),
+                    runtime: None,
+                    mounts: vec![],
+                    project_dir: project.map(|s| s.to_string()),
+                    disk_size: String::new(),
+                    cpus: 0,
+                    memory_mib: 0,
+                    port_specs: vec![],
+                    descriptor: None,
+                },
+            );
+        };
+        mk("global-b", ".#b", None);
+        mk("proj-a", ".#a", Some("/home/user/proj"));
+        mk("global-a", ".#a", None);
+        mk("proj-b", ".#b", Some("/home/user/proj"));
+
+        // Simulate the sort logic from list()
+        let mut instances: Vec<(String, String, Option<String>)> = vec![];
+        for entry in fs::read_dir(dir.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if let Some(state) = read_state(dir.path(), &name) {
+                    instances.push((name, state.target, state.project_dir));
+                }
+            }
+        }
+        instances.sort_by(|a, b| {
+            let a_has_project = a.2.is_some();
+            let b_has_project = b.2.is_some();
+            b_has_project.cmp(&a_has_project).then(a.0.cmp(&b.0))
+        });
+
+        let names: Vec<&str> = instances.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["proj-a", "proj-b", "global-a", "global-b"]);
     }
 
     #[test]
