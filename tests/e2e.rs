@@ -184,7 +184,7 @@ fn e2e_lifecycle() {
 
     // Verify passt was started with the additional port forwarding arg
     let unit_id = &runtime.unit_id;
-    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
     let passt_cmd = process::run(
         &process::systemctl_bin(),
         &["--user", "show", &passt_unit, "--property=ExecStart"],
@@ -498,7 +498,7 @@ fn e2e_clean_shutdown_stops_helpers() {
 
     // Construct expected unit names
     let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
-    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
     let slice = instance_store::slice_name(&name, unit_id).unwrap();
 
     // All units should be active before stop
@@ -585,7 +585,7 @@ fn e2e_no_env_leak() {
     let unit_id = &runtime.unit_id;
 
     let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
-    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
 
     // Check VM service environment
     let vm_env = process::run(
@@ -626,7 +626,7 @@ fn e2e_vm_crash_stops_helpers() {
     let unit_id = &runtime.unit_id;
 
     let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
-    let passt_unit = format!("epi-{name}_{unit_id}_passt.service");
+    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
 
     // All units should be active
     assert!(

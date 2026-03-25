@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  systemdMinimal,
 }:
 
 rustPlatform.buildRustPackage {
@@ -19,6 +20,10 @@ rustPlatform.buildRustPackage {
     };
 
   cargoLock.lockFile = ../Cargo.lock;
+
+  nativeCheckInputs = [
+    systemdMinimal
+  ];
 
   meta.mainProgram = "epi";
 }

@@ -185,7 +185,7 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
     instance_store::set_partial_runtime(instance_name, unit_id)?;
 
     // Start passt for networking
-    let passt_unit = format!("epi-{instance_name}_{unit_id}_passt.service");
+    let passt_unit = instance_store::passt_unit_name(instance_name, unit_id)?;
     let passt_socket = inst_dir.join("passt.sock");
     if passt_socket.exists() {
         fs::remove_file(&passt_socket)?;
@@ -211,7 +211,7 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         let abs_mount = mount_dir
             .canonicalize()
             .with_context(|| format!("canonicalizing mount path: {mount_path}"))?;
-        let vfsd_unit = format!("epi-{instance_name}_{unit_id}_virtiofsd{i}.service");
+        let vfsd_unit = instance_store::virtiofsd_unit_name(instance_name, unit_id, i)?;
         let vfsd_socket = inst_dir.join(format!("virtiofsd-{i}.sock"));
         if vfsd_socket.exists() {
             fs::remove_file(&vfsd_socket)?;
