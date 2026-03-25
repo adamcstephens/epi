@@ -151,6 +151,26 @@ pub fn journal_for_unit(unit_name: &str) -> Result<String> {
     Ok(out.stdout)
 }
 
+pub fn unit_active_enter_timestamp(unit_name: &str) -> Result<Option<String>> {
+    let out = run(
+        &systemctl_bin(),
+        &[
+            "--user",
+            "show",
+            unit_name,
+            "--property=ActiveEnterTimestamp",
+        ],
+    )?;
+    // Output: "ActiveEnterTimestamp=Thu 2026-03-20 10:30:00 UTC" or empty
+    if let Some(value) = out.stdout.strip_prefix("ActiveEnterTimestamp=") {
+        if value.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(value.to_string()));
+    }
+    Ok(None)
+}
+
 pub fn unit_is_active(unit_name: &str) -> Result<bool> {
     let out = run(&systemctl_bin(), &["--user", "is-active", unit_name])?;
     Ok(out.stdout == "active")

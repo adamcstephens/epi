@@ -1,7 +1,8 @@
 use anyhow::{Result, bail};
 use std::os::unix::process::CommandExt;
+use std::time::Duration;
 
-use epi::{instance_store, ssh, ui};
+use epi::{instance_store, process, ssh, ui};
 
 pub fn cmd_info(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
@@ -20,6 +21,10 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     if let Some(ref project) = state.project_dir {
         identity_rows.push(("project".into(), strip_home(project)));
     }
+    identity_rows.push((
+        "state".into(),
+        strip_home(&instance_store::instance_dir(instance).to_string_lossy()),
+    ));
     identity_rows.push(("status".into(), ui::status_dot(running)));
     sections.push(InfoSection {
         heading: "instance".into(),
@@ -75,25 +80,60 @@ pub fn cmd_info(instance: &str) -> Result<()> {
         });
     }
 
-    // Runtime
-    if let Some(ref rt) = state.runtime {
-        let slice = instance_store::slice_name(instance, &rt.unit_id)?;
-        sections.push(InfoSection {
-            heading: "runtime".into(),
-            rows: vec![
-                ("slice".into(), slice),
-                ("serial".into(), strip_home(&rt.serial_socket)),
-                ("disk".into(), strip_home(&rt.disk)),
-                (
-                    "console".into(),
-                    strip_home(&instance_store::console_log_path(instance).to_string_lossy()),
-                ),
-            ],
-        });
-    }
-
     let view = InfoView { sections };
     println!("{}", render_info(&view));
+
+    // Runtime tree (rendered separately, outside the key-value table)
+    if running {
+        if let Some(ref rt) = state.runtime {
+            let slice = instance_store::slice_name(instance, &rt.unit_id)?;
+
+            // Build unit list: vm, passt, virtiofsd(s)
+            let vm_unit = instance_store::vm_unit_name(instance, &rt.unit_id)?;
+            let mut units = vec![vm_unit];
+
+            let passt_unit = instance_store::passt_unit_name(instance, &rt.unit_id)?;
+            if process::unit_is_active(&passt_unit)? {
+                units.push(passt_unit);
+            }
+
+            for i in 0.. {
+                let vfsd_unit = instance_store::virtiofsd_unit_name(instance, &rt.unit_id, i)?;
+                if !process::unit_is_active(&vfsd_unit)? {
+                    break;
+                }
+                units.push(vfsd_unit);
+            }
+
+            // Uptime
+            let uptime_str = process::unit_active_enter_timestamp(&slice)?
+                .and_then(|ts| {
+                    let parsed = chrono_parse_timestamp(&ts)?;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()?;
+                    let started = Duration::from_secs(parsed);
+                    now.checked_sub(started).map(format_uptime)
+                })
+                .unwrap_or_default();
+
+            println!();
+            if uptime_str.is_empty() {
+                println!("runtime:");
+            } else {
+                let dim = console::Style::new().for_stdout().dim();
+                println!(
+                    "runtime:   {}",
+                    dim.apply_to(format!("uptime {uptime_str}"))
+                );
+            }
+            println!("{}", render_runtime_tree(&slice, &units));
+        }
+    } else {
+        let dim = console::Style::new().for_stdout().dim();
+        println!();
+        println!("runtime:   {}", dim.apply_to("stopped"));
+    }
 
     Ok(())
 }
@@ -220,13 +260,12 @@ pub struct ListRow {
 }
 
 pub fn render_list(rows: &[ListRow]) -> String {
-    use comfy_table::{ContentArrangement, Table, presets::NOTHING};
+    use comfy_table::{Table, presets::NOTHING};
 
     let has_projects = rows.iter().any(|r| r.project.is_some());
 
     let mut table = Table::new();
     table.load_preset(NOTHING);
-    table.set_content_arrangement(ContentArrangement::Dynamic);
 
     if has_projects {
         table.set_header(vec![
@@ -289,6 +328,45 @@ pub fn render_info(view: &InfoView) -> String {
     }
 
     table.to_string()
+}
+
+/// Parse a systemd timestamp into seconds since epoch.
+/// Uses `date -d` to convert since systemd timestamps have locale-dependent formats.
+fn chrono_parse_timestamp(ts: &str) -> Option<u64> {
+    let out = process::run("date", &["-d", ts, "+%s"]).ok()?;
+    if !out.success() {
+        return None;
+    }
+    out.stdout.parse().ok()
+}
+
+fn format_uptime(d: Duration) -> String {
+    let total_secs = d.as_secs();
+    let days = total_secs / 86400;
+    let hours = (total_secs % 86400) / 3600;
+    let mins = (total_secs % 3600) / 60;
+
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}
+
+fn render_runtime_tree(slice: &str, units: &[String]) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("   {slice}"));
+    for (i, unit) in units.iter().enumerate() {
+        let connector = if i == units.len() - 1 {
+            "└─"
+        } else {
+            "├─"
+        };
+        lines.push(format!("   {connector} {unit}"));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -397,6 +475,48 @@ mod tests {
         assert!(output.contains("cpus:"), "should have key");
         assert!(output.contains("4"), "should have value");
         assert!(output.contains("2048 MiB"), "should have memory value");
+    }
+
+    #[test]
+    fn format_uptime_minutes_only() {
+        assert_eq!(format_uptime(Duration::from_secs(0)), "0m");
+        assert_eq!(format_uptime(Duration::from_secs(59)), "0m");
+        assert_eq!(format_uptime(Duration::from_secs(300)), "5m");
+        assert_eq!(format_uptime(Duration::from_secs(3599)), "59m");
+    }
+
+    #[test]
+    fn format_uptime_hours_and_minutes() {
+        assert_eq!(format_uptime(Duration::from_secs(3600)), "1h 0m");
+        assert_eq!(format_uptime(Duration::from_secs(5400)), "1h 30m");
+        assert_eq!(format_uptime(Duration::from_secs(86399)), "23h 59m");
+    }
+
+    #[test]
+    fn format_uptime_days_and_hours() {
+        assert_eq!(format_uptime(Duration::from_secs(86400)), "1d 0h");
+        assert_eq!(format_uptime(Duration::from_secs(90000)), "1d 1h");
+        assert_eq!(format_uptime(Duration::from_secs(259200)), "3d 0h");
+    }
+
+    #[test]
+    fn render_runtime_tree_single_unit() {
+        let output = render_runtime_tree("epi-dev_abc.slice", &["epi-dev_abc_vm.service".into()]);
+        assert!(output.contains("   epi-dev_abc.slice"));
+        assert!(output.contains("   └─ epi-dev_abc_vm.service"));
+    }
+
+    #[test]
+    fn render_runtime_tree_multiple_units() {
+        let units = vec![
+            "epi-dev_abc_vm.service".into(),
+            "epi-dev_abc_passt.service".into(),
+            "epi-dev_abc_virtiofsd0.service".into(),
+        ];
+        let output = render_runtime_tree("epi-dev_abc.slice", &units);
+        assert!(output.contains("   ├─ epi-dev_abc_vm.service"));
+        assert!(output.contains("   ├─ epi-dev_abc_passt.service"));
+        assert!(output.contains("   └─ epi-dev_abc_virtiofsd0.service"));
     }
 
     #[test]

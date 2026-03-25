@@ -7,7 +7,13 @@
 - `list`/`info`: Replace home directory prefix with `~` in target paths
 - `list`/`info`: Replace manual text formatting with comfy-table for aligned column output
 - `list`: Sort project-scoped instances before global ones
+- `info`: Replace runtime file paths section with service unit tree and uptime display
+- `info`: Add `state:` row to instance section showing state directory path
+- Unify all systemd unit name generation through `instance_store::unit_name()`, ensuring consistent escaping for passt and virtiofsd helpers
 - Reduce shutdown timeout from 15s to 10s before force-killing the VM
+
+### Fixed
+- `list`: Remove `ContentArrangement::Dynamic` so table renders correctly without a TTY (fixes nix build test failures)
 
 ### Added
 - Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
