@@ -85,10 +85,9 @@
 
               cloud-hypervisor = pkgs.cloud-hypervisor.overrideAttrs (old: {
                 patches = (old.patches or [ ]) ++ [
-                  # https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7766
                   (pkgs.fetchpatch {
-                    url = "https://github.com/cloud-hypervisor/cloud-hypervisor/commit/e9742f22baa22b0a0b2d0acb58d644d0b52d753e.patch";
-                    hash = "sha256-79wO1eSJDoCAsw8IRfGK1p04fJwQhFTO7BXoWCXJGP0=";
+                    url = "https://github.com/cloud-hypervisor/cloud-hypervisor/commit/57e766bdbbfcdf1f36f696fc735fbebbea97f5ca.patch";
+                    hash = "sha256-hmLE/QT7LfPuaxqspbK7EvO/4VYNHx0SMt6PnAZ2L6I=";
                   })
                 ];
               });
