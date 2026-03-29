@@ -66,6 +66,7 @@ fn default_resolved() -> config::Resolved {
         memory: 1024,
         default_name: "default".to_string(),
         ports: vec![],
+        ssh_extra_config: vec![],
         project_config: None,
     }
 }
@@ -86,6 +87,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
             cpus: resolved.cpus,
             memory_mib: resolved.memory,
             port_specs: resolved.ports.clone(),
+            ssh_extra_config: resolved.ssh_extra_config.clone(),
             descriptor: None,
         },
     )
@@ -113,6 +115,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,
+        &resolved.ssh_extra_config,
     )
     .expect("generate ssh config failed");
     ssh::wait_for_ssh(&ssh::config_path(name), name, 120).expect("ssh wait failed");
@@ -265,6 +268,7 @@ fn e2e_ssh_config_trusted_after_launch() {
         ssh_port,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
+        &[],
     )
     .expect("trust_host_key failed");
 
@@ -350,6 +354,7 @@ fn e2e_mount() {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         },
     )
@@ -377,6 +382,7 @@ fn e2e_mount() {
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,
+        &[],
     )
     .expect("generate ssh config failed");
     ssh::wait_for_ssh(&ssh::config_path(&name), &name, 120).expect("ssh wait failed");

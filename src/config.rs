@@ -13,6 +13,7 @@ pub struct Config {
     pub default_name: Option<String>,
     pub ports: Option<Vec<String>>,
     pub project_mount: Option<bool>,
+    pub ssh_extra_config: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +25,7 @@ pub struct Resolved {
     pub memory: u32,
     pub default_name: String,
     pub ports: Vec<String>,
+    pub ssh_extra_config: Vec<String>,
     /// Path to the project config file, if one was detected and used.
     pub project_config: Option<PathBuf>,
 }
@@ -121,6 +123,7 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
         default_name: project.default_name.or(user.default_name),
         ports: merge_port_lists(user.ports, project.ports),
         project_mount: project.project_mount.or(user.project_mount),
+        ssh_extra_config: merge_string_lists(user.ssh_extra_config, project.ssh_extra_config),
     }
 }
 
@@ -136,6 +139,25 @@ fn merge_mount_lists(
             for m in b {
                 if !a.contains(&m) {
                     a.push(m);
+                }
+            }
+            Some(a)
+        }
+    }
+}
+
+/// Merge string lists from user and project configs (union, deduped by exact string).
+fn merge_string_lists(
+    user: Option<Vec<String>>,
+    project: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match (user, project) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(mut a), Some(b)) => {
+            for item in b {
+                if !a.contains(&item) {
+                    a.push(item);
                 }
             }
             Some(a)
@@ -237,6 +259,8 @@ pub fn resolve(
         }
     }
 
+    let ssh_extra_config = config.ssh_extra_config.unwrap_or_default();
+
     Ok(Resolved {
         target,
         mounts,
@@ -245,6 +269,7 @@ pub fn resolve(
         memory,
         default_name,
         ports,
+        ssh_extra_config,
         project_config,
     })
 }
@@ -1012,5 +1037,72 @@ ports = [":443"]
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
         assert!(resolved.project_config.is_none());
+    }
+
+    #[test]
+    fn parse_ssh_extra_config() {
+        let toml = r#"
+ssh_extra_config = ["LocalForward /tmp/local.sock /tmp/remote.sock", "ForwardAgent yes"]
+"#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert_eq!(
+            config.ssh_extra_config.unwrap(),
+            vec![
+                "LocalForward /tmp/local.sock /tmp/remote.sock",
+                "ForwardAgent yes"
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_ssh_extra_config_absent() {
+        let toml = r#"target = ".#dev""#;
+        let config = parse(toml, Path::new("/")).unwrap();
+        assert!(config.ssh_extra_config.is_none());
+    }
+
+    #[test]
+    fn merge_ssh_extra_config_union() {
+        let user = Config {
+            ssh_extra_config: Some(vec!["ForwardAgent yes".into()]),
+            ..Config::default()
+        };
+        let project = Config {
+            ssh_extra_config: Some(vec!["LocalForward /tmp/local.sock /tmp/remote.sock".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        let extra = merged.ssh_extra_config.unwrap();
+        assert_eq!(extra.len(), 2);
+        assert!(extra.contains(&"ForwardAgent yes".to_string()));
+        assert!(extra.contains(&"LocalForward /tmp/local.sock /tmp/remote.sock".to_string()));
+    }
+
+    #[test]
+    fn merge_ssh_extra_config_dedup() {
+        let user = Config {
+            ssh_extra_config: Some(vec!["ForwardAgent yes".into()]),
+            ..Config::default()
+        };
+        let project = Config {
+            ssh_extra_config: Some(vec![
+                "ForwardAgent yes".into(),
+                "ServerAliveInterval 60".into(),
+            ]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), Some(project));
+        let extra = merged.ssh_extra_config.unwrap();
+        assert_eq!(extra.len(), 2);
+    }
+
+    #[test]
+    fn merge_ssh_extra_config_one_side_none() {
+        let user = Config {
+            ssh_extra_config: Some(vec!["ForwardAgent yes".into()]),
+            ..Config::default()
+        };
+        let merged = merge_configs(Some(user), None);
+        assert_eq!(merged.ssh_extra_config.unwrap(), vec!["ForwardAgent yes"]);
     }
 }

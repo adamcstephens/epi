@@ -76,6 +76,8 @@ pub struct InstanceState {
     #[serde(default)]
     pub port_specs: Vec<String>,
     #[serde(default)]
+    pub ssh_extra_config: Vec<String>,
+    #[serde(default)]
     pub descriptor: Option<target::Descriptor>,
 }
 
@@ -332,6 +334,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -352,6 +355,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -371,6 +375,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -390,6 +395,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         write_state(dir.path(), "myvm", &state);
@@ -418,6 +424,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         write_state(dir.path(), "vm1", &state);
@@ -461,6 +468,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         write_state(dir.path(), "vm1", &state);
@@ -487,6 +495,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         write_state(dir.path(), "vm1", &state);
@@ -528,6 +537,7 @@ mod tests {
                     cpus: 0,
                     memory_mib: 0,
                     port_specs: vec![],
+                    ssh_extra_config: vec![],
                     descriptor: None,
                 },
             );
@@ -567,6 +577,7 @@ mod tests {
                 cpus: 0,
                 memory_mib: 0,
                 port_specs: vec![],
+                ssh_extra_config: vec![],
                 descriptor: None,
             },
         );
@@ -597,6 +608,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -649,6 +661,7 @@ mod tests {
             cpus: 4,
             memory_mib: 2048,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -669,6 +682,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec!["8080:80".into(), ":443".into()],
+            ssh_extra_config: vec![],
             descriptor: None,
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -786,6 +800,7 @@ mod tests {
             cpus: 0,
             memory_mib: 0,
             port_specs: vec![],
+            ssh_extra_config: vec![],
             descriptor: Some(desc),
         };
         let json = serde_json::to_string(&state).unwrap();
@@ -820,6 +835,7 @@ mod tests {
                     cpus: 0,
                     memory_mib: 0,
                     port_specs: vec![],
+                    ssh_extra_config: vec![],
                     descriptor: None,
                 },
             );

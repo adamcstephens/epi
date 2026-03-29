@@ -43,6 +43,7 @@ pub fn cmd_launch(
             cpus: resolved.cpus,
             memory_mib: resolved.memory,
             port_specs: resolved.ports.clone(),
+            ssh_extra_config: resolved.ssh_extra_config.clone(),
             descriptor: None,
         },
     )?;
@@ -84,6 +85,7 @@ pub fn cmd_launch(
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
+            &resolved.ssh_extra_config,
         )?;
     }
 
@@ -100,6 +102,7 @@ pub fn cmd_launch(
             let key = ssh_key_path.clone();
             let tgt = resolved.target.clone();
             let pdir = project_dir_ref.clone();
+            let extra_ssh = resolved.ssh_extra_config.clone();
             let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -108,7 +111,13 @@ pub fn cmd_launch(
                 let config = ssh::config_path(&inst);
                 eprintln!("Waiting for SSH...");
                 ssh::wait_for_ssh(&config, &inst, timeout)?;
-                ssh::trust_host_key(&inst, ssh_port, &ssh::user(), std::path::Path::new(&key))?;
+                ssh::trust_host_key(
+                    &inst,
+                    ssh_port,
+                    &ssh::user(),
+                    std::path::Path::new(&key),
+                    &extra_ssh,
+                )?;
                 eprintln!("Instance {inst} is ready");
                 run_post_launch_hooks(&inst, &tgt, ssh_port, &key, pdir)?;
                 Ok(())
@@ -128,7 +137,13 @@ pub fn cmd_launch(
             .and_then(|v| v.parse().ok())
             .unwrap_or(wait_timeout);
 
-        wait_and_trust_ssh(instance, ssh_port, &ssh_key_path, timeout)?;
+        wait_and_trust_ssh(
+            instance,
+            ssh_port,
+            &ssh_key_path,
+            timeout,
+            &resolved.ssh_extra_config,
+        )?;
 
         run_post_launch_hooks(
             instance,
@@ -278,6 +293,7 @@ fn launch_with_descriptor(
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
+            &state.ssh_extra_config,
         )?;
     }
 
@@ -315,6 +331,7 @@ fn wait_and_trust_ssh(
     ssh_port: u16,
     ssh_key_path: &str,
     wait_timeout: u64,
+    ssh_extra_config: &[String],
 ) -> Result<()> {
     let config = ssh::config_path(instance);
     let step = ui::Step::start("Waiting for SSH");
@@ -331,6 +348,7 @@ fn wait_and_trust_ssh(
         ssh_port,
         &ssh::user(),
         std::path::Path::new(ssh_key_path),
+        ssh_extra_config,
     )?;
 
     Ok(())
@@ -406,7 +424,13 @@ pub fn cmd_start(
     let (ssh_port, ssh_key_path) = launch_with_descriptor(instance, &state, &desc)?;
 
     if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
-        wait_and_trust_ssh(instance, ssh_port, &ssh_key_path, wait_timeout)?;
+        wait_and_trust_ssh(
+            instance,
+            ssh_port,
+            &ssh_key_path,
+            wait_timeout,
+            &state.ssh_extra_config,
+        )?;
     }
 
     if attach_console {
@@ -606,7 +630,13 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(wait_timeout);
 
-                wait_and_trust_ssh(instance, new_ssh_port, &new_ssh_key_path, timeout)?;
+                wait_and_trust_ssh(
+                    instance,
+                    new_ssh_port,
+                    &new_ssh_key_path,
+                    timeout,
+                    &state.ssh_extra_config,
+                )?;
 
                 run_post_launch_hooks(
                     instance,
@@ -665,11 +695,18 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
+            &state.ssh_extra_config,
         )?;
     }
 
     if let Some(ssh_port) = ssh_port {
-        wait_and_trust_ssh(instance, ssh_port, &ssh_key_path, 120)?;
+        wait_and_trust_ssh(
+            instance,
+            ssh_port,
+            &ssh_key_path,
+            120,
+            &state.ssh_extra_config,
+        )?;
 
         run_post_launch_hooks(
             instance,
