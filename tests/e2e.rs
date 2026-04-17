@@ -823,3 +823,65 @@ fn e2e_upgrade_switch() {
         "post-upgrade toplevel should match the built toplevel"
     );
 }
+
+#[test]
+#[ignore]
+fn e2e_mount_home_ownership() {
+    let name = unique_name("mntowner");
+    let _guard = InstanceGuard::new(&name);
+
+    // Create a nested mount dir under $HOME so intermediate dirs must be
+    // created under the user's home directory inside the guest.
+    let home = std::env::var("HOME").expect("HOME not set");
+    let user = ssh_user();
+    let test_dir = format!("{home}/.epi-test-{name}");
+    let nested_mount = format!("{test_dir}/a/b");
+    fs::create_dir_all(&nested_mount).unwrap();
+    fs::write(format!("{nested_mount}/marker.txt"), "home-mount").unwrap();
+
+    // Ensure cleanup of host directory
+    struct CleanupGuard(String);
+    impl Drop for CleanupGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = CleanupGuard(test_dir.clone());
+
+    let mounts = vec![nested_mount.clone()];
+    let mut resolved = default_resolved();
+    resolved.mounts = mounts;
+
+    let runtime = provision_and_wait_with(&name, resolved);
+
+    // Verify the mount works
+    let cat_cmd = format!("cat {nested_mount}/marker.txt");
+    let out = ssh_exec(&runtime, &cat_cmd);
+    assert!(out.success(), "cat marker failed: {}", out.stderr);
+    assert_eq!(out.stdout, "home-mount");
+
+    // Intermediate directory created by mkdir -p should be owned by the user,
+    // not root. The mount itself sits at nested_mount (a/b), so check a/ and
+    // the test_dir root — these are plain directories, not mount points.
+    let stat_cmd = format!("stat -c '%U' {test_dir}/a");
+    let out = ssh_exec(&runtime, &stat_cmd);
+    assert!(
+        out.success(),
+        "stat intermediate dir failed: {}",
+        out.stderr
+    );
+    assert_eq!(
+        out.stdout, user,
+        "intermediate directory {test_dir}/a should be owned by {user}, got {}",
+        out.stdout
+    );
+
+    let stat_cmd = format!("stat -c '%U' {test_dir}");
+    let out = ssh_exec(&runtime, &stat_cmd);
+    assert!(out.success(), "stat test dir failed: {}", out.stderr);
+    assert_eq!(
+        out.stdout, user,
+        "directory {test_dir} should be owned by {user}, got {}",
+        out.stdout
+    );
+}
