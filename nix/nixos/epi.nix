@@ -17,6 +17,7 @@ let
 
     runtimeInputs = [
       pkgs.coreutils
+      pkgs.getent
       pkgs.util-linux
       pkgs.jq
       pkgs.shadow
@@ -66,10 +67,15 @@ let
       fi
 
       # Virtiofs mounts
+      USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
       MOUNT_COUNT=$(jq -r '.mounts // [] | length' "$EPI_JSON")
       for i in $(seq 0 $((MOUNT_COUNT - 1))); do
         MOUNT_PATH=$(jq -r ".mounts[$i]" "$EPI_JSON")
-        mkdir -p "$MOUNT_PATH"
+        if [ -n "$USER_HOME" ] && [[ "$MOUNT_PATH" == "$USER_HOME"/* ]]; then
+          su - "$USERNAME" -c "mkdir -p '$MOUNT_PATH'"
+        else
+          mkdir -p "$MOUNT_PATH"
+        fi
         mount -t virtiofs "hostfs-$i" "$MOUNT_PATH"
       done
     '';

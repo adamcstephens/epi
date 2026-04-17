@@ -17,6 +17,7 @@
 
 ### Fixed
 - `list`: Remove `ContentArrangement::Dynamic` so table renders correctly without a TTY (fixes nix build test failures)
+- Fix mount paths under user's home creating intermediate directories owned by root instead of the user
 
 ### Added
 - Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
