@@ -1,11 +1,11 @@
 ---
 # epi-kwg3
 title: info should include uptime and a service overview
-status: in-progress
+status: completed
 type: task
 priority: normal
 created_at: 2026-03-18T02:43:49Z
-updated_at: 2026-03-24T04:05:25Z
+updated_at: 2026-04-23T02:14:08Z
 blocked_by:
     - epi-221o
 ---
