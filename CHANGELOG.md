@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Added
+- `backend` module: platform-neutral `Backend` trait with `LaunchSpec`, `RunningInstance`, `SerialEndpoint`, and tagged `BackendState` — scaffolding for the forthcoming macOS VZ backend (no behavior change)
 - `stop --force` / `rm --force`: Skip ACPI shutdown and SIGKILL the VM main process directly for sub-second termination; pre-stop hooks are skipped under `--force`
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
 
