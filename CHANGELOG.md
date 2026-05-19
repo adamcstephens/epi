@@ -6,6 +6,7 @@
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
 
 ### Changed
+- `upgrade`: Display store paths for toplevel, kernel, and initrd in preparation output, matching `launch` formatting
 - NixOS module: Filter `configuredUsers` to only include normal users (`isNormalUser`), excluding system accounts (nixbld, nobody, sshd, etc.)
 - `list`/`info`: Replace home directory prefix with `~` in target paths
 - `list`/`info`: Replace manual text formatting with comfy-table for aligned column output

@@ -536,10 +536,11 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
     }
 
     // Step 2: Build toplevel (includes kernel + initrd in its closure)
+    let dim = ::console::Style::new().for_stderr().dim();
     let step = group.step("Building toplevel");
     let toplevel = match target::build_toplevel(&state.target) {
         Ok(t) => {
-            step.finish("Built toplevel");
+            step.finish(&format!("Built toplevel {}", dim.apply_to(&t)));
             t
         }
         Err(e) => {
@@ -559,6 +560,11 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
                 artifact.store_path
             );
         }
+        group.cached(&format!(
+            "Built {} {}",
+            artifact.kind.label(),
+            dim.apply_to(&artifact.store_path)
+        ));
     }
 
     // Build hook store paths if needed
