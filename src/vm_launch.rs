@@ -52,7 +52,6 @@ pub fn provision(params: &ProvisionParams) -> Result<Runtime> {
     let cache_result = target::resolve_descriptor_cached(params.target_str, params.rebuild)?;
     let desc = cache_result.descriptor();
 
-    target::validate_descriptor(desc)?;
     target::ensure_paths_exist(params.target_str, desc)?;
 
     provision_with_descriptor(params, desc)

@@ -324,10 +324,6 @@ pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
     Ok(())
 }
 
-pub fn validate_descriptor(_desc: &Descriptor) -> Result<()> {
-    Ok(())
-}
-
 fn descriptor_hook_store_paths(desc: &Descriptor) -> Vec<&str> {
     let mut paths = Vec::new();
     for script in desc.hooks.post_launch.values() {

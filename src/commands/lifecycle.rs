@@ -172,8 +172,6 @@ fn prepare_and_provision(
     };
     let desc = cache_result.descriptor().clone();
 
-    target::validate_descriptor(&desc)?;
-
     // Show artifact status (cached or building)
     let all = target::all_artifacts(&desc);
     let missing = target::missing_artifacts(&desc);
@@ -409,8 +407,6 @@ pub fn cmd_start(
         }
     };
 
-    target::validate_descriptor(&desc)?;
-
     // Build any missing artifacts
     let missing = target::missing_artifacts(&desc);
     for artifact in &missing {
@@ -532,7 +528,6 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
     let group = ui::Group::start("Preparing upgrade");
     let cache_result = resolve_with_ui(&group, &state.target, true)?;
     let mut new_desc = cache_result.descriptor().clone();
-    target::validate_descriptor(&new_desc)?;
 
     // Preserve the original disk path — the overlay is backed by the old image,
     // and we don't build a new disk image during upgrade.

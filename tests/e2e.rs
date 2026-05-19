@@ -18,7 +18,6 @@ static DESCRIPTOR: LazyLock<(String, target::Descriptor)> = LazyLock::new(|| {
     let t = e2e_target();
     eprintln!("Generating descriptor");
     let desc = target::resolve_descriptor(&t).expect("failed to resolve e2e target");
-    target::validate_descriptor(&desc).expect("invalid e2e descriptor");
     target::ensure_paths_exist(&t, &desc).expect("e2e descriptor paths missing");
     eprintln!("Finished generating descriptor");
     (t, desc)
