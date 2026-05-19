@@ -284,6 +284,14 @@ in
     # Disable unnecessary services for a lightweight VM
     systemd.services."getty@".enable = false;
 
+    # Cap how long the per-user systemd manager waits for its own services
+    # to stop before SIGKILL. Without this, a single user service that
+    # ignores SIGTERM blocks `multi-user.target` shutdown for the full
+    # DefaultTimeoutStopSec (90s), which makes `epi stop` painfully slow.
+    systemd.user.extraConfig = ''
+      DefaultTimeoutStopSec=5s
+    '';
+
     # Blacklist kernel modules not needed in a cloud-hypervisor VM
     boot.blacklistedKernelModules = [
       "cfg80211"     # wireless

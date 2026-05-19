@@ -6,12 +6,12 @@
 - lints pass
 - tests pass
 - changelog updated
-- wait for user confirmation
-- ticket marked done
 - code committed with all ticket changes included
   - Ticket ID in the body
   - Co-Authored-By line always included
   - Use jj commit, never git commit
+- wait for user confirmation
+- ticket marked done
 
 ## Code style
 - Avoid abstractions

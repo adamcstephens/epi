@@ -7,6 +7,7 @@
 
 ### Changed
 - `upgrade`: Display store paths for toplevel, kernel, and initrd in preparation output, matching `launch` formatting
+- NixOS module: Cap per-user systemd manager `DefaultTimeoutStopSec` at 5s so a stuck user service can't block `multi-user.target` shutdown for the full 90s
 - NixOS module: Filter `configuredUsers` to only include normal users (`isNormalUser`), excluding system accounts (nixbld, nobody, sshd, etc.)
 - `list`/`info`: Replace home directory prefix with `~` in target paths
 - `list`/`info`: Replace manual text formatting with comfy-table for aligned column output
