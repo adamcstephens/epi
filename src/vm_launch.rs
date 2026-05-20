@@ -524,17 +524,24 @@ fn wait_for_socket(path: &str, max_wait_ms: u64) -> Result<()> {
     bail!("socket did not appear: {path}");
 }
 
-/// Stop all units for an instance
-pub fn stop_instance(instance_name: &str) -> Result<()> {
+/// Stop all units for an instance.
+///
+/// With `force=false`, the VM unit's ExecStop runs (graceful ACPI shutdown,
+/// capped by TimeoutStopSec). With `force=true`, the VM main process is sent
+/// SIGKILL directly — no ACPI, no waiting — and the slice is then stopped to
+/// clean up helpers.
+pub fn stop_instance(instance_name: &str, force: bool) -> Result<()> {
     let runtime = instance_store::find_runtime(instance_name)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance_name} has no runtime"))?;
 
     let vm_unit = instance_store::vm_unit_name(instance_name, &runtime.unit_id)?;
     let slice = instance_store::slice_name(instance_name, &runtime.unit_id)?;
 
-    // Stop the VM service first — this triggers ExecStop (graceful ACPI shutdown).
-    // Then stop the slice to clean up helper units (passt, virtiofsd).
-    let _ = process::stop_unit(&vm_unit);
+    if force {
+        let _ = process::kill_unit(&vm_unit);
+    } else {
+        let _ = process::stop_unit(&vm_unit);
+    }
     process::stop_unit(&slice)?;
 
     instance_store::clear_runtime(instance_name)?;

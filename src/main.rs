@@ -110,6 +110,10 @@ enum Command {
         /// Instance name
         #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
+
+        /// SIGKILL the VM instead of graceful ACPI shutdown
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// Show detailed instance information.
@@ -298,7 +302,9 @@ fn run(command: Command) -> Result<()> {
             let instance = resolve_instance_name(instance)?;
             commands::cmd_start(&instance, console, no_provision, wait_timeout)
         }
-        Command::Stop { instance } => commands::cmd_stop(&resolve_instance_name(instance)?),
+        Command::Stop { instance, force } => {
+            commands::cmd_stop(&resolve_instance_name(instance)?, force)
+        }
         Command::Info { instance } => commands::cmd_info(&resolve_instance_name(instance)?),
         Command::Rm { instance, force } => {
             commands::cmd_rm(&resolve_instance_name(instance)?, force)

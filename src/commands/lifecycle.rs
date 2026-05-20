@@ -26,7 +26,7 @@ pub fn cmd_launch(
         ui::info(&format!(
             "Instance {instance} has stale runtime, cleaning up"
         ));
-        let _ = vm_launch::stop_instance(instance);
+        let _ = vm_launch::stop_instance(instance, true);
     }
 
     let pre_existing = instance_store::find(instance)?.is_some();
@@ -436,7 +436,7 @@ pub fn cmd_start(
     Ok(())
 }
 
-pub fn cmd_stop(instance: &str) -> Result<()> {
+pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
     if !instance_store::instance_is_running(instance)? {
         if instance_store::find_runtime(instance)?.is_some() {
             instance_store::clear_runtime(instance)?;
@@ -449,23 +449,25 @@ pub fn cmd_stop(instance: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Run pre-stop hooks
-    let state = instance_store::load_state(instance)?;
-    if let Some(ref st) = state
-        && let Some(ref rt) = st.runtime
-        && let Some(ssh_port) = rt.ssh_port
-    {
-        run_pre_stop_hooks(
-            instance,
-            &st.target,
-            ssh_port,
-            &rt.ssh_key_path,
-            st.project_dir.clone(),
-        )?;
+    // Run pre-stop hooks (skipped on --force — user wants the CLI back now)
+    if !force {
+        let state = instance_store::load_state(instance)?;
+        if let Some(ref st) = state
+            && let Some(ref rt) = st.runtime
+            && let Some(ssh_port) = rt.ssh_port
+        {
+            run_pre_stop_hooks(
+                instance,
+                &st.target,
+                ssh_port,
+                &rt.ssh_key_path,
+                st.project_dir.clone(),
+            )?;
+        }
     }
 
     let step = ui::Step::start(&format!("Stopping {instance}"));
-    vm_launch::stop_instance(instance)?;
+    vm_launch::stop_instance(instance, force)?;
     step.finish(&format!("Stopped {instance}"));
     Ok(())
 }
@@ -489,7 +491,7 @@ pub fn cmd_rm(instance: &str, force: bool) -> Result<()> {
 
     if running {
         let step = ui::Step::start(&format!("Terminating {instance}"));
-        vm_launch::stop_instance(instance)?;
+        vm_launch::stop_instance(instance, force)?;
         step.finish(&format!("Terminated {instance}"));
     }
 
@@ -615,7 +617,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
 
             // Stop VM
             let step = ui::Step::start(&format!("Stopping {instance} for reboot"));
-            vm_launch::stop_instance(instance)?;
+            vm_launch::stop_instance(instance, false)?;
             step.finish(&format!("Stopped {instance}"));
 
             // Update descriptor and GC roots before restart
@@ -660,7 +662,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
     let was_running = instance_store::instance_is_running(instance)?;
     if was_running {
         let step = ui::Step::start(&format!("Stopping {instance} for rebuild"));
-        vm_launch::stop_instance(instance)?;
+        vm_launch::stop_instance(instance, false)?;
         step.finish(&format!("Stopped {instance}"));
     }
 

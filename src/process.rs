@@ -184,6 +184,18 @@ pub fn stop_unit(unit_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Send SIGKILL to all processes of a unit, bypassing ExecStop.
+pub fn kill_unit(unit_name: &str) -> Result<()> {
+    let out = run(
+        &systemctl_bin(),
+        &["--user", "kill", "--signal=SIGKILL", unit_name],
+    )?;
+    if !out.success() {
+        bail!("failed to kill unit {unit_name}: {}", out.stderr);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -50,7 +50,7 @@ impl Drop for InstanceGuard {
             let mut buf = String::new();
             let _ = std::io::stdin().read_line(&mut buf);
         }
-        let _ = vm_launch::stop_instance(&self.name);
+        let _ = vm_launch::stop_instance(&self.name, true);
         let _ = instance_store::remove(&self.name);
     }
 }
@@ -223,7 +223,7 @@ fn e2e_lifecycle() {
     assert!(instance_store::instance_is_running(&name).unwrap());
 
     // Stop
-    vm_launch::stop_instance(&name).expect("stop failed");
+    vm_launch::stop_instance(&name, false).expect("stop failed");
 
     // Verify runtime cleared
     assert!(instance_store::find_runtime(&name).unwrap().is_none());
@@ -247,7 +247,7 @@ fn e2e_lifecycle() {
     assert_eq!(out.stdout, "back");
 
     // Remove
-    vm_launch::stop_instance(&name).expect("stop failed");
+    vm_launch::stop_instance(&name, false).expect("stop failed");
     instance_store::remove(&name).expect("remove failed");
     assert!(instance_store::find(&name).unwrap().is_none());
 }
@@ -480,13 +480,36 @@ fn e2e_graceful_shutdown() {
 
     // Stop and measure time — should complete well under 90s
     let start = std::time::Instant::now();
-    vm_launch::stop_instance(&name).expect("stop failed");
+    vm_launch::stop_instance(&name, false).expect("stop failed");
     let elapsed = start.elapsed();
 
     assert!(
         elapsed.as_secs() < 30,
         "stop took {}s, expected < 30s (graceful shutdown should be fast)",
         elapsed.as_secs()
+    );
+
+    assert!(!instance_store::instance_is_running(&name).unwrap());
+}
+
+#[test]
+#[ignore]
+fn e2e_force_shutdown() {
+    let name = unique_name("force-shutdown");
+    let _guard = InstanceGuard::new(&name);
+
+    let _runtime = provision_and_wait(&name);
+    assert!(instance_store::instance_is_running(&name).unwrap());
+
+    // Force stop should be near-instant — no ACPI, just SIGKILL.
+    let start = std::time::Instant::now();
+    vm_launch::stop_instance(&name, true).expect("force stop failed");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_secs() < 2,
+        "force stop took {:?}, expected < 2s",
+        elapsed
     );
 
     assert!(!instance_store::instance_is_running(&name).unwrap());
@@ -521,7 +544,7 @@ fn e2e_clean_shutdown_stops_helpers() {
     );
 
     // Stop the instance
-    vm_launch::stop_instance(&name).expect("stop failed");
+    vm_launch::stop_instance(&name, false).expect("stop failed");
 
     // All units should be inactive after stop
     assert!(
@@ -562,7 +585,7 @@ fn e2e_stop_start_ssh() {
     assert_eq!(out.stdout, "first-boot");
 
     // Stop the VM
-    vm_launch::stop_instance(&name).expect("stop failed");
+    vm_launch::stop_instance(&name, false).expect("stop failed");
 
     // Second boot: re-provision (reuses persistent disk) and verify SSH
     let runtime2 = provision_and_wait_with(&name, resolved);
