@@ -576,29 +576,27 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
         }
     }
 
-    // Step 4: Run switch-to-configuration on guest
-    let switch_action = match mode {
-        UpgradeMode::Switch => "switch",
-        UpgradeMode::Boot => "boot",
-    };
-    let step = ui::Step::start(&format!("Activating configuration ({switch_action})"));
-    let switch_cmd = format!("sudo {toplevel}/bin/switch-to-configuration {switch_action}");
-    match ssh::run_on_guest(instance, &switch_cmd) {
-        Ok(()) => step.finish(&format!("Activated configuration ({switch_action})")),
-        Err(e) => {
-            step.fail("Activation failed");
-            return Err(e);
-        }
-    }
-
     match mode {
         UpgradeMode::Switch => {
+            // Activate in-place via switch-to-configuration switch.
+            let step = ui::Step::start("Activating configuration (switch)");
+            let switch_cmd = format!("sudo {toplevel}/bin/switch-to-configuration switch");
+            match ssh::run_on_guest(instance, &switch_cmd) {
+                Ok(()) => step.finish("Activated configuration (switch)"),
+                Err(e) => {
+                    step.fail("Activation failed");
+                    return Err(e);
+                }
+            }
             // Update gcroots first, then state — if gcroots fails we don't
             // commit a descriptor whose paths aren't rooted.
             gcroots::create(instance, &new_desc)?;
             instance_store::update_descriptor(instance, new_desc)?;
         }
         UpgradeMode::Boot => {
+            // Boot mode rewrites kernel/initrd/cmdline in the descriptor and
+            // restarts the VM — there's no bootloader inside the guest, so
+            // running `switch-to-configuration boot` would have nothing to do.
             run_pre_stop_hooks(
                 instance,
                 &state.target,

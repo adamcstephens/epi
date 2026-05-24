@@ -20,6 +20,7 @@
 - Reduce shutdown timeout from 15s to 10s before force-killing the VM
 
 ### Fixed
+- `upgrade --mode boot`: Skip `switch-to-configuration boot` — the guest has no bootloader, so the new generation activates by rewriting kernel/initrd/cmdline in the descriptor and rebooting the VM
 - `list`: Remove `ContentArrangement::Dynamic` so table renders correctly without a TTY (fixes nix build test failures)
 - Fix mount paths under user's home creating intermediate directories owned by root instead of the user
 

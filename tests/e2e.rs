@@ -848,6 +848,67 @@ fn e2e_upgrade_switch() {
 
 #[test]
 #[ignore]
+fn e2e_upgrade_boot() {
+    let name = unique_name("upgradeboot");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+
+    // Record the boot_id so we can confirm the VM actually rebooted.
+    let out = ssh_exec(&runtime, "cat /proc/sys/kernel/random/boot_id");
+    assert!(
+        out.success(),
+        "pre-upgrade boot_id read failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    let pre_boot_id = out.stdout.trim().to_string();
+    assert!(
+        !pre_boot_id.is_empty(),
+        "pre-upgrade boot_id should not be empty"
+    );
+
+    // Invoke `epi upgrade --mode boot` via the CLI binary so we exercise the
+    // real command flow (which must NOT call switch-to-configuration).
+    // Override XDG_CONFIG_HOME to an empty dir so the user's host-side hooks
+    // don't run during the test.
+    let empty_xdg = TempDir::new().expect("tempdir failed");
+    let xdg_str = empty_xdg.path().to_string_lossy().into_owned();
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["upgrade", &name, "--mode", "boot"],
+        &[("XDG_CONFIG_HOME", &xdg_str)],
+    )
+    .expect("epi upgrade --mode boot failed to spawn");
+    assert!(
+        out.success(),
+        "epi upgrade --mode boot failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+
+    // After upgrade, the runtime is fresh — load it and SSH in.
+    let runtime2 = instance_store::find_runtime(&name)
+        .expect("find_runtime failed")
+        .expect("instance should have a runtime after upgrade --mode boot");
+
+    let out = ssh_exec(&runtime2, "cat /proc/sys/kernel/random/boot_id");
+    assert!(
+        out.success(),
+        "post-upgrade boot_id read failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    let post_boot_id = out.stdout.trim().to_string();
+    assert_ne!(
+        pre_boot_id, post_boot_id,
+        "VM should have rebooted (boot_id should change after upgrade --mode boot)"
+    );
+}
+
+#[test]
+#[ignore]
 fn e2e_mount_home_ownership() {
     let name = unique_name("mntowner");
     let _guard = InstanceGuard::new(&name);
