@@ -690,6 +690,63 @@ fn e2e_vm_crash_stops_helpers() {
 
 #[test]
 #[ignore]
+fn e2e_clear_stale_runtime_kills_lingering_helpers() {
+    let name = unique_name("staleclean");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+    let unit_id = runtime.unit_id.clone();
+    let vm_unit = instance_store::vm_unit_name(&name, &unit_id).unwrap();
+    let passt_unit = instance_store::passt_unit_name(&name, &unit_id).unwrap();
+    let inst_dir = instance_store::instance_dir(&name);
+    let passt_sock = inst_dir.join("passt.sock");
+
+    // Simulate a crashed VM with a leaked passt: kill only the VM main process
+    // bypassing PartOf= propagation by sending SIGKILL directly to the VM unit's
+    // main pid (so the slice doesn't trigger a clean stop of helpers).
+    process::run(
+        &process::systemctl_bin(),
+        &[
+            "--user",
+            "kill",
+            "--signal=SIGKILL",
+            "--kill-whom=main",
+            &vm_unit,
+        ],
+    )
+    .expect("failed to send SIGKILL to VM");
+
+    // Wait for VM unit to go inactive
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while process::unit_is_active(&vm_unit).unwrap() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "VM never went inactive"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    // Best-effort: at this point passt MAY have died via PartOf= or MAY still be
+    // alive. Either way, clear_stale_runtime must guarantee it's gone and the
+    // socket file is removed.
+    vm_launch::clear_stale_runtime(&name).expect("clear_stale_runtime failed");
+
+    assert!(
+        !process::unit_is_active(&passt_unit).unwrap(),
+        "passt unit should be inactive after clear_stale_runtime"
+    );
+    assert!(
+        !passt_sock.exists(),
+        "passt.sock should be removed after clear_stale_runtime"
+    );
+    assert!(
+        instance_store::find_runtime(&name).unwrap().is_none(),
+        "runtime state should be cleared"
+    );
+}
+
+#[test]
+#[ignore]
 fn e2e_cp_file_to_vm() {
     let name = unique_name("cp");
     let _guard = InstanceGuard::new(&name);

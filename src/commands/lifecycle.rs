@@ -21,12 +21,12 @@ pub fn cmd_launch(
         return cmd_info(instance);
     }
 
-    // If instance exists but stale, stop it first
+    // If instance exists but stale, clean it up first
     if instance_store::find_runtime(instance)?.is_some() {
         ui::info(&format!(
             "Instance {instance} has stale runtime, cleaning up"
         ));
-        let _ = vm_launch::stop_instance(instance, true);
+        let _ = vm_launch::clear_stale_runtime(instance);
     }
 
     let pre_existing = instance_store::find(instance)?.is_some();
@@ -431,7 +431,7 @@ pub fn cmd_start(
 pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
     if !instance_store::instance_is_running(instance)? {
         if instance_store::find_runtime(instance)?.is_some() {
-            instance_store::clear_runtime(instance)?;
+            vm_launch::clear_stale_runtime(instance)?;
             ui::info(&format!(
                 "Instance {instance} was already stopped (stale runtime cleared)"
             ));
