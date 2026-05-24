@@ -395,17 +395,9 @@ pub fn cmd_start(
     let state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found — use 'launch' first"))?;
 
-    // Use stored descriptor if available, otherwise resolve fresh
-    let desc = match &state.descriptor {
-        Some(desc) => {
-            ui::info(&format!("Using stored descriptor for {}", state.target));
-            desc.clone()
-        }
-        None => {
-            let cache_result = target::resolve_descriptor_cached(&state.target, false)?;
-            cache_result.descriptor().clone()
-        }
-    };
+    let desc = state.descriptor.clone().ok_or_else(|| {
+        anyhow::anyhow!("instance {instance} has no stored descriptor — re-launch required")
+    })?;
 
     // Build any missing artifacts
     let missing = target::missing_artifacts(&desc);

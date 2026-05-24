@@ -7,6 +7,7 @@
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
 
 ### Changed
+- `start`: Always use the descriptor stored at launch — no re-resolution, no `Using stored descriptor` info message
 - `upgrade`: Display store paths for toplevel, kernel, and initrd in preparation output, matching `launch` formatting
 - NixOS module: Cap per-user systemd manager `DefaultTimeoutStopSec` at 5s so a stuck user service can't block `multi-user.target` shutdown for the full 90s
 - NixOS module: Filter `configuredUsers` to only include normal users (`isNormalUser`), excluding system accounts (nixbld, nobody, sshd, etc.)
