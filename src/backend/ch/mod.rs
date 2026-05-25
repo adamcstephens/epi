@@ -10,10 +10,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{
-    Backend, BackendState, ChState, InstanceStatus, LaunchSpec, PortForward, RunningInstance,
-    SerialEndpoint,
+    Backend, BackendState, ChState, InstanceStatus, LaunchSpec, RunningInstance, SerialEndpoint,
 };
-use crate::instance_store::{self, PortMapping, Runtime};
+use crate::instance_store;
 use crate::{process, target};
 
 pub struct CloudHypervisorBackend;
@@ -121,14 +120,13 @@ fn launch_inner(spec: &LaunchSpec, unit_id: &str, slice: &str) -> Result<Running
     if passt_socket.exists() {
         fs::remove_file(&passt_socket)?;
     }
-    let port_mappings = to_port_mappings(&spec.port_forwards);
     passt::start_passt(
         &passt_unit,
         slice,
         Some(&vm_unit),
         &passt_socket.to_string_lossy(),
         spec.ssh_port,
-        &port_mappings,
+        &spec.port_forwards,
     )?;
 
     let mut helper_units = vec![passt_unit.clone()];
@@ -225,18 +223,14 @@ fn launch_inner(spec: &LaunchSpec, unit_id: &str, slice: &str) -> Result<Running
         backend: BackendState::CloudHypervisor(ChState {
             unit_id: unit_id.to_string(),
         }),
+        disk: disk_path.to_string_lossy().to_string(),
+        ssh_key_path: spec
+            .instance_dir
+            .join("id_ed25519")
+            .to_string_lossy()
+            .to_string(),
+        ports: spec.port_forwards.clone(),
     })
-}
-
-fn to_port_mappings(forwards: &[PortForward]) -> Vec<PortMapping> {
-    forwards
-        .iter()
-        .map(|pf| PortMapping {
-            host: pf.host,
-            guest: pf.guest,
-            protocol: "tcp".to_string(),
-        })
-        .collect()
 }
 
 /// Generate a deterministic MAC address from an instance name.
@@ -315,10 +309,9 @@ pub(crate) fn wait_for_socket(path: &str, max_wait_ms: u64) -> Result<()> {
 /// runs (graceful ACPI shutdown, capped by TimeoutStopSec). With `force=true`,
 /// the VM main process is SIGKILL'd directly.
 pub fn stop_instance(instance_name: &str, force: bool) -> Result<()> {
-    let runtime = instance_store::find_runtime(instance_name)?
+    let running = instance_store::find_runtime(instance_name)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance_name} has no runtime"))?;
 
-    let running = running_instance_from(instance_name, &runtime);
     let grace = if force {
         Duration::ZERO
     } else {
@@ -328,22 +321,6 @@ pub fn stop_instance(instance_name: &str, force: bool) -> Result<()> {
     CloudHypervisorBackend.stop(&running, grace)?;
     instance_store::clear_runtime(instance_name)?;
     Ok(())
-}
-
-fn running_instance_from(instance_name: &str, runtime: &Runtime) -> RunningInstance {
-    RunningInstance {
-        id: instance_name.to_string(),
-        ssh: SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            runtime.ssh_port.unwrap_or(0),
-        ),
-        serial: SerialEndpoint::UnixSocket {
-            path: PathBuf::from(&runtime.serial_socket),
-        },
-        backend: BackendState::CloudHypervisor(ChState {
-            unit_id: runtime.unit_id.clone(),
-        }),
-    }
 }
 
 /// Clean up a stale runtime: stop any leftover helper units and the slice,
@@ -356,13 +333,14 @@ pub fn clear_stale_runtime(instance_name: &str) -> Result<()> {
     if let Some(state) = instance_store::load_state(instance_name)?
         && let Some(rt) = state.runtime.as_ref()
     {
-        let passt_unit = instance_store::passt_unit_name(instance_name, &rt.unit_id)?;
+        let unit_id = ch_unit_id(rt)?;
+        let passt_unit = instance_store::passt_unit_name(instance_name, unit_id)?;
         let _ = process::stop_unit(&passt_unit);
         for i in 0..state.mounts.len() {
-            let vfsd_unit = instance_store::virtiofsd_unit_name(instance_name, &rt.unit_id, i)?;
+            let vfsd_unit = instance_store::virtiofsd_unit_name(instance_name, unit_id, i)?;
             let _ = process::stop_unit(&vfsd_unit);
         }
-        let slice = instance_store::slice_name(instance_name, &rt.unit_id)?;
+        let slice = instance_store::slice_name(instance_name, unit_id)?;
         let _ = process::stop_unit(&slice);
     }
 
@@ -468,11 +446,16 @@ mod tests {
 
         let state = instance_store::InstanceState {
             target: ".#dev".into(),
-            runtime: Some(Runtime {
-                unit_id: "deadbeef".into(),
-                serial_socket: String::new(),
+            runtime: Some(RunningInstance {
+                id: name.to_string(),
+                ssh: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 2222),
+                serial: SerialEndpoint::UnixSocket {
+                    path: PathBuf::new(),
+                },
+                backend: BackendState::CloudHypervisor(ChState {
+                    unit_id: "deadbeef".into(),
+                }),
                 disk: String::new(),
-                ssh_port: Some(2222),
                 ssh_key_path: String::new(),
                 ports: vec![],
             }),

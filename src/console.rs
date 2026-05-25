@@ -7,6 +7,7 @@ use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
+use crate::backend::SerialEndpoint;
 use crate::instance_store;
 
 /// Connect to serial socket with retries
@@ -36,9 +37,14 @@ pub fn attach(
     let runtime = instance_store::find_runtime(instance_name)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance_name} is not running"))?;
 
-    if runtime.serial_socket.is_empty() {
+    let serial_path = match &runtime.serial {
+        SerialEndpoint::UnixSocket { path } => path,
+        SerialEndpoint::Pty { path } => path,
+    };
+    if serial_path.as_os_str().is_empty() {
         bail!("no serial socket for instance {instance_name}");
     }
+    let serial_path_str = serial_path.to_string_lossy().to_string();
 
     // Dump scrollback from console.log before connecting
     let console_log = instance_store::console_log_path(instance_name);
@@ -55,7 +61,7 @@ pub fn attach(
         }
     }
 
-    let mut stream = connect_socket(&runtime.serial_socket, 40, Duration::from_millis(50))?;
+    let mut stream = connect_socket(&serial_path_str, 40, Duration::from_millis(50))?;
     stream.set_nonblocking(true)?;
 
     let is_tty = std::io::stdin().is_terminal();

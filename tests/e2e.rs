@@ -71,11 +71,14 @@ fn default_resolved() -> config::Resolved {
     }
 }
 
-fn provision_and_wait(name: &str) -> instance_store::Runtime {
+fn provision_and_wait(name: &str) -> instance_store::RunningInstance {
     provision_and_wait_with(name, default_resolved())
 }
 
-fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_store::Runtime {
+fn provision_and_wait_with(
+    name: &str,
+    resolved: config::Resolved,
+) -> instance_store::RunningInstance {
     instance_store::save_state(
         name,
         &instance_store::InstanceState {
@@ -107,7 +110,7 @@ fn provision_and_wait_with(name: &str, resolved: config::Resolved) -> instance_s
 
     instance_store::set_provisioned(name, runtime.clone(), None).expect("set_provisioned failed");
 
-    let ssh_port = runtime.ssh_port.expect("no ssh port");
+    let ssh_port = runtime.ssh.port();
     ssh::generate_config(
         &ssh::config_path(name),
         name,
@@ -127,8 +130,8 @@ fn ssh_user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "epi".to_string())
 }
 
-fn ssh_exec(runtime: &instance_store::Runtime, cmd: &str) -> process::Output {
-    let port = runtime.ssh_port.unwrap().to_string();
+fn ssh_exec(runtime: &instance_store::RunningInstance, cmd: &str) -> process::Output {
+    let port = runtime.ssh.port().to_string();
     let user_host = format!("{}@127.0.0.1", ssh_user());
     process::run(
         "ssh",
@@ -165,7 +168,7 @@ fn e2e_lifecycle() {
     resolved.cpus = 2;
     resolved.memory = 512;
     let runtime = provision_and_wait_with(&name, resolved.clone());
-    assert!(runtime.ssh_port.is_some());
+    assert!(runtime.ssh.port() != 0);
 
     // Verify port mapping was stored in runtime
     assert_eq!(runtime.ports.len(), 1, "expected 1 port mapping");
@@ -186,7 +189,7 @@ fn e2e_lifecycle() {
     assert_eq!(state.memory_mib, 512);
 
     // Verify passt was started with the additional port forwarding arg
-    let unit_id = &runtime.unit_id;
+    let unit_id = instance_store::ch_unit_id(&runtime);
     let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
     let passt_cmd = process::run(
         &process::systemctl_bin(),
@@ -260,7 +263,7 @@ fn e2e_ssh_config_trusted_after_launch() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let ssh_port = runtime.ssh_port.expect("no ssh port");
+    let ssh_port = runtime.ssh.port();
 
     // Record host key and rewrite config
     ssh::trust_host_key(
@@ -374,7 +377,7 @@ fn e2e_mount() {
 
     instance_store::set_provisioned(&name, runtime.clone(), None).unwrap();
 
-    let ssh_port = runtime.ssh_port.expect("no ssh port");
+    let ssh_port = runtime.ssh.port();
     ssh::generate_config(
         &ssh::config_path(&name),
         &name,
@@ -443,7 +446,7 @@ fn e2e_hooks() {
     let hook_scripts =
         hooks::discover(&name, &desc.hooks.post_launch_scripts(), "post-launch").unwrap();
 
-    let ssh_port = runtime.ssh_port.unwrap();
+    let ssh_port = runtime.ssh.port();
     let env = hooks::HookEnv {
         instance_name: name.clone(),
         ssh_port,
@@ -523,7 +526,7 @@ fn e2e_clean_shutdown_stops_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = &runtime.unit_id;
+    let unit_id = instance_store::ch_unit_id(&runtime);
 
     // Construct expected unit names
     let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
@@ -611,7 +614,7 @@ fn e2e_no_env_leak() {
     unsafe { std::env::set_var(sentinel, "leaked") };
 
     let runtime = provision_and_wait(&name);
-    let unit_id = &runtime.unit_id;
+    let unit_id = instance_store::ch_unit_id(&runtime);
 
     let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
     let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
@@ -652,7 +655,7 @@ fn e2e_vm_crash_stops_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = &runtime.unit_id;
+    let unit_id = instance_store::ch_unit_id(&runtime);
 
     let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
     let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
@@ -696,7 +699,7 @@ fn e2e_clear_stale_runtime_kills_lingering_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = runtime.unit_id.clone();
+    let unit_id = instance_store::ch_unit_id(&runtime).to_string();
     let vm_unit = instance_store::vm_unit_name(&name, &unit_id).unwrap();
     let passt_unit = instance_store::passt_unit_name(&name, &unit_id).unwrap();
     let inst_dir = instance_store::instance_dir(&name);
@@ -753,7 +756,7 @@ fn e2e_cp_file_to_vm() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let ssh_port = runtime.ssh_port.unwrap();
+    let ssh_port = runtime.ssh.port();
 
     // Create a temp file to copy
     let tmp_dir = TempDir::new().unwrap();

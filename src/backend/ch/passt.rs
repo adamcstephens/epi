@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 
-use crate::instance_store::PortMapping;
+use crate::backend::PortMapping;
 use crate::process;
 
 use super::wait_for_socket;

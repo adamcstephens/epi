@@ -4,9 +4,9 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use crate::backend::ch::CloudHypervisorBackend;
-use crate::backend::{Backend, BackendState, LaunchSpec, PortForward, SerialEndpoint, SharedDir};
+use crate::backend::{Backend, LaunchSpec, PortMapping, RunningInstance, SharedDir};
 use crate::hooks;
-use crate::instance_store::{self, Runtime};
+use crate::instance_store;
 use crate::process;
 use crate::target::{self, Descriptor};
 
@@ -32,7 +32,7 @@ pub struct ProvisionParams<'a> {
 }
 
 /// Provision a new VM: resolve target, validate, launch
-pub fn provision(params: &ProvisionParams) -> Result<Runtime> {
+pub fn provision(params: &ProvisionParams) -> Result<RunningInstance> {
     let cache_result = target::resolve_descriptor_cached(params.target_str, params.rebuild)?;
     let desc = cache_result.descriptor();
 
@@ -42,7 +42,10 @@ pub fn provision(params: &ProvisionParams) -> Result<Runtime> {
 }
 
 /// Provision a VM with an already-resolved descriptor (skips resolution/build).
-pub fn provision_with_descriptor(params: &ProvisionParams, desc: &Descriptor) -> Result<Runtime> {
+pub fn provision_with_descriptor(
+    params: &ProvisionParams,
+    desc: &Descriptor,
+) -> Result<RunningInstance> {
     let config = LaunchConfig {
         instance_name: params.instance_name,
         desc,
@@ -56,7 +59,7 @@ pub fn provision_with_descriptor(params: &ProvisionParams, desc: &Descriptor) ->
     launch_vm(&config)
 }
 
-fn launch_vm(config: &LaunchConfig) -> Result<Runtime> {
+fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
     let instance_name = config.instance_name;
     let desc = config.desc;
 
@@ -81,17 +84,15 @@ fn launch_vm(config: &LaunchConfig) -> Result<Runtime> {
     let ssh_port = allocate_port()?;
 
     // Parse and allocate user-specified port mappings
-    let mut port_mappings: Vec<instance_store::PortMapping> = vec![];
-    let mut port_forwards: Vec<PortForward> = vec![];
+    let mut port_forwards: Vec<PortMapping> = vec![];
     for spec in config.port_specs {
         let (host, guest) = instance_store::parse_port_mapping(spec)?;
         let host = if host == 0 { allocate_port()? } else { host };
-        port_mappings.push(instance_store::PortMapping {
+        port_forwards.push(PortMapping {
             host,
             guest,
             protocol: "tcp".to_string(),
         });
-        port_forwards.push(PortForward { host, guest });
     }
 
     // Generate seed ISO
@@ -138,27 +139,7 @@ fn launch_vm(config: &LaunchConfig) -> Result<Runtime> {
         instance_dir: inst_dir.clone(),
     };
 
-    let running = CloudHypervisorBackend.launch(&spec)?;
-
-    // Bridge: convert RunningInstance back to Runtime for the current
-    // state-store shape. Goes away when Runtime becomes RunningInstance (epi-17).
-    let unit_id = match &running.backend {
-        BackendState::CloudHypervisor(ch) => ch.unit_id.clone(),
-    };
-    let serial_socket = match &running.serial {
-        SerialEndpoint::UnixSocket { path } => path.to_string_lossy().to_string(),
-        SerialEndpoint::Pty { path } => path.to_string_lossy().to_string(),
-    };
-    let disk_str = inst_dir.join("disk.img").to_string_lossy().to_string();
-
-    Ok(Runtime {
-        unit_id,
-        serial_socket,
-        disk: disk_str,
-        ssh_port: Some(ssh_port),
-        ssh_key_path: ssh_key_path.to_string_lossy().to_string(),
-        ports: port_mappings,
-    })
+    CloudHypervisorBackend.launch(&spec)
 }
 
 fn read_ssh_pubkey(ssh_key_path: &Path) -> Result<String> {

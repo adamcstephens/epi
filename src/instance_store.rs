@@ -1,17 +1,15 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
+pub use crate::backend::RunningInstance;
+
+use crate::backend::{BackendState, ChState, SerialEndpoint};
 use crate::process;
 use crate::target;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PortMapping {
-    pub host: u16,
-    pub guest: u16,
-    pub protocol: String,
-}
 
 /// Parse a port mapping string like "8080:80" or ":443".
 /// Returns (host_port_or_zero, guest_port) — host=0 means auto-allocate.
@@ -35,17 +33,6 @@ pub fn parse_port_mapping(s: &str) -> Result<(u16, u16)> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Runtime {
-    pub unit_id: String,
-    pub serial_socket: String,
-    pub disk: String,
-    pub ssh_port: Option<u16>,
-    pub ssh_key_path: String,
-    #[serde(default)]
-    pub ports: Vec<PortMapping>,
-}
-
 fn default_cpus() -> u32 {
     1
 }
@@ -62,7 +49,7 @@ fn default_disk_size() -> String {
 pub struct InstanceState {
     pub target: String,
     #[serde(default)]
-    pub runtime: Option<Runtime>,
+    pub runtime: Option<RunningInstance>,
     #[serde(default)]
     pub mounts: Vec<String>,
     #[serde(default)]
@@ -118,9 +105,60 @@ pub fn load_state(name: &str) -> Result<Option<InstanceState>> {
     }
     let content =
         fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let state: InstanceState =
+    let mut value: serde_json::Value =
         serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
+
+    let migrated = migrate_legacy_runtime(&mut value, name);
+
+    let state: InstanceState = serde_json::from_value(value)
+        .with_context(|| format!("deserializing {}", path.display()))?;
+
+    if migrated {
+        let new_content = serde_json::to_string_pretty(&state)?;
+        fs::write(&path, new_content).with_context(|| format!("rewriting {}", path.display()))?;
+    }
+
     Ok(Some(state))
+}
+
+/// Migrate a pre-epi-17 state.json shape (flat CH/systemd fields on `runtime`)
+/// to the tagged `RunningInstance` shape. Returns true if a migration happened.
+fn migrate_legacy_runtime(value: &mut serde_json::Value, name: &str) -> bool {
+    let Some(runtime) = value.get_mut("runtime") else {
+        return false;
+    };
+    if runtime.is_null() {
+        return false;
+    }
+    let Some(obj) = runtime.as_object_mut() else {
+        return false;
+    };
+    // Legacy shape has flat `unit_id` and lacks the new tagged `backend`.
+    if !obj.contains_key("unit_id") || obj.contains_key("backend") {
+        return false;
+    }
+
+    let unit_id = obj
+        .remove("unit_id")
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+    let serial_socket = obj
+        .remove("serial_socket")
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+    let ssh_port = obj.remove("ssh_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+
+    obj.insert("id".into(), json!(name));
+    obj.insert("ssh".into(), json!(format!("127.0.0.1:{ssh_port}")));
+    obj.insert(
+        "serial".into(),
+        json!({"kind": "unix_socket", "path": serial_socket}),
+    );
+    obj.insert(
+        "backend".into(),
+        json!({"kind": "cloud_hypervisor", "unit_id": unit_id}),
+    );
+    true
 }
 
 pub fn save_state(name: &str, state: &InstanceState) -> Result<()> {
@@ -146,11 +184,16 @@ pub fn canonicalize_mounts(mounts: &[String]) -> Vec<String> {
 pub fn set_partial_runtime(name: &str, unit_id: &str) -> Result<()> {
     let mut state =
         load_state(name)?.ok_or_else(|| anyhow::anyhow!("instance {name} does not exist"))?;
-    state.runtime = Some(Runtime {
-        unit_id: unit_id.to_string(),
-        serial_socket: String::new(),
+    state.runtime = Some(RunningInstance {
+        id: name.to_string(),
+        ssh: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        serial: SerialEndpoint::UnixSocket {
+            path: PathBuf::new(),
+        },
+        backend: BackendState::CloudHypervisor(ChState {
+            unit_id: unit_id.to_string(),
+        }),
         disk: String::new(),
-        ssh_port: None,
         ssh_key_path: String::new(),
         ports: vec![],
     });
@@ -159,7 +202,7 @@ pub fn set_partial_runtime(name: &str, unit_id: &str) -> Result<()> {
 
 pub fn set_provisioned(
     name: &str,
-    runtime: Runtime,
+    runtime: RunningInstance,
     descriptor: Option<target::Descriptor>,
 ) -> Result<()> {
     let mut state =
@@ -190,8 +233,17 @@ pub fn find(name: &str) -> Result<Option<String>> {
     Ok(load_state(name)?.map(|s| s.target))
 }
 
-pub fn find_runtime(name: &str) -> Result<Option<Runtime>> {
+pub fn find_runtime(name: &str) -> Result<Option<RunningInstance>> {
     Ok(load_state(name)?.and_then(|s| s.runtime))
+}
+
+/// Extract the CH unit id from a `RunningInstance`. Only valid for instances
+/// running on the cloud-hypervisor backend; will need a match update when the
+/// VZ backend lands.
+pub fn ch_unit_id(runtime: &RunningInstance) -> &str {
+    match &runtime.backend {
+        BackendState::CloudHypervisor(ch) => &ch.unit_id,
+    }
 }
 
 pub fn list() -> Result<Vec<(String, String, Option<String>)>> {
@@ -263,7 +315,7 @@ pub fn instance_is_running(name: &str) -> Result<bool> {
         Some(r) => r,
         None => return Ok(false),
     };
-    let unit = vm_unit_name(name, &runtime.unit_id)?;
+    let unit = vm_unit_name(name, ch_unit_id(&runtime))?;
     process::unit_is_active(&unit)
 }
 
@@ -280,9 +332,10 @@ pub fn find_running_owner_by_disk(disk: &str) -> Result<Option<(String, String)>
                 && let Some(ref rt) = state.runtime
                 && rt.disk == disk
             {
-                let unit = vm_unit_name(&name, &rt.unit_id)?;
+                let unit_id = ch_unit_id(rt);
+                let unit = vm_unit_name(&name, unit_id)?;
                 if process::unit_is_active(&unit)? {
-                    return Ok(Some((name, rt.unit_id.clone())));
+                    return Ok(Some((name, unit_id.to_string())));
                 }
             }
         }
@@ -297,6 +350,7 @@ pub fn console_log_path(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::PortMapping;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -316,18 +370,28 @@ mod tests {
         Some(serde_json::from_str(&content).unwrap())
     }
 
+    /// Construct a `RunningInstance` for tests with the given unit_id and ssh port.
+    fn test_runtime(name: &str, unit_id: &str, ssh_port: u16) -> RunningInstance {
+        RunningInstance {
+            id: name.to_string(),
+            ssh: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), ssh_port),
+            serial: SerialEndpoint::UnixSocket {
+                path: PathBuf::from("/s"),
+            },
+            backend: BackendState::CloudHypervisor(ChState {
+                unit_id: unit_id.to_string(),
+            }),
+            disk: "/d".into(),
+            ssh_key_path: "/k".into(),
+            ports: vec![],
+        }
+    }
+
     #[test]
     fn state_json_roundtrip() {
         let state = InstanceState {
             target: ".#test".into(),
-            runtime: Some(Runtime {
-                unit_id: "aabb".into(),
-                serial_socket: "/s".into(),
-                disk: "/d".into(),
-                ssh_port: Some(3333),
-                ssh_key_path: "/k".into(),
-                ports: vec![],
-            }),
+            runtime: Some(test_runtime("vm1", "aabb", 3333)),
             mounts: vec!["/a".into(), "/b".into()],
             project_dir: None,
             disk_size: String::new(),
@@ -340,7 +404,7 @@ mod tests {
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.target, ".#test");
-        assert_eq!(parsed.runtime.unwrap().ssh_port, Some(3333));
+        assert_eq!(parsed.runtime.unwrap().ssh.port(), 3333);
         assert_eq!(parsed.mounts.len(), 2);
     }
 
@@ -431,22 +495,15 @@ mod tests {
 
         // Simulate set_provisioned
         let mut loaded = read_state(dir.path(), "vm1").unwrap();
-        loaded.runtime = Some(Runtime {
-            unit_id: "abcd1234".into(),
-            serial_socket: "/tmp/serial.sock".into(),
-            disk: "/tmp/disk.img".into(),
-            ssh_port: Some(2222),
-            ssh_key_path: "/tmp/id_ed25519".into(),
-            ports: vec![],
-        });
+        loaded.runtime = Some(test_runtime("vm1", "abcd1234", 2222));
         write_state(dir.path(), "vm1", &loaded);
 
         let result = read_state(dir.path(), "vm1").unwrap();
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        assert_eq!(rt.unit_id, "abcd1234");
-        assert_eq!(rt.ssh_port, Some(2222));
+        assert_eq!(ch_unit_id(&rt), "abcd1234");
+        assert_eq!(rt.ssh.port(), 2222);
     }
 
     #[test]
@@ -454,14 +511,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let state = InstanceState {
             target: ".#dev".into(),
-            runtime: Some(Runtime {
-                unit_id: "abcd".into(),
-                serial_socket: "".into(),
-                disk: "".into(),
-                ssh_port: Some(2222),
-                ssh_key_path: "".into(),
-                ports: vec![],
-            }),
+            runtime: Some(test_runtime("vm1", "abcd", 2222)),
             mounts: vec![],
             project_dir: None,
             disk_size: String::new(),
@@ -502,11 +552,16 @@ mod tests {
 
         // Simulate set_partial_runtime
         let mut loaded = read_state(dir.path(), "vm1").unwrap();
-        loaded.runtime = Some(Runtime {
-            unit_id: "abc12345".into(),
-            serial_socket: String::new(),
+        loaded.runtime = Some(RunningInstance {
+            id: "vm1".into(),
+            ssh: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            serial: SerialEndpoint::UnixSocket {
+                path: PathBuf::new(),
+            },
+            backend: BackendState::CloudHypervisor(ChState {
+                unit_id: "abc12345".into(),
+            }),
             disk: String::new(),
-            ssh_port: None,
             ssh_key_path: String::new(),
             ports: vec![],
         });
@@ -516,9 +571,12 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        assert_eq!(rt.unit_id, "abc12345");
-        assert!(rt.ssh_port.is_none());
-        assert!(rt.serial_socket.is_empty());
+        assert_eq!(ch_unit_id(&rt), "abc12345");
+        assert_eq!(rt.ssh.port(), 0);
+        match &rt.serial {
+            SerialEndpoint::UnixSocket { path } => assert!(path.as_os_str().is_empty()),
+            SerialEndpoint::Pty { .. } => panic!("expected unix socket"),
+        }
     }
 
     #[test]
@@ -624,18 +682,57 @@ mod tests {
     }
 
     #[test]
-    fn runtime_ssh_port_optional() {
-        let rt = Runtime {
-            unit_id: "abc".into(),
-            serial_socket: "/s".into(),
-            disk: "/d".into(),
-            ssh_port: None,
-            ssh_key_path: "/k".into(),
-            ports: vec![],
-        };
-        let json = serde_json::to_string(&rt).unwrap();
-        let parsed: Runtime = serde_json::from_str(&json).unwrap();
-        assert!(parsed.ssh_port.is_none());
+    fn migrate_legacy_runtime_rewrites_state_json() {
+        let dir = TempDir::new().unwrap();
+        unsafe { std::env::set_var("EPI_STATE_DIR", dir.path()) };
+
+        // Write a legacy-shape state.json directly (flat CH fields on runtime)
+        let name = "legacy";
+        let inst_dir = dir.path().join(name);
+        fs::create_dir_all(&inst_dir).unwrap();
+        let legacy = r#"{
+            "target": ".#dev",
+            "runtime": {
+                "unit_id": "u-old",
+                "serial_socket": "/tmp/old/serial.sock",
+                "disk": "/tmp/old/disk.img",
+                "ssh_port": 2222,
+                "ssh_key_path": "/tmp/old/key",
+                "ports": [{"host":8080,"guest":80,"protocol":"tcp"}]
+            },
+            "mounts": [],
+            "disk_size": "40G",
+            "cpus": 2,
+            "memory_mib": 1024,
+            "port_specs": [],
+            "ssh_extra_config": []
+        }"#;
+        fs::write(inst_dir.join("state.json"), legacy).unwrap();
+
+        let state = load_state(name).unwrap().unwrap();
+        let rt = state.runtime.expect("runtime missing after migration");
+        assert_eq!(rt.id, name);
+        assert_eq!(ch_unit_id(&rt), "u-old");
+        assert_eq!(rt.ssh.port(), 2222);
+        assert_eq!(rt.disk, "/tmp/old/disk.img");
+        assert_eq!(rt.ssh_key_path, "/tmp/old/key");
+        assert_eq!(rt.ports.len(), 1);
+        match &rt.serial {
+            SerialEndpoint::UnixSocket { path } => {
+                assert_eq!(path.to_string_lossy(), "/tmp/old/serial.sock");
+            }
+            SerialEndpoint::Pty { .. } => panic!("expected unix socket"),
+        }
+
+        // Verify the file was rewritten in the new tagged shape
+        let rewritten = fs::read_to_string(inst_dir.join("state.json")).unwrap();
+        assert!(rewritten.contains(r#""kind": "cloud_hypervisor""#));
+        assert!(rewritten.contains(r#""kind": "unix_socket""#));
+        assert!(!rewritten.contains(r#""unit_id": "u-old","#)); // not at top level any more
+        // Second load is a no-op (already migrated)
+        let _ = load_state(name).unwrap();
+
+        unsafe { std::env::remove_var("EPI_STATE_DIR") };
     }
 
     #[test]
@@ -736,27 +833,21 @@ mod tests {
 
     #[test]
     fn runtime_with_ports_roundtrip() {
-        let rt = Runtime {
-            unit_id: "abc".into(),
-            serial_socket: "/s".into(),
-            disk: "/d".into(),
-            ssh_port: Some(2222),
-            ssh_key_path: "/k".into(),
-            ports: vec![
-                PortMapping {
-                    host: 8080,
-                    guest: 80,
-                    protocol: "tcp".into(),
-                },
-                PortMapping {
-                    host: 4443,
-                    guest: 443,
-                    protocol: "tcp".into(),
-                },
-            ],
-        };
+        let mut rt = test_runtime("vm1", "abc", 2222);
+        rt.ports = vec![
+            PortMapping {
+                host: 8080,
+                guest: 80,
+                protocol: "tcp".into(),
+            },
+            PortMapping {
+                host: 4443,
+                guest: 443,
+                protocol: "tcp".into(),
+            },
+        ];
         let json = serde_json::to_string(&rt).unwrap();
-        let parsed: Runtime = serde_json::from_str(&json).unwrap();
+        let parsed: RunningInstance = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.ports.len(), 2);
         assert_eq!(parsed.ports[0].host, 8080);
         assert_eq!(parsed.ports[1].guest, 443);
@@ -764,9 +855,16 @@ mod tests {
 
     #[test]
     fn runtime_without_ports_deserializes_empty() {
-        // Old state.json without "ports" field should still deserialize
-        let json = r#"{"unit_id":"abc","serial_socket":"/s","disk":"/d","ssh_port":2222,"ssh_key_path":"/k"}"#;
-        let parsed: Runtime = serde_json::from_str(json).unwrap();
+        // New-shape state.json without "ports" field on runtime should still deserialize
+        let json = r#"{
+            "id": "vm1",
+            "ssh": "127.0.0.1:2222",
+            "serial": {"kind":"unix_socket","path":"/s"},
+            "backend": {"kind":"cloud_hypervisor","unit_id":"abc"},
+            "disk": "/d",
+            "ssh_key_path": "/k"
+        }"#;
+        let parsed: RunningInstance = serde_json::from_str(json).unwrap();
         assert!(parsed.ports.is_empty());
     }
 

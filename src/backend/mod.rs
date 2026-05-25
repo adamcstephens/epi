@@ -25,16 +25,18 @@ pub struct LaunchSpec {
     pub memory_mib: u32,
     pub ssh_pubkey: String,
     pub ssh_port: u16,
-    pub port_forwards: Vec<PortForward>,
+    pub port_forwards: Vec<PortMapping>,
     pub disk_size: String,
     pub instance_dir: PathBuf,
 }
 
-/// A TCP port forwarded from host to guest.
-#[derive(Debug, Clone)]
-pub struct PortForward {
+/// A TCP port forwarded from host to guest. Persisted on `RunningInstance`
+/// and threaded through `LaunchSpec` so backends know what to configure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortMapping {
     pub host: u16,
     pub guest: u16,
+    pub protocol: String,
 }
 
 /// A host directory shared into the guest via virtio-fs.
@@ -64,6 +66,10 @@ pub struct RunningInstance {
     pub ssh: SocketAddr,
     pub serial: SerialEndpoint,
     pub backend: BackendState,
+    pub disk: String,
+    pub ssh_key_path: String,
+    #[serde(default)]
+    pub ports: Vec<PortMapping>,
 }
 
 /// Backend-specific per-instance state. Opaque to shared code; each backend
@@ -153,6 +159,9 @@ mod tests {
             backend: BackendState::CloudHypervisor(ChState {
                 unit_id: "u1".into(),
             }),
+            disk: "/inst/disk.img".into(),
+            ssh_key_path: "/inst/id_ed25519".into(),
+            ports: vec![],
         };
         let json = serde_json::to_string(&ri).unwrap();
         let parsed: RunningInstance = serde_json::from_str(&json).unwrap();
@@ -170,6 +179,13 @@ mod tests {
             backend: BackendState::CloudHypervisor(ChState {
                 unit_id: "u2".into(),
             }),
+            disk: "/inst/disk.img".into(),
+            ssh_key_path: "/inst/id_ed25519".into(),
+            ports: vec![PortMapping {
+                host: 8080,
+                guest: 80,
+                protocol: "tcp".into(),
+            }],
         };
         let json = serde_json::to_string(&ri).unwrap();
         let parsed: RunningInstance = serde_json::from_str(&json).unwrap();

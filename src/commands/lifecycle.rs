@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use epi::backend::ch;
 use epi::{config, console, gcroots, hooks, instance_store, ssh, target, ui, vm_launch};
@@ -73,7 +73,8 @@ pub fn cmd_launch(
     };
 
     let ssh_key_path = runtime.ssh_key_path.clone();
-    let ssh_port = runtime.ssh_port;
+    let port = runtime.ssh.port();
+    let ssh_port: Option<u16> = (port != 0).then_some(port);
 
     instance_store::set_provisioned(instance, runtime, Some(descriptor))?;
 
@@ -160,7 +161,7 @@ pub fn cmd_launch(
 
 fn prepare_and_provision(
     params: &vm_launch::ProvisionParams,
-) -> Result<(instance_store::Runtime, target::Descriptor)> {
+) -> Result<(epi::backend::RunningInstance, target::Descriptor)> {
     let group = ui::Group::start("Preparing");
 
     // Resolve target descriptor
@@ -280,7 +281,8 @@ fn launch_with_descriptor(
     };
 
     let ssh_key_path = runtime.ssh_key_path.clone();
-    let ssh_port = runtime.ssh_port;
+    let port = runtime.ssh.port();
+    let ssh_port: Option<u16> = (port != 0).then_some(port);
 
     instance_store::set_provisioned(instance, runtime, Some(desc.clone()))?;
 
@@ -447,15 +449,17 @@ pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
         let state = instance_store::load_state(instance)?;
         if let Some(ref st) = state
             && let Some(ref rt) = st.runtime
-            && let Some(ssh_port) = rt.ssh_port
         {
-            run_pre_stop_hooks(
-                instance,
-                &st.target,
-                ssh_port,
-                &rt.ssh_key_path,
-                st.project_dir.clone(),
-            )?;
+            let port = rt.ssh.port();
+            if port != 0 {
+                run_pre_stop_hooks(
+                    instance,
+                    &st.target,
+                    port,
+                    &rt.ssh_key_path,
+                    st.project_dir.clone(),
+                )?;
+            }
         }
     }
 
@@ -514,9 +518,10 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("instance {instance} has no runtime"))?;
 
-    let ssh_port = runtime
-        .ssh_port
-        .ok_or_else(|| anyhow::anyhow!("instance {instance} has no SSH port"))?;
+    let ssh_port = match runtime.ssh.port() {
+        0 => bail!("instance {instance} has no SSH port"),
+        p => p,
+    };
     let ssh_key_path = runtime.ssh_key_path.clone();
 
     // Step 1: Re-evaluate target (force cache bust)
@@ -677,7 +682,8 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
     let (runtime, descriptor) = prepare_and_provision(&params)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
-    let ssh_port = runtime.ssh_port;
+    let port = runtime.ssh.port();
+    let ssh_port: Option<u16> = (port != 0).then_some(port);
 
     instance_store::set_provisioned(instance, runtime, Some(descriptor))?;
 

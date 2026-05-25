@@ -44,7 +44,8 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     // Network
     if let Some(ref rt) = state.runtime {
         let mut net_rows = Vec::new();
-        if let Some(port) = rt.ssh_port {
+        let port = rt.ssh.port();
+        if port != 0 {
             net_rows.push(("ssh_port".into(), port.to_string()));
             let config = ssh::config_path(instance);
             net_rows.push(("ssh_config".into(), strip_home(&config.to_string_lossy())));
@@ -86,19 +87,24 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     // Runtime tree (rendered separately, outside the key-value table)
     if running {
         if let Some(ref rt) = state.runtime {
-            let slice = instance_store::slice_name(instance, &rt.unit_id)?;
+            let slice = instance_store::slice_name(instance, instance_store::ch_unit_id(rt))?;
 
             // Build unit list: vm, passt, virtiofsd(s)
-            let vm_unit = instance_store::vm_unit_name(instance, &rt.unit_id)?;
+            let vm_unit = instance_store::vm_unit_name(instance, instance_store::ch_unit_id(rt))?;
             let mut units = vec![vm_unit];
 
-            let passt_unit = instance_store::passt_unit_name(instance, &rt.unit_id)?;
+            let passt_unit =
+                instance_store::passt_unit_name(instance, instance_store::ch_unit_id(rt))?;
             if process::unit_is_active(&passt_unit)? {
                 units.push(passt_unit);
             }
 
             for i in 0.. {
-                let vfsd_unit = instance_store::virtiofsd_unit_name(instance, &rt.unit_id, i)?;
+                let vfsd_unit = instance_store::virtiofsd_unit_name(
+                    instance,
+                    instance_store::ch_unit_id(rt),
+                    i,
+                )?;
                 if !process::unit_is_active(&vfsd_unit)? {
                     break;
                 }
@@ -179,7 +185,8 @@ pub fn cmd_list() -> Result<()> {
             let rt = instance_store::find_runtime(name)?;
             let ssh = rt
                 .as_ref()
-                .and_then(|rt| rt.ssh_port)
+                .map(|rt| rt.ssh.port())
+                .filter(|p| *p != 0)
                 .map(|p| format!("127.0.0.1:{p}"))
                 .unwrap_or_else(|| "\u{2014}".to_string());
             let ports = rt
@@ -216,7 +223,7 @@ pub fn cmd_logs(instance: &str) -> Result<()> {
     let runtime = instance_store::find_runtime(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found or not running"))?;
 
-    let slice = instance_store::slice_name(instance, &runtime.unit_id)?;
+    let slice = instance_store::slice_name(instance, instance_store::ch_unit_id(&runtime))?;
     let err = std::process::Command::new("journalctl")
         .args(["--user", "--unit", &slice, "--follow"])
         .exec();
