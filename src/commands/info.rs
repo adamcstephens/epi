@@ -2,13 +2,14 @@ use anyhow::{Result, bail};
 use std::os::unix::process::CommandExt;
 use std::time::Duration;
 
+use epi::backend::{self, ch};
 use epi::{instance_store, process, ssh, ui};
 
 pub fn cmd_info(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
 
-    let running = instance_store::instance_is_running(instance)?;
+    let running = backend::instance_is_running(instance)?;
 
     // Build sections
     let mut sections = Vec::new();
@@ -87,24 +88,19 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     // Runtime tree (rendered separately, outside the key-value table)
     if running {
         if let Some(ref rt) = state.runtime {
-            let slice = instance_store::slice_name(instance, instance_store::ch_unit_id(rt))?;
+            let slice = ch::systemd::slice_name(instance, ch::ch_unit_id(rt))?;
 
             // Build unit list: vm, passt, virtiofsd(s)
-            let vm_unit = instance_store::vm_unit_name(instance, instance_store::ch_unit_id(rt))?;
+            let vm_unit = ch::systemd::vm_unit_name(instance, ch::ch_unit_id(rt))?;
             let mut units = vec![vm_unit];
 
-            let passt_unit =
-                instance_store::passt_unit_name(instance, instance_store::ch_unit_id(rt))?;
+            let passt_unit = ch::systemd::passt_unit_name(instance, ch::ch_unit_id(rt))?;
             if process::unit_is_active(&passt_unit)? {
                 units.push(passt_unit);
             }
 
             for i in 0.. {
-                let vfsd_unit = instance_store::virtiofsd_unit_name(
-                    instance,
-                    instance_store::ch_unit_id(rt),
-                    i,
-                )?;
+                let vfsd_unit = ch::systemd::virtiofsd_unit_name(instance, ch::ch_unit_id(rt), i)?;
                 if !process::unit_is_active(&vfsd_unit)? {
                     break;
                 }
@@ -179,7 +175,7 @@ pub fn cmd_list() -> Result<()> {
 
     let mut rows = Vec::new();
     for (name, target_str, project_dir) in &instances {
-        let running = instance_store::instance_is_running(name)?;
+        let running = backend::instance_is_running(name)?;
         let status = ui::status_dot(running);
         let (ssh, ports_str) = if running {
             let rt = instance_store::find_runtime(name)?;
@@ -223,7 +219,7 @@ pub fn cmd_logs(instance: &str) -> Result<()> {
     let runtime = instance_store::find_runtime(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found or not running"))?;
 
-    let slice = instance_store::slice_name(instance, instance_store::ch_unit_id(&runtime))?;
+    let slice = ch::systemd::slice_name(instance, ch::ch_unit_id(&runtime))?;
     let err = std::process::Command::new("journalctl")
         .args(["--user", "--unit", &slice, "--follow"])
         .exec();

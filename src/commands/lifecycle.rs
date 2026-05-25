@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 
-use epi::backend::ch;
+use epi::backend::{self, ch};
 use epi::{config, console, gcroots, hooks, instance_store, ssh, target, ui, vm_launch};
 
 use super::info::cmd_info;
@@ -14,7 +14,7 @@ pub fn cmd_launch(
     wait_timeout: u64,
 ) -> Result<()> {
     // Check if already running
-    if instance_store::instance_is_running(instance)? {
+    if backend::instance_is_running(instance)? {
         ui::info(&format!("Instance {instance} is already running"));
         if attach_console {
             return console::attach(instance, None, None);
@@ -387,7 +387,7 @@ pub fn cmd_start(
     no_provision: bool,
     wait_timeout: u64,
 ) -> Result<()> {
-    if instance_store::instance_is_running(instance)? {
+    if backend::instance_is_running(instance)? {
         ui::info(&format!("Instance {instance} is already running"));
         if attach_console {
             return console::attach(instance, None, None);
@@ -432,7 +432,7 @@ pub fn cmd_start(
 }
 
 pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
-    if !instance_store::instance_is_running(instance)? {
+    if !backend::instance_is_running(instance)? {
         if instance_store::find_runtime(instance)?.is_some() {
             ch::clear_stale_runtime(instance)?;
             ui::info(&format!(
@@ -480,7 +480,7 @@ pub fn cmd_rm(instance: &str, force: bool) -> Result<()> {
         anyhow::bail!("instance {instance} not found");
     }
 
-    let running = instance_store::instance_is_running(instance)?;
+    let running = backend::instance_is_running(instance)?;
 
     if running && !force {
         anyhow::bail!("instance {instance} is running — use --force to terminate and remove");
@@ -506,7 +506,7 @@ pub enum UpgradeMode {
 
 pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Result<()> {
     // Instance must be running
-    if !instance_store::instance_is_running(instance)? {
+    if !backend::instance_is_running(instance)? {
         anyhow::bail!("instance {instance} is not running — upgrade requires a running instance");
     }
 
@@ -655,7 +655,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
 
-    let was_running = instance_store::instance_is_running(instance)?;
+    let was_running = backend::instance_is_running(instance)?;
     if was_running {
         let step = ui::Step::start(&format!("Stopping {instance} for rebuild"));
         ch::stop_instance(instance, false)?;

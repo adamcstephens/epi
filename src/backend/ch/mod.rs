@@ -20,7 +20,7 @@ pub struct CloudHypervisorBackend;
 impl Backend for CloudHypervisorBackend {
     fn launch(&self, spec: &LaunchSpec) -> Result<RunningInstance> {
         let unit_id = process::generate_unit_id();
-        let slice = instance_store::slice_name(&spec.id, &unit_id)?;
+        let slice = systemd::slice_name(&spec.id, &unit_id)?;
 
         let result = launch_inner(spec, &unit_id, &slice);
         if result.is_err() {
@@ -30,9 +30,9 @@ impl Backend for CloudHypervisorBackend {
     }
 
     fn stop(&self, instance: &RunningInstance, grace: Duration) -> Result<()> {
-        let unit_id = ch_unit_id(instance)?;
-        let vm_unit = instance_store::vm_unit_name(&instance.id, unit_id)?;
-        let slice = instance_store::slice_name(&instance.id, unit_id)?;
+        let unit_id = ch_unit_id(instance);
+        let vm_unit = systemd::vm_unit_name(&instance.id, unit_id)?;
+        let slice = systemd::slice_name(&instance.id, unit_id)?;
 
         if grace.is_zero() {
             let _ = process::kill_unit(&vm_unit);
@@ -44,8 +44,8 @@ impl Backend for CloudHypervisorBackend {
     }
 
     fn status(&self, instance: &RunningInstance) -> Result<InstanceStatus> {
-        let unit_id = ch_unit_id(instance)?;
-        let vm_unit = instance_store::vm_unit_name(&instance.id, unit_id)?;
+        let unit_id = ch_unit_id(instance);
+        let vm_unit = systemd::vm_unit_name(&instance.id, unit_id)?;
         if process::unit_is_active(&vm_unit)? {
             Ok(InstanceStatus::Running)
         } else {
@@ -54,9 +54,11 @@ impl Backend for CloudHypervisorBackend {
     }
 }
 
-fn ch_unit_id(instance: &RunningInstance) -> Result<&str> {
+/// Extract the unit_id from a `RunningInstance` whose backend is CH.
+/// Used by callers that already know they're working with a CH instance.
+pub fn ch_unit_id(instance: &RunningInstance) -> &str {
     match &instance.backend {
-        BackendState::CloudHypervisor(ch) => Ok(&ch.unit_id),
+        BackendState::CloudHypervisor(ch) => &ch.unit_id,
     }
 }
 
@@ -81,7 +83,7 @@ fn launch_inner(spec: &LaunchSpec, unit_id: &str, slice: &str) -> Result<Running
     }
     let api_socket_str = api_socket.to_string_lossy().to_string();
 
-    let vm_unit = instance_store::vm_unit_name(&spec.id, unit_id)?;
+    let vm_unit = systemd::vm_unit_name(&spec.id, unit_id)?;
 
     // Resolve required binaries (fail early if missing)
     let ch_remote_path = process::find_executable(args::CH_REMOTE_BINARY)
@@ -115,7 +117,7 @@ fn launch_inner(spec: &LaunchSpec, unit_id: &str, slice: &str) -> Result<Running
     instance_store::set_partial_runtime(&spec.id, unit_id)?;
 
     // Start passt for networking
-    let passt_unit = instance_store::passt_unit_name(&spec.id, unit_id)?;
+    let passt_unit = systemd::passt_unit_name(&spec.id, unit_id)?;
     let passt_socket = spec.instance_dir.join("passt.sock");
     if passt_socket.exists() {
         fs::remove_file(&passt_socket)?;
@@ -140,7 +142,7 @@ fn launch_inner(spec: &LaunchSpec, unit_id: &str, slice: &str) -> Result<Running
                 share.host_path.display()
             );
         }
-        let vfsd_unit = instance_store::virtiofsd_unit_name(&spec.id, unit_id, i)?;
+        let vfsd_unit = systemd::virtiofsd_unit_name(&spec.id, unit_id, i)?;
         let vfsd_socket = spec.instance_dir.join(format!("virtiofsd-{i}.sock"));
         if vfsd_socket.exists() {
             fs::remove_file(&vfsd_socket)?;
@@ -333,14 +335,14 @@ pub fn clear_stale_runtime(instance_name: &str) -> Result<()> {
     if let Some(state) = instance_store::load_state(instance_name)?
         && let Some(rt) = state.runtime.as_ref()
     {
-        let unit_id = ch_unit_id(rt)?;
-        let passt_unit = instance_store::passt_unit_name(instance_name, unit_id)?;
+        let unit_id = ch_unit_id(rt);
+        let passt_unit = systemd::passt_unit_name(instance_name, unit_id)?;
         let _ = process::stop_unit(&passt_unit);
         for i in 0..state.mounts.len() {
-            let vfsd_unit = instance_store::virtiofsd_unit_name(instance_name, unit_id, i)?;
+            let vfsd_unit = systemd::virtiofsd_unit_name(instance_name, unit_id, i)?;
             let _ = process::stop_unit(&vfsd_unit);
         }
-        let slice = instance_store::slice_name(instance_name, unit_id)?;
+        let slice = systemd::slice_name(instance_name, unit_id)?;
         let _ = process::stop_unit(&slice);
     }
 

@@ -4,7 +4,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use crate::backend::ch::CloudHypervisorBackend;
-use crate::backend::{Backend, LaunchSpec, PortMapping, RunningInstance, SharedDir};
+use crate::backend::{self, Backend, LaunchSpec, PortMapping, RunningInstance, SharedDir};
 use crate::hooks;
 use crate::instance_store;
 use crate::process;
@@ -68,9 +68,12 @@ fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
         .context("canonicalizing instance dir")?;
 
     // Check disk lock
-    if let Some((owner, owner_id)) = instance_store::find_running_owner_by_disk(&desc.disk)? {
+    if let Some((owner, owner_rt)) = backend::find_running_owner_by_disk(&desc.disk)? {
+        let owner_id = match &owner_rt.backend {
+            crate::backend::BackendState::CloudHypervisor(ch) => format!("unit {}", ch.unit_id),
+        };
         bail!(
-            "disk {} is locked by instance {owner} (unit {owner_id})",
+            "disk {} is locked by instance {owner} ({owner_id})",
             desc.disk
         );
     }

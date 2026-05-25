@@ -1,4 +1,39 @@
+use anyhow::Result;
 use std::path::Path;
+
+use crate::process;
+
+/// Build a systemd unit name with the instance name escaped.
+/// All epi unit names go through this to ensure consistent escaping.
+///
+/// - `suffix` = "" → slice:   `epi-{escaped}_{unit_id}.slice`
+/// - `suffix` = "vm" → service: `epi-{escaped}_{unit_id}_vm.service`
+/// - `suffix` = "passt" → service: `epi-{escaped}_{unit_id}_passt.service`
+/// - `suffix` = "virtiofsd0" → service: `epi-{escaped}_{unit_id}_virtiofsd0.service`
+pub fn unit_name(name: &str, unit_id: &str, suffix: &str) -> Result<String> {
+    let escaped = process::escape_unit_name(name)?;
+    if suffix.is_empty() {
+        Ok(format!("epi-{escaped}_{unit_id}.slice"))
+    } else {
+        Ok(format!("epi-{escaped}_{unit_id}_{suffix}.service"))
+    }
+}
+
+pub fn vm_unit_name(name: &str, unit_id: &str) -> Result<String> {
+    unit_name(name, unit_id, "vm")
+}
+
+pub fn slice_name(name: &str, unit_id: &str) -> Result<String> {
+    unit_name(name, unit_id, "")
+}
+
+pub fn passt_unit_name(name: &str, unit_id: &str) -> Result<String> {
+    unit_name(name, unit_id, "passt")
+}
+
+pub fn virtiofsd_unit_name(name: &str, unit_id: &str, index: usize) -> Result<String> {
+    unit_name(name, unit_id, &format!("virtiofsd{index}"))
+}
 
 /// Build systemd service properties for cloud-hypervisor VM lifecycle.
 ///
@@ -90,5 +125,57 @@ mod tests {
         let props = service_properties(None, &helpers);
         assert_eq!(props.len(), 1);
         assert_eq!(props[0], "After=helper.service");
+    }
+
+    #[test]
+    fn unit_name_slice() {
+        let name = unit_name("simple", "abc", "").unwrap();
+        assert_eq!(name, "epi-simple_abc.slice");
+    }
+
+    #[test]
+    fn unit_name_vm() {
+        let name = vm_unit_name("simple", "abc").unwrap();
+        assert_eq!(name, "epi-simple_abc_vm.service");
+    }
+
+    #[test]
+    fn unit_name_passt() {
+        let name = passt_unit_name("simple", "abc").unwrap();
+        assert_eq!(name, "epi-simple_abc_passt.service");
+    }
+
+    #[test]
+    fn unit_name_virtiofsd() {
+        let name = virtiofsd_unit_name("simple", "abc", 0).unwrap();
+        assert_eq!(name, "epi-simple_abc_virtiofsd0.service");
+        let name = virtiofsd_unit_name("simple", "abc", 2).unwrap();
+        assert_eq!(name, "epi-simple_abc_virtiofsd2.service");
+    }
+
+    #[test]
+    fn unit_name_escapes_instance_name() {
+        // epi-dev contains a dash which systemd escapes
+        let name = unit_name("epi-dev", "abc", "vm").unwrap();
+        assert!(
+            name.contains("\\x2d"),
+            "should contain escaped dash: {name}"
+        );
+        assert!(name.ends_with("_vm.service"));
+    }
+
+    #[test]
+    fn unit_name_all_variants_consistent() {
+        // All unit name functions should produce names with the same escaped prefix
+        let slice = slice_name("epi-dev", "abc").unwrap();
+        let vm = vm_unit_name("epi-dev", "abc").unwrap();
+        let passt = passt_unit_name("epi-dev", "abc").unwrap();
+        let vfsd = virtiofsd_unit_name("epi-dev", "abc", 0).unwrap();
+
+        let prefix = "epi-epi\\x2ddev_abc";
+        assert!(slice.starts_with(prefix), "slice: {slice}");
+        assert!(vm.starts_with(prefix), "vm: {vm}");
+        assert!(passt.starts_with(prefix), "passt: {passt}");
+        assert!(vfsd.starts_with(prefix), "vfsd: {vfsd}");
     }
 }

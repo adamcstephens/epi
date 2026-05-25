@@ -8,7 +8,6 @@ use std::path::PathBuf;
 pub use crate::backend::RunningInstance;
 
 use crate::backend::{BackendState, ChState, SerialEndpoint};
-use crate::process;
 use crate::target;
 
 /// Parse a port mapping string like "8080:80" or ":443".
@@ -237,15 +236,6 @@ pub fn find_runtime(name: &str) -> Result<Option<RunningInstance>> {
     Ok(load_state(name)?.and_then(|s| s.runtime))
 }
 
-/// Extract the CH unit id from a `RunningInstance`. Only valid for instances
-/// running on the cloud-hypervisor backend; will need a match update when the
-/// VZ backend lands.
-pub fn ch_unit_id(runtime: &RunningInstance) -> &str {
-    match &runtime.backend {
-        BackendState::CloudHypervisor(ch) => &ch.unit_id,
-    }
-}
-
 pub fn list() -> Result<Vec<(String, String, Option<String>)>> {
     let dir = state_dir();
     if !dir.exists() {
@@ -276,71 +266,6 @@ pub fn remove(name: &str) -> Result<()> {
             .with_context(|| format!("removing instance dir: {}", dir.display()))?;
     }
     Ok(())
-}
-
-/// Build a systemd unit name with the instance name escaped.
-/// All epi unit names go through this to ensure consistent escaping.
-///
-/// - `suffix` = "" → slice:   `epi-{escaped}_{unit_id}.slice`
-/// - `suffix` = "vm" → service: `epi-{escaped}_{unit_id}_vm.service`
-/// - `suffix` = "passt" → service: `epi-{escaped}_{unit_id}_passt.service`
-/// - `suffix` = "virtiofsd0" → service: `epi-{escaped}_{unit_id}_virtiofsd0.service`
-pub fn unit_name(name: &str, unit_id: &str, suffix: &str) -> Result<String> {
-    let escaped = process::escape_unit_name(name)?;
-    if suffix.is_empty() {
-        Ok(format!("epi-{escaped}_{unit_id}.slice"))
-    } else {
-        Ok(format!("epi-{escaped}_{unit_id}_{suffix}.service"))
-    }
-}
-
-pub fn vm_unit_name(name: &str, unit_id: &str) -> Result<String> {
-    unit_name(name, unit_id, "vm")
-}
-
-pub fn slice_name(name: &str, unit_id: &str) -> Result<String> {
-    unit_name(name, unit_id, "")
-}
-
-pub fn passt_unit_name(name: &str, unit_id: &str) -> Result<String> {
-    unit_name(name, unit_id, "passt")
-}
-
-pub fn virtiofsd_unit_name(name: &str, unit_id: &str, index: usize) -> Result<String> {
-    unit_name(name, unit_id, &format!("virtiofsd{index}"))
-}
-
-pub fn instance_is_running(name: &str) -> Result<bool> {
-    let runtime = match find_runtime(name)? {
-        Some(r) => r,
-        None => return Ok(false),
-    };
-    let unit = vm_unit_name(name, ch_unit_id(&runtime))?;
-    process::unit_is_active(&unit)
-}
-
-pub fn find_running_owner_by_disk(disk: &str) -> Result<Option<(String, String)>> {
-    let dir = state_dir();
-    if !dir.exists() {
-        return Ok(None);
-    }
-    for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if let Some(state) = load_state(&name)?
-                && let Some(ref rt) = state.runtime
-                && rt.disk == disk
-            {
-                let unit_id = ch_unit_id(rt);
-                let unit = vm_unit_name(&name, unit_id)?;
-                if process::unit_is_active(&unit)? {
-                    return Ok(Some((name, unit_id.to_string())));
-                }
-            }
-        }
-    }
-    Ok(None)
 }
 
 pub fn console_log_path(name: &str) -> PathBuf {
@@ -502,7 +427,7 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        assert_eq!(ch_unit_id(&rt), "abcd1234");
+        assert_eq!(crate::backend::ch::ch_unit_id(&rt), "abcd1234");
         assert_eq!(rt.ssh.port(), 2222);
     }
 
@@ -571,7 +496,7 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        assert_eq!(ch_unit_id(&rt), "abc12345");
+        assert_eq!(crate::backend::ch::ch_unit_id(&rt), "abc12345");
         assert_eq!(rt.ssh.port(), 0);
         match &rt.serial {
             SerialEndpoint::UnixSocket { path } => assert!(path.as_os_str().is_empty()),
@@ -712,7 +637,7 @@ mod tests {
         let state = load_state(name).unwrap().unwrap();
         let rt = state.runtime.expect("runtime missing after migration");
         assert_eq!(rt.id, name);
-        assert_eq!(ch_unit_id(&rt), "u-old");
+        assert_eq!(crate::backend::ch::ch_unit_id(&rt), "u-old");
         assert_eq!(rt.ssh.port(), 2222);
         assert_eq!(rt.disk, "/tmp/old/disk.img");
         assert_eq!(rt.ssh_key_path, "/tmp/old/key");
@@ -962,59 +887,6 @@ mod tests {
 
         let names: Vec<&str> = instances.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names, vec!["proj-a", "proj-b", "global-a", "global-b"]);
-    }
-
-    #[test]
-    fn unit_name_slice() {
-        let name = unit_name("simple", "abc", "").unwrap();
-        assert_eq!(name, "epi-simple_abc.slice");
-    }
-
-    #[test]
-    fn unit_name_vm() {
-        let name = vm_unit_name("simple", "abc").unwrap();
-        assert_eq!(name, "epi-simple_abc_vm.service");
-    }
-
-    #[test]
-    fn unit_name_passt() {
-        let name = passt_unit_name("simple", "abc").unwrap();
-        assert_eq!(name, "epi-simple_abc_passt.service");
-    }
-
-    #[test]
-    fn unit_name_virtiofsd() {
-        let name = virtiofsd_unit_name("simple", "abc", 0).unwrap();
-        assert_eq!(name, "epi-simple_abc_virtiofsd0.service");
-        let name = virtiofsd_unit_name("simple", "abc", 2).unwrap();
-        assert_eq!(name, "epi-simple_abc_virtiofsd2.service");
-    }
-
-    #[test]
-    fn unit_name_escapes_instance_name() {
-        // epi-dev contains a dash which systemd escapes
-        let name = unit_name("epi-dev", "abc", "vm").unwrap();
-        assert!(
-            name.contains("\\x2d"),
-            "should contain escaped dash: {name}"
-        );
-        assert!(name.ends_with("_vm.service"));
-    }
-
-    #[test]
-    fn unit_name_all_variants_consistent() {
-        // All unit name functions should produce names with the same escaped prefix
-        let slice = slice_name("epi-dev", "abc").unwrap();
-        let vm = vm_unit_name("epi-dev", "abc").unwrap();
-        let passt = passt_unit_name("epi-dev", "abc").unwrap();
-        let vfsd = virtiofsd_unit_name("epi-dev", "abc", 0).unwrap();
-
-        // Extract the common prefix (everything before the suffix)
-        let prefix = "epi-epi\\x2ddev_abc";
-        assert!(slice.starts_with(prefix), "slice: {slice}");
-        assert!(vm.starts_with(prefix), "vm: {vm}");
-        assert!(passt.starts_with(prefix), "passt: {passt}");
-        assert!(vfsd.starts_with(prefix), "vfsd: {vfsd}");
     }
 
     #[test]

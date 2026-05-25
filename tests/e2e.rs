@@ -189,8 +189,8 @@ fn e2e_lifecycle() {
     assert_eq!(state.memory_mib, 512);
 
     // Verify passt was started with the additional port forwarding arg
-    let unit_id = instance_store::ch_unit_id(&runtime);
-    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
+    let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
     let passt_cmd = process::run(
         &process::systemctl_bin(),
         &["--user", "show", &passt_unit, "--property=ExecStart"],
@@ -224,7 +224,7 @@ fn e2e_lifecycle() {
     );
 
     // Verify instance is running
-    assert!(instance_store::instance_is_running(&name).unwrap());
+    assert!(epi::backend::instance_is_running(&name).unwrap());
 
     // Stop
     ch::stop_instance(&name, false).expect("stop failed");
@@ -475,7 +475,7 @@ fn e2e_graceful_shutdown() {
     let _guard = InstanceGuard::new(&name);
 
     let _runtime = provision_and_wait(&name);
-    assert!(instance_store::instance_is_running(&name).unwrap());
+    assert!(epi::backend::instance_is_running(&name).unwrap());
 
     // Verify API socket exists
     let inst_dir = instance_store::instance_dir(&name);
@@ -493,7 +493,7 @@ fn e2e_graceful_shutdown() {
         elapsed.as_secs()
     );
 
-    assert!(!instance_store::instance_is_running(&name).unwrap());
+    assert!(!epi::backend::instance_is_running(&name).unwrap());
 }
 
 #[test]
@@ -503,7 +503,7 @@ fn e2e_force_shutdown() {
     let _guard = InstanceGuard::new(&name);
 
     let _runtime = provision_and_wait(&name);
-    assert!(instance_store::instance_is_running(&name).unwrap());
+    assert!(epi::backend::instance_is_running(&name).unwrap());
 
     // Force stop should be near-instant — no ACPI, just SIGKILL.
     let start = std::time::Instant::now();
@@ -516,7 +516,7 @@ fn e2e_force_shutdown() {
         elapsed
     );
 
-    assert!(!instance_store::instance_is_running(&name).unwrap());
+    assert!(!epi::backend::instance_is_running(&name).unwrap());
 }
 
 #[test]
@@ -526,12 +526,12 @@ fn e2e_clean_shutdown_stops_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = instance_store::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
 
     // Construct expected unit names
-    let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
-    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
-    let slice = instance_store::slice_name(&name, unit_id).unwrap();
+    let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, unit_id).unwrap();
+    let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
+    let slice = epi::backend::ch::systemd::slice_name(&name, unit_id).unwrap();
 
     // All units should be active before stop
     assert!(
@@ -614,10 +614,10 @@ fn e2e_no_env_leak() {
     unsafe { std::env::set_var(sentinel, "leaked") };
 
     let runtime = provision_and_wait(&name);
-    let unit_id = instance_store::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
 
-    let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
-    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
+    let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, unit_id).unwrap();
+    let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
 
     // Check VM service environment
     let vm_env = process::run(
@@ -655,10 +655,10 @@ fn e2e_vm_crash_stops_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = instance_store::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
 
-    let vm_unit = instance_store::vm_unit_name(&name, unit_id).unwrap();
-    let passt_unit = instance_store::passt_unit_name(&name, unit_id).unwrap();
+    let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, unit_id).unwrap();
+    let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
 
     // All units should be active
     assert!(
@@ -699,9 +699,9 @@ fn e2e_clear_stale_runtime_kills_lingering_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = instance_store::ch_unit_id(&runtime).to_string();
-    let vm_unit = instance_store::vm_unit_name(&name, &unit_id).unwrap();
-    let passt_unit = instance_store::passt_unit_name(&name, &unit_id).unwrap();
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime).to_string();
+    let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, &unit_id).unwrap();
+    let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, &unit_id).unwrap();
     let inst_dir = instance_store::instance_dir(&name);
     let passt_sock = inst_dir.join("passt.sock");
 
