@@ -1,5 +1,4 @@
 pub mod backend;
-pub mod cloud_hypervisor;
 pub mod config;
 pub mod console;
 pub mod cp;

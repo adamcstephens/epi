@@ -1,3 +1,6 @@
+#[cfg(target_os = "linux")]
+pub mod ch;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;

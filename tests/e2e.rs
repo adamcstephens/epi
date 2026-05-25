@@ -5,6 +5,7 @@
 //!
 //! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
 
+use epi::backend::ch;
 use epi::{config, hooks, instance_store, process, ssh, target, vm_launch};
 use std::fs;
 use std::sync::LazyLock;
@@ -50,7 +51,7 @@ impl Drop for InstanceGuard {
             let mut buf = String::new();
             let _ = std::io::stdin().read_line(&mut buf);
         }
-        let _ = vm_launch::stop_instance(&self.name, true);
+        let _ = ch::stop_instance(&self.name, true);
         let _ = instance_store::remove(&self.name);
     }
 }
@@ -223,7 +224,7 @@ fn e2e_lifecycle() {
     assert!(instance_store::instance_is_running(&name).unwrap());
 
     // Stop
-    vm_launch::stop_instance(&name, false).expect("stop failed");
+    ch::stop_instance(&name, false).expect("stop failed");
 
     // Verify runtime cleared
     assert!(instance_store::find_runtime(&name).unwrap().is_none());
@@ -247,7 +248,7 @@ fn e2e_lifecycle() {
     assert_eq!(out.stdout, "back");
 
     // Remove
-    vm_launch::stop_instance(&name, false).expect("stop failed");
+    ch::stop_instance(&name, false).expect("stop failed");
     instance_store::remove(&name).expect("remove failed");
     assert!(instance_store::find(&name).unwrap().is_none());
 }
@@ -480,7 +481,7 @@ fn e2e_graceful_shutdown() {
 
     // Stop and measure time — should complete well under 90s
     let start = std::time::Instant::now();
-    vm_launch::stop_instance(&name, false).expect("stop failed");
+    ch::stop_instance(&name, false).expect("stop failed");
     let elapsed = start.elapsed();
 
     assert!(
@@ -503,7 +504,7 @@ fn e2e_force_shutdown() {
 
     // Force stop should be near-instant — no ACPI, just SIGKILL.
     let start = std::time::Instant::now();
-    vm_launch::stop_instance(&name, true).expect("force stop failed");
+    ch::stop_instance(&name, true).expect("force stop failed");
     let elapsed = start.elapsed();
 
     assert!(
@@ -544,7 +545,7 @@ fn e2e_clean_shutdown_stops_helpers() {
     );
 
     // Stop the instance
-    vm_launch::stop_instance(&name, false).expect("stop failed");
+    ch::stop_instance(&name, false).expect("stop failed");
 
     // All units should be inactive after stop
     assert!(
@@ -585,7 +586,7 @@ fn e2e_stop_start_ssh() {
     assert_eq!(out.stdout, "first-boot");
 
     // Stop the VM
-    vm_launch::stop_instance(&name, false).expect("stop failed");
+    ch::stop_instance(&name, false).expect("stop failed");
 
     // Second boot: re-provision (reuses persistent disk) and verify SSH
     let runtime2 = provision_and_wait_with(&name, resolved);
@@ -729,7 +730,7 @@ fn e2e_clear_stale_runtime_kills_lingering_helpers() {
     // Best-effort: at this point passt MAY have died via PartOf= or MAY still be
     // alive. Either way, clear_stale_runtime must guarantee it's gone and the
     // socket file is removed.
-    vm_launch::clear_stale_runtime(&name).expect("clear_stale_runtime failed");
+    ch::clear_stale_runtime(&name).expect("clear_stale_runtime failed");
 
     assert!(
         !process::unit_is_active(&passt_unit).unwrap(),
