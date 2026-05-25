@@ -1,30 +1,14 @@
 use anyhow::{Context, Result, bail};
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::net::TcpListener;
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
 
-use crate::backend::ch;
+use crate::backend::ch::CloudHypervisorBackend;
+use crate::backend::{Backend, BackendState, LaunchSpec, PortForward, SerialEndpoint, SharedDir};
+use crate::hooks;
 use crate::instance_store::{self, Runtime};
 use crate::process;
-use crate::target::Descriptor;
-use crate::{hooks, target};
-
-/// Generate a deterministic MAC address from an instance name.
-///
-/// Uses the locally administered prefix `02:` and hashes the name
-/// to derive the remaining 5 octets.
-fn generate_mac(instance_name: &str) -> String {
-    let mut hasher = std::hash::DefaultHasher::new();
-    instance_name.hash(&mut hasher);
-    let h = hasher.finish();
-    let bytes = h.to_ne_bytes();
-    format!(
-        "02:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]
-    )
-}
+use crate::target::{self, Descriptor};
 
 pub struct LaunchConfig<'a> {
     pub instance_name: &'a str,
@@ -73,17 +57,6 @@ pub fn provision_with_descriptor(params: &ProvisionParams, desc: &Descriptor) ->
 }
 
 fn launch_vm(config: &LaunchConfig) -> Result<Runtime> {
-    let unit_id = process::generate_unit_id();
-    let slice = instance_store::slice_name(config.instance_name, &unit_id)?;
-
-    let result = launch_vm_inner(config, &unit_id, &slice);
-    if result.is_err() {
-        let _ = process::stop_unit(&slice);
-    }
-    result
-}
-
-fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<Runtime> {
     let instance_name = config.instance_name;
     let desc = config.desc;
 
@@ -99,19 +72,17 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         );
     }
 
-    // Prepare writable disk overlay
-    let disk_path = inst_dir.join("disk.img");
-    ensure_writable_disk(&desc.disk, &disk_path, config.disk_size)?;
-
     // Generate SSH keypair
     let ssh_key_path = inst_dir.join("id_ed25519");
     generate_ssh_key(&ssh_key_path)?;
+    let ssh_pubkey = read_ssh_pubkey(&ssh_key_path)?;
 
     // Allocate SSH port
     let ssh_port = allocate_port()?;
 
     // Parse and allocate user-specified port mappings
     let mut port_mappings: Vec<instance_store::PortMapping> = vec![];
+    let mut port_forwards: Vec<PortForward> = vec![];
     for spec in config.port_specs {
         let (host, guest) = instance_store::parse_port_mapping(spec)?;
         let host = if host == 0 { allocate_port()? } else { host };
@@ -120,86 +91,21 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
             guest,
             protocol: "tcp".to_string(),
         });
+        port_forwards.push(PortForward { host, guest });
     }
 
     // Generate seed ISO
-    let seed_iso = inst_dir.join("epidata.iso");
+    let epidata = inst_dir.join("epidata.iso");
     generate_seed_iso(
         instance_name,
         &ssh_key_path,
         config.mounts,
         &desc.configured_users,
-        &seed_iso,
+        &epidata,
     )?;
 
-    // Clean stale sockets
-    let serial_socket = inst_dir.join("serial.sock");
-    if serial_socket.exists() {
-        fs::remove_file(&serial_socket)?;
-    }
-    let serial_socket_str = serial_socket.to_string_lossy().to_string();
-
-    let console_log = inst_dir.join("console.log");
-    let console_log_str = console_log.to_string_lossy().to_string();
-
-    let api_socket = inst_dir.join("api.sock");
-    if api_socket.exists() {
-        fs::remove_file(&api_socket)?;
-    }
-    let api_socket_str = api_socket.to_string_lossy().to_string();
-
-    let vm_unit = instance_store::vm_unit_name(instance_name, unit_id)?;
-
-    // Resolve binaries for shutdown script (fail early if missing)
-    let ch_remote_path = process::find_executable(ch::args::CH_REMOTE_BINARY)
-        .ok_or_else(|| anyhow::anyhow!("{} not found in PATH", ch::args::CH_REMOTE_BINARY))?;
-    let timeout_path = process::find_executable("timeout")
-        .ok_or_else(|| anyhow::anyhow!("timeout not found in PATH"))?;
-    let tail_path = process::find_executable("tail")
-        .ok_or_else(|| anyhow::anyhow!("tail not found in PATH"))?;
-    let sh_path =
-        process::find_executable("sh").ok_or_else(|| anyhow::anyhow!("sh not found in PATH"))?;
-
-    // Generate shutdown script with absolute paths
-    let shutdown_script_path = inst_dir.join("shutdown.sh");
-    let shutdown_content = ch::systemd::generate_shutdown_script(
-        &api_socket_str,
-        &ch_remote_path,
-        &timeout_path,
-        &tail_path,
-        &sh_path,
-    );
-    fs::write(&shutdown_script_path, &shutdown_content).context("writing shutdown script")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&shutdown_script_path, fs::Permissions::from_mode(0o755))
-            .context("setting shutdown script permissions")?;
-    }
-    let shutdown_script_str = shutdown_script_path.to_string_lossy().to_string();
-
-    // Write partial runtime so unit_id is recoverable if we crash mid-spawn
-    instance_store::set_partial_runtime(instance_name, unit_id)?;
-
-    // Start passt for networking
-    let passt_unit = instance_store::passt_unit_name(instance_name, unit_id)?;
-    let passt_socket = inst_dir.join("passt.sock");
-    if passt_socket.exists() {
-        fs::remove_file(&passt_socket)?;
-    }
-    ch::passt::start_passt(
-        &passt_unit,
-        slice,
-        Some(&vm_unit),
-        &passt_socket.to_string_lossy(),
-        ssh_port,
-        &port_mappings,
-    )?;
-
-    let mut helper_units = vec![passt_unit.clone()];
-
-    // Start virtiofsd for each mount
-    let mut fs_args: Vec<String> = vec![];
+    // Canonicalize mount paths into shares
+    let mut shares = Vec::with_capacity(config.mounts.len());
     for (i, mount_path) in config.mounts.iter().enumerate() {
         let mount_dir = Path::new(mount_path);
         if !mount_dir.is_dir() {
@@ -208,121 +114,59 @@ fn launch_vm_inner(config: &LaunchConfig, unit_id: &str, slice: &str) -> Result<
         let abs_mount = mount_dir
             .canonicalize()
             .with_context(|| format!("canonicalizing mount path: {mount_path}"))?;
-        let vfsd_unit = instance_store::virtiofsd_unit_name(instance_name, unit_id, i)?;
-        let vfsd_socket = inst_dir.join(format!("virtiofsd-{i}.sock"));
-        if vfsd_socket.exists() {
-            fs::remove_file(&vfsd_socket)?;
-        }
-        ch::virtiofsd::start_virtiofsd(
-            &vfsd_unit,
-            slice,
-            Some(&vm_unit),
-            &vfsd_socket.to_string_lossy(),
-            &abs_mount.to_string_lossy(),
-        )?;
-        helper_units.push(vfsd_unit);
-        fs_args.push(format!("tag=hostfs-{i},socket={}", vfsd_socket.display()));
+        shares.push(SharedDir {
+            tag: format!("hostfs-{i}"),
+            host_path: abs_mount,
+            read_only: false,
+        });
     }
 
-    // Build cloud-hypervisor command
-    let disk_str = disk_path.to_string_lossy().to_string();
-    let seed_str = seed_iso.to_string_lossy().to_string();
-    let passt_socket_str = passt_socket.to_string_lossy().to_string();
-
-    let mac = generate_mac(instance_name);
-
-    let ch_args = ch::args::build_args(&ch::args::CloudHypervisorConfig {
-        kernel: &desc.kernel,
-        initrd: desc.initrd.as_deref(),
-        disk_path: &disk_str,
-        seed_iso: &seed_str,
+    let spec = LaunchSpec {
+        id: instance_name.to_string(),
+        kernel: PathBuf::from(&desc.kernel),
+        initrd: desc.initrd.as_ref().map(PathBuf::from),
+        cmdline: desc.cmdline.clone(),
+        root_disk: PathBuf::from(&desc.disk),
+        epidata,
+        shares,
         cpus: config.cpus,
         memory_mib: config.memory_mib,
-        cmdline: &desc.cmdline,
-        serial_socket: &serial_socket_str,
-        passt_socket: &passt_socket_str,
-        fs_args: &fs_args,
-        api_socket: Some(&api_socket_str),
-        mac: &mac,
-        console_log: &console_log_str,
-    });
-    let ch_refs: Vec<&str> = ch_args.iter().map(|s| s.as_str()).collect();
+        ssh_pubkey,
+        ssh_port,
+        port_forwards,
+        disk_size: config.disk_size.to_string(),
+        instance_dir: inst_dir.clone(),
+    };
 
-    // Generate systemd properties for VM lifecycle
-    let properties = ch::systemd::service_properties(Some(&shutdown_script_str), &helper_units);
+    let running = CloudHypervisorBackend.launch(&spec)?;
 
-    // Launch VM as systemd service
-    let result = process::run_service(&vm_unit, slice, &properties, ch::args::BINARY, &ch_refs)?;
+    // Bridge: convert RunningInstance back to Runtime for the current
+    // state-store shape. Goes away when Runtime becomes RunningInstance (epi-17).
+    let unit_id = match &running.backend {
+        BackendState::CloudHypervisor(ch) => ch.unit_id.clone(),
+    };
+    let serial_socket = match &running.serial {
+        SerialEndpoint::UnixSocket { path } => path.to_string_lossy().to_string(),
+        SerialEndpoint::Pty { path } => path.to_string_lossy().to_string(),
+    };
+    let disk_str = inst_dir.join("disk.img").to_string_lossy().to_string();
 
-    if !result.success() {
-        bail!(
-            "failed to launch VM (exit {}): {}",
-            result.status,
-            result.stderr
-        );
-    }
-
-    // Brief pause to catch immediate exits
-    std::thread::sleep(Duration::from_millis(150));
-    if !process::unit_is_active(&vm_unit)? {
-        let journal = process::journal_for_unit(&vm_unit).unwrap_or_default();
-        if journal.is_empty() {
-            bail!("VM exited immediately after launch (no journal output)");
-        } else {
-            bail!("VM exited immediately after launch:\n{journal}");
-        }
-    }
-
-    let runtime = Runtime {
-        unit_id: unit_id.to_string(),
-        serial_socket: serial_socket_str,
+    Ok(Runtime {
+        unit_id,
+        serial_socket,
         disk: disk_str,
         ssh_port: Some(ssh_port),
         ssh_key_path: ssh_key_path.to_string_lossy().to_string(),
         ports: port_mappings,
-    };
-
-    Ok(runtime)
+    })
 }
 
-fn ensure_writable_disk(source: &str, dest: &std::path::Path, disk_size: &str) -> Result<()> {
-    if dest.exists() {
-        return Ok(());
-    }
-
-    process::require_binary("qemu-img", "qemu-utils")?;
-
-    if target::is_nix_store_path(source) {
-        // Create copy-on-write overlay
-        let out = process::run(
-            "qemu-img",
-            &[
-                "create",
-                "-f",
-                "qcow2",
-                "-b",
-                source,
-                "-F",
-                "raw",
-                &dest.to_string_lossy(),
-            ],
-        )?;
-        if !out.success() {
-            bail!("qemu-img create failed: {}", out.stderr);
-        }
-    } else {
-        fs::copy(source, dest).context("copying disk image")?;
-    }
-
-    // Resize the virtual disk — the guest grows the partition at boot
-    // via boot.growPartition.
-    let dest_str = dest.to_string_lossy();
-    let out = process::run("qemu-img", &["resize", &dest_str, disk_size])?;
-    if !out.success() {
-        bail!("qemu-img resize failed: {}", out.stderr);
-    }
-
-    Ok(())
+fn read_ssh_pubkey(ssh_key_path: &Path) -> Result<String> {
+    let pub_key_path = format!("{}.pub", ssh_key_path.display());
+    Ok(fs::read_to_string(&pub_key_path)
+        .with_context(|| format!("reading public key {pub_key_path}"))?
+        .trim()
+        .to_string())
 }
 
 fn generate_ssh_key(path: &std::path::Path) -> Result<()> {

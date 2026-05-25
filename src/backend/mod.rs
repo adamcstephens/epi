@@ -24,7 +24,17 @@ pub struct LaunchSpec {
     pub cpus: u32,
     pub memory_mib: u32,
     pub ssh_pubkey: String,
+    pub ssh_port: u16,
+    pub port_forwards: Vec<PortForward>,
+    pub disk_size: String,
     pub instance_dir: PathBuf,
+}
+
+/// A TCP port forwarded from host to guest.
+#[derive(Debug, Clone)]
+pub struct PortForward {
+    pub host: u16,
+    pub guest: u16,
 }
 
 /// A host directory shared into the guest via virtio-fs.
