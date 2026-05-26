@@ -8,8 +8,13 @@
 use epi::backend::ch;
 use epi::{config, hooks, instance_store, process, ssh, target, vm_launch};
 use std::fs;
+use std::net::SocketAddr;
 use std::sync::LazyLock;
 use tempfile::TempDir;
+
+fn ssh_addr(port: u16) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
 
 fn e2e_target() -> String {
     std::env::var("EPI_E2E_TARGET").unwrap_or_else(|_| ".#manual-test".to_string())
@@ -114,7 +119,7 @@ fn provision_and_wait_with(
     ssh::generate_config(
         &ssh::config_path(name),
         name,
-        ssh_port,
+        ssh_addr(ssh_port),
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,
@@ -268,7 +273,7 @@ fn e2e_ssh_config_trusted_after_launch() {
     // Record host key and rewrite config
     ssh::trust_host_key(
         &name,
-        ssh_port,
+        ssh_addr(ssh_port),
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         &[],
@@ -381,7 +386,7 @@ fn e2e_mount() {
     ssh::generate_config(
         &ssh::config_path(&name),
         &name,
-        ssh_port,
+        ssh_addr(ssh_port),
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,

@@ -1,7 +1,12 @@
 use anyhow::{Result, bail};
+use std::net::SocketAddr;
 
 use epi::backend::{self, ch};
 use epi::{config, console, gcroots, hooks, instance_store, ssh, target, ui, vm_launch};
+
+fn ssh_addr(port: u16) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
 
 use super::info::cmd_info;
 
@@ -83,7 +88,7 @@ pub fn cmd_launch(
         ssh::generate_config(
             &ssh::config_path(instance),
             instance,
-            ssh_port,
+            ssh_addr(ssh_port),
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
@@ -115,7 +120,7 @@ pub fn cmd_launch(
                 ssh::wait_for_ssh(&config, &inst, timeout)?;
                 ssh::trust_host_key(
                     &inst,
-                    ssh_port,
+                    ssh_addr(ssh_port),
                     &ssh::user(),
                     std::path::Path::new(&key),
                     &extra_ssh,
@@ -290,7 +295,7 @@ fn launch_with_descriptor(
         ssh::generate_config(
             &ssh::config_path(instance),
             instance,
-            ssh_port,
+            ssh_addr(ssh_port),
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
@@ -346,7 +351,7 @@ fn wait_and_trust_ssh(
 
     ssh::trust_host_key(
         instance,
-        ssh_port,
+        ssh_addr(ssh_port),
         &ssh::user(),
         std::path::Path::new(ssh_key_path),
         ssh_extra_config,
@@ -691,7 +696,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         ssh::generate_config(
             &ssh::config_path(instance),
             instance,
-            ssh_port,
+            ssh_addr(ssh_port),
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,

@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -22,7 +23,7 @@ pub fn config_path(instance: &str) -> PathBuf {
 pub fn generate_config(
     output: &Path,
     instance: &str,
-    ssh_port: u16,
+    ssh: SocketAddr,
     username: &str,
     ssh_key_path: &Path,
     known_hosts: Option<&Path>,
@@ -34,14 +35,16 @@ pub fn generate_config(
     };
     let mut contents = format!(
         "Host {instance}\n\
-         \x20   HostName 127.0.0.1\n\
-         \x20   Port {ssh_port}\n\
+         \x20   HostName {host}\n\
+         \x20   Port {port}\n\
          \x20   User {username}\n\
          \x20   IdentityFile {key}\n\
          \x20   IdentitiesOnly yes\n\
          \x20   StrictHostKeyChecking {strict_checking}\n\
          \x20   UserKnownHostsFile {known_hosts_file}\n\
          \x20   LogLevel ERROR\n",
+        host = ssh.ip(),
+        port = ssh.port(),
         key = ssh_key_path.display(),
     );
     for line in extra_config {
@@ -61,9 +64,10 @@ pub fn known_hosts_path(instance: &str) -> PathBuf {
 /// Returns `true` if the key was successfully recorded, `false` if keyscan failed.
 /// Does not return an error on keyscan failure — the caller can fall back to the
 /// untrusted config.
-pub fn record_host_key(ssh_port: u16, known_hosts: &Path) -> Result<bool> {
-    let port_str = ssh_port.to_string();
-    let out = process::run("ssh-keyscan", &["-p", &port_str, "127.0.0.1"])?;
+pub fn record_host_key(ssh: SocketAddr, known_hosts: &Path) -> Result<bool> {
+    let port_str = ssh.port().to_string();
+    let host_str = ssh.ip().to_string();
+    let out = process::run("ssh-keyscan", &["-p", &port_str, &host_str])?;
 
     if !out.success() || out.stdout.is_empty() {
         return Ok(false);
@@ -78,17 +82,17 @@ pub fn record_host_key(ssh_port: u16, known_hosts: &Path) -> Result<bool> {
 /// If keyscan fails, logs a warning and leaves the untrusted config in place.
 pub fn trust_host_key(
     instance: &str,
-    ssh_port: u16,
+    ssh: SocketAddr,
     username: &str,
     ssh_key_path: &Path,
     extra_config: &[String],
 ) -> Result<()> {
     let known_hosts = known_hosts_path(instance);
-    if record_host_key(ssh_port, &known_hosts)? {
+    if record_host_key(ssh, &known_hosts)? {
         generate_config(
             &config_path(instance),
             instance,
-            ssh_port,
+            ssh,
             username,
             ssh_key_path,
             Some(&known_hosts),
@@ -176,7 +180,16 @@ mod tests {
         let config = dir.path().join("ssh_config");
         let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
 
-        generate_config(&config, "myvm", 12345, "adam", key_path, None, &[]).unwrap();
+        generate_config(
+            &config,
+            "myvm",
+            "127.0.0.1:12345".parse().unwrap(),
+            "adam",
+            key_path,
+            None,
+            &[],
+        )
+        .unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         assert!(contents.starts_with("Host myvm\n"));
@@ -203,7 +216,16 @@ mod tests {
         let config = dir.path().join("ssh_config");
         let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
 
-        generate_config(&config, "myvm", 12345, "adam", key_path, None, &[]).unwrap();
+        generate_config(
+            &config,
+            "myvm",
+            "127.0.0.1:12345".parse().unwrap(),
+            "adam",
+            key_path,
+            None,
+            &[],
+        )
+        .unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         assert!(!contents.contains("RemoteCommand"));
@@ -220,7 +242,16 @@ mod tests {
             "LocalForward /tmp/local.sock /tmp/remote.sock".to_string(),
             "ForwardAgent yes".to_string(),
         ];
-        generate_config(&config, "myvm", 12345, "adam", key_path, None, &extra).unwrap();
+        generate_config(
+            &config,
+            "myvm",
+            "127.0.0.1:12345".parse().unwrap(),
+            "adam",
+            key_path,
+            None,
+            &extra,
+        )
+        .unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         assert!(contents.contains("    LocalForward /tmp/local.sock /tmp/remote.sock\n"));
@@ -238,11 +269,65 @@ mod tests {
         let config = dir.path().join("ssh_config");
         let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
 
-        generate_config(&config, "myvm", 12345, "adam", key_path, None, &[]).unwrap();
+        generate_config(
+            &config,
+            "myvm",
+            "127.0.0.1:12345".parse().unwrap(),
+            "adam",
+            key_path,
+            None,
+            &[],
+        )
+        .unwrap();
 
         let contents = std::fs::read_to_string(&config).unwrap();
         // Should be identical to the no-extra-config case
         assert!(contents.ends_with("LogLevel ERROR\n"));
+    }
+
+    #[test]
+    fn test_generate_config_writes_supplied_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("ssh_config");
+        let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
+
+        generate_config(
+            &config,
+            "myvm",
+            "192.168.64.42:22".parse().unwrap(),
+            "adam",
+            key_path,
+            None,
+            &[],
+        )
+        .unwrap();
+
+        let contents = std::fs::read_to_string(&config).unwrap();
+        assert!(contents.contains("HostName 192.168.64.42"));
+        assert!(contents.contains("Port 22"));
+        assert!(!contents.contains("HostName 127.0.0.1"));
+    }
+
+    #[test]
+    fn test_generate_config_writes_ipv6_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("ssh_config");
+        let key_path = Path::new("/home/adam/.epi/state/myvm/id_ed25519");
+
+        generate_config(
+            &config,
+            "myvm",
+            "[::1]:22".parse().unwrap(),
+            "adam",
+            key_path,
+            None,
+            &[],
+        )
+        .unwrap();
+
+        let contents = std::fs::read_to_string(&config).unwrap();
+        assert!(contents.contains("HostName ::1"));
+        assert!(contents.contains("Port 22"));
     }
 
     #[test]
@@ -255,7 +340,7 @@ mod tests {
         generate_config(
             &config,
             "myvm",
-            12345,
+            "127.0.0.1:12345".parse().unwrap(),
             "adam",
             key_path,
             Some(&known_hosts),
