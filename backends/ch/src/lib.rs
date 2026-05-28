@@ -9,11 +9,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{
+use epi_core::backend::{
     Backend, BackendState, ChState, InstanceStatus, LaunchSpec, RunningInstance, SerialEndpoint,
 };
-use crate::instance_store;
-use crate::{process, target};
+use epi_core::{instance_store, process, target};
 
 pub struct CloudHypervisorBackend;
 

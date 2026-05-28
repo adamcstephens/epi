@@ -1,8 +1,8 @@
 use anyhow::{Result, bail};
 
-use crate::process;
+use epi_core::process;
 
-use super::wait_for_socket;
+use crate::wait_for_socket;
 
 pub fn start_virtiofsd(
     unit_name: &str,

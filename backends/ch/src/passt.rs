@@ -1,9 +1,9 @@
 use anyhow::{Result, bail};
 
-use crate::backend::PortMapping;
-use crate::process;
+use epi_core::backend::PortMapping;
+use epi_core::process;
 
-use super::wait_for_socket;
+use crate::wait_for_socket;
 
 pub fn start_passt(
     unit_name: &str,

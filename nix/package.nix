@@ -6,7 +6,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "epi";
-  version = (lib.importTOML ../Cargo.toml).package.version;
+  version = (lib.importTOML ../Cargo.toml).workspace.package.version;
 
   src =
     with lib.fileset;
@@ -15,7 +15,9 @@ rustPlatform.buildRustPackage {
       fileset = unions [
         ../Cargo.toml
         ../Cargo.lock
-        ../src
+        ../cmd
+        ../core
+        ../backends
       ];
     };
 

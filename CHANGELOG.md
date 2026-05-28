@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Cargo workspace split: `epi` bin moves to `cmd/`; shared types/utilities (`Backend` trait, `LaunchSpec`, `instance_store`, `process`, `target`) move to `epi-core` lib at `core/`; CH backend impl moves to `epi-vmm-linux` lib at `backends/ch/`; macOS `epi-vmm-macos` stub at `backends/vz/`. `cmd` cfg-gates the backend lib by target_os so each platform builds a single binary linking only its backend. (no behavior change)
 - `backend` module: platform-neutral `Backend` trait with `LaunchSpec`, `RunningInstance`, `SerialEndpoint`, and tagged `BackendState` — scaffolding for the forthcoming macOS VZ backend (no behavior change)
 - `backend::ch` module: extract cloud-hypervisor backend internals (passt/virtiofsd start helpers, systemd properties, shutdown script, CH CLI args, stop/clear-stale-runtime) out of `cloud_hypervisor.rs` and `vm_launch.rs` into a cfg-gated Linux-only submodule (no behavior change)
 - `CloudHypervisorBackend`: implements the `Backend` trait (launch/stop/status) on top of `backend::ch`. `vm_launch::launch_vm` now builds a `LaunchSpec` and calls `backend.launch()`; CH-specific orchestration (overlay creation, helper launch, ch args, systemd service) lives behind the trait seam. `stop_instance` is a thin wrapper that reconstitutes `RunningInstance` and dispatches to `Backend::stop`. (no behavior change)

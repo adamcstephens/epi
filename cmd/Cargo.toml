@@ -1,0 +1,38 @@
+[package]
+name = "epi"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "epi"
+path = "src/main.rs"
+
+[lib]
+name = "epi"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nix.workspace = true
+thiserror.workspace = true
+epi-core = { path = "../core" }
+clap = { version = "4", features = ["derive"] }
+clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
+toml = "0.8"
+crossterm = "0.29"
+rand = "0.9"
+indicatif = "0.18"
+console = "0.16"
+fast-strip-ansi = "0.13.1"
+comfy-table = "7.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+epi-vmm-linux = { path = "../backends/ch" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+epi-vmm-macos = { path = "../backends/vz" }
+
+[dev-dependencies]
+tempfile.workspace = true

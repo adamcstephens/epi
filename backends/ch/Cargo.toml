@@ -1,0 +1,11 @@
+[package]
+name = "epi-vmm-linux"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+epi-core = { path = "../../core" }
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,23 +1,15 @@
-[package]
-name = "epi"
+[workspace]
+resolver = "3"
+members = ["cmd", "core", "backends/ch", "backends/vz"]
+
+[workspace.package]
 version = "0.7.1"
 edition = "2024"
 
-[dev-dependencies]
-tempfile = "3"
-
-[dependencies]
-clap = { version = "4", features = ["derive"] }
-clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
+[workspace.dependencies]
+anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
-crossterm = "0.29"
-rand = "0.9"
-anyhow = "1"
-nix = { version = "0.31.2", features = ["fs", "user"] }
 thiserror = "2"
-indicatif = "0.18"
-console = "0.16"
-fast-strip-ansi = "0.13.1"
-comfy-table = "7.2"
+nix = { version = "0.31.2", features = ["fs", "user"] }
+tempfile = "3"

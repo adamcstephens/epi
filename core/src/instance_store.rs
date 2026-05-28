@@ -427,7 +427,8 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        assert_eq!(crate::backend::ch::ch_unit_id(&rt), "abcd1234");
+        let BackendState::CloudHypervisor(ch) = &rt.backend;
+        assert_eq!(ch.unit_id, "abcd1234");
         assert_eq!(rt.ssh.port(), 2222);
     }
 
@@ -496,7 +497,8 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        assert_eq!(crate::backend::ch::ch_unit_id(&rt), "abc12345");
+        let BackendState::CloudHypervisor(ch) = &rt.backend;
+        assert_eq!(ch.unit_id, "abc12345");
         assert_eq!(rt.ssh.port(), 0);
         match &rt.serial {
             SerialEndpoint::UnixSocket { path } => assert!(path.as_os_str().is_empty()),
@@ -637,7 +639,8 @@ mod tests {
         let state = load_state(name).unwrap().unwrap();
         let rt = state.runtime.expect("runtime missing after migration");
         assert_eq!(rt.id, name);
-        assert_eq!(crate::backend::ch::ch_unit_id(&rt), "u-old");
+        let BackendState::CloudHypervisor(ch) = &rt.backend;
+        assert_eq!(ch.unit_id, "u-old");
         assert_eq!(rt.ssh.port(), 2222);
         assert_eq!(rt.disk, "/tmp/old/disk.img");
         assert_eq!(rt.ssh_key_path, "/tmp/old/key");

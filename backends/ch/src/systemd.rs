@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::process;
+use epi_core::process;
 
 /// Build a systemd unit name with the instance name escaped.
 /// All epi unit names go through this to ensure consistent escaping.
