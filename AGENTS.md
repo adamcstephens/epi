@@ -5,7 +5,7 @@
 ## Definition of done steps
 - lints pass
 - tests pass
-- changelog updated
+- if user-facing then changelog updated
 - code committed with all ticket changes included
   - Ticket ID in the body
   - Co-Authored-By line always included

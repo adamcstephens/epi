@@ -2,17 +2,14 @@
 
 ## [Unreleased]
 
-- Cargo workspace split: `epi` bin moves to `cmd/`; shared types/utilities (`Backend` trait, `LaunchSpec`, `instance_store`, `process`, `target`) move to `epi-core` lib at `core/`; CH backend impl moves to `epi-vmm-linux` lib at `backends/ch/`; macOS `epi-vmm-macos` stub at `backends/vz/`. `cmd` cfg-gates the backend lib by target_os so each platform builds a single binary linking only its backend. (no behavior change)
-- `backend` module: platform-neutral `Backend` trait with `LaunchSpec`, `RunningInstance`, `SerialEndpoint`, and tagged `BackendState` — scaffolding for the forthcoming macOS VZ backend (no behavior change)
-- `backend::ch` module: extract cloud-hypervisor backend internals (passt/virtiofsd start helpers, systemd properties, shutdown script, CH CLI args, stop/clear-stale-runtime) out of `cloud_hypervisor.rs` and `vm_launch.rs` into a cfg-gated Linux-only submodule (no behavior change)
-- `CloudHypervisorBackend`: implements the `Backend` trait (launch/stop/status) on top of `backend::ch`. `vm_launch::launch_vm` now builds a `LaunchSpec` and calls `backend.launch()`; CH-specific orchestration (overlay creation, helper launch, ch args, systemd service) lives behind the trait seam. `stop_instance` is a thin wrapper that reconstitutes `RunningInstance` and dispatches to `Backend::stop`. (no behavior change)
-- Persisted instance runtime now uses `RunningInstance` with a tagged `BackendState` (replacing the flat CH-specific `Runtime` struct). Existing `state.json` files in the legacy flat shape are auto-migrated on first load — backend-specific fields (`unit_id`, `serial_socket`) move into `backend: cloud_hypervisor` and `serial: unix_socket`. (no behavior change)
-- Systemd unit-name helpers and CH-specific state queries move out of `instance_store` into the CH backend module: unit-name builders to `backend::ch::systemd`, `instance_is_running` and `find_running_owner_by_disk` to `backend::mod` where they route through `Backend::status` instead of computing unit names directly. `instance_store` no longer knows about systemd or CH. (no behavior change)
-- `ssh::generate_config` / `record_host_key` / `trust_host_key` now take a `SocketAddr` instead of a bare port. Linux callers still pass `127.0.0.1:port`; macOS backend will pass the guest's vmnet IP. The generated SSH config writes `HostName <ip>` from the supplied address. (no behavior change for Linux)
-- `stop --force` / `rm --force`: Skip ACPI shutdown and SIGKILL the VM main process directly for sub-second termination; pre-stop hooks are skipped under `--force`
+### Added
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
+- Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
+- `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)
+- NixOS module: Add `@wheel` to `trusted-users` in guest nix config to allow `nix copy` from host
 
 ### Changed
+- `stop --force` / `rm --force`: Skip ACPI shutdown and SIGKILL the VM main process directly for sub-second termination; pre-stop hooks are skipped under `--force`
 - `start`: Always use the descriptor stored at launch — no re-resolution, no `Using stored descriptor` info message
 - `upgrade`: Display store paths for toplevel, kernel, and initrd in preparation output, matching `launch` formatting
 - NixOS module: Cap per-user systemd manager `DefaultTimeoutStopSec` at 5s so a stuck user service can't block `multi-user.target` shutdown for the full 90s
@@ -22,7 +19,6 @@
 - `list`: Sort project-scoped instances before global ones
 - `info`: Replace runtime file paths section with service unit tree and uptime display
 - `info`: Add `state:` row to instance section showing state directory path
-- Unify all systemd unit name generation through `instance_store::unit_name()`, ensuring consistent escaping for passt and virtiofsd helpers
 - Reduce shutdown timeout from 15s to 10s before force-killing the VM
 
 ### Fixed
@@ -30,12 +26,6 @@
 - `upgrade --mode boot`: Skip `switch-to-configuration boot` — the guest has no bootloader, so the new generation activates by rewriting kernel/initrd/cmdline in the descriptor and rebooting the VM
 - `list`: Remove `ContentArrangement::Dynamic` so table renders correctly without a TTY (fixes nix build test failures)
 - Fix mount paths under user's home creating intermediate directories owned by root instead of the user
-
-### Added
-- Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
-- `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)
-- `ssh`: Add `nix_copy_closure` and `run_on_guest` library functions for copying nix store closures and running commands on instances via SSH
-- NixOS module: Add `@wheel` to `trusted-users` in guest nix config to allow `nix copy` from host
 
 ## [0.7.1] - 2026-03-18
 
