@@ -4,6 +4,7 @@
 
 ### Added
 - macOS: `epi` now builds and runs on macOS with an early Virtualization.framework backend — instance state, `list`, `info`, `stop`, and `rm` work; launching a bootable VM is still in progress
+- macOS: nix-built `epi` is ad-hoc signed with the `com.apple.security.virtualization` entitlement required by Virtualization.framework; `just sign` signs local cargo builds
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
 - Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
 - `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)

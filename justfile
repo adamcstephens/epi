@@ -17,6 +17,10 @@ test *args:
 test-e2e *args:
     cargo test --test e2e -- --ignored --nocapture {{ args }}
 
+[macos]
+sign bin="target/debug/epi":
+    /usr/bin/codesign --sign - --force --entitlements nix/epi.entitlements {{ bin }}
+
 # Release: just release 0.3.0
 release version:
     sed -i 's/^version = ".*"/version = "{{ version }}"/' Cargo.toml
