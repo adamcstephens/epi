@@ -206,9 +206,8 @@ pub fn cmd_list() -> Result<()> {
             let rt = instance_store::find_runtime(name)?;
             let ssh = rt
                 .as_ref()
-                .map(|rt| rt.ssh.port())
-                .filter(|p| *p != 0)
-                .map(|p| format!("127.0.0.1:{p}"))
+                .filter(|rt| rt.ssh.port() != 0)
+                .map(|rt| rt.ssh.to_string())
                 .unwrap_or_else(|| "\u{2014}".to_string());
             let ports = rt
                 .as_ref()

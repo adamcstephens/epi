@@ -12,6 +12,7 @@
 
 pub mod control;
 pub mod daemon;
+pub mod ip_discovery;
 pub mod overlay;
 
 pub use daemon::daemon_main;
@@ -33,18 +34,45 @@ use epi_core::instance_store;
 
 pub struct VzBackend;
 
+/// The guest's sshd port — connections go straight to the VZ-NAT address.
+const GUEST_SSH_PORT: u16 = 22;
+
+/// How long launch waits for the guest to report its IP. Overridable for
+/// tests via `EPI_VZ_IP_TIMEOUT_SECS`.
+fn ip_timeout() -> Duration {
+    std::env::var("EPI_VZ_IP_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(120))
+}
+
 impl Backend for VzBackend {
     fn launch(&self, spec: &LaunchSpec) -> Result<RunningInstance> {
         let disk_path = spec.instance_dir.join("disk.img");
         overlay::ensure_writable_disk(&spec.root_disk, &disk_path, &spec.disk_size)?;
         daemon::write_launch_spec(&spec.instance_dir, spec)?;
 
+        std::fs::create_dir_all(ip_discovery::guest_state_dir(&spec.instance_dir))
+            .context("creating guest-state dir")?;
+        ip_discovery::clear_stale_ip(&spec.instance_dir)?;
+
         let pid = spawn_daemon(&spec.id, &spec.instance_dir)?;
+
+        // The guest reports its VZ-NAT address once the network is up; ssh
+        // goes directly to it (no host port forward on macOS).
+        let ip = match ip_discovery::wait_for_guest_ip(&spec.instance_dir, ip_timeout()) {
+            Ok(ip) => ip,
+            Err(e) => {
+                // Don't leak a booting VM behind a failed launch.
+                let _ = force_kill(Pid::from_raw(pid as i32));
+                return Err(e);
+            }
+        };
+
         Ok(RunningInstance {
             id: spec.id.clone(),
-            // Placeholder: vmnet gives the guest its own address, discovered
-            // post-boot (epi-26). Until then point at localhost.
-            ssh: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), spec.ssh_port),
+            ssh: SocketAddr::new(IpAddr::V4(ip), GUEST_SSH_PORT),
             // The daemon symlinks the allocated pty slave here (epi-31/33).
             serial: SerialEndpoint::Pty {
                 path: spec.instance_dir.join("console.pty"),
@@ -154,6 +182,12 @@ pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
             path: spec.epidata.clone(),
             read_only: true,
             ..vfrust::VirtioBlk::default()
+        }))
+        // epi-internal share the guest reports its IP through (epi-26).
+        .device(vfrust::Device::VirtioFs(vfrust::VirtioFs {
+            mount_tag: ip_discovery::GUEST_STATE_TAG.into(),
+            shared_dir: Some(ip_discovery::guest_state_dir(&spec.instance_dir)),
+            directories: vec![],
         }));
 
     for share in &spec.shares {
@@ -335,8 +369,19 @@ pub(crate) mod tests {
             }
             other => panic!("expected epidata virtio-blk, got {other:?}"),
         }
-        // NAT network, VZ-assigned mac
+        // epi-internal guest-state share for IP reporting
         match &devices[2] {
+            vfrust::Device::VirtioFs(fs) => {
+                assert_eq!(fs.mount_tag, ip_discovery::GUEST_STATE_TAG);
+                assert_eq!(
+                    fs.shared_dir,
+                    Some(PathBuf::from("/inst/testvm/guest-state"))
+                );
+            }
+            other => panic!("expected epistate virtio-fs, got {other:?}"),
+        }
+        // NAT network, VZ-assigned mac
+        match &devices[3] {
             vfrust::Device::VirtioNet(net) => {
                 assert!(matches!(net.attachment, vfrust::NetAttachment::Nat));
                 assert!(net.mac_address.is_none());
@@ -344,13 +389,13 @@ pub(crate) mod tests {
             other => panic!("expected virtio-net, got {other:?}"),
         }
         // Pty serial console
-        match &devices[3] {
+        match &devices[4] {
             vfrust::Device::VirtioSerial(serial) => {
                 assert!(matches!(serial.attachment, vfrust::SerialAttachment::Pty));
             }
             other => panic!("expected virtio-serial, got {other:?}"),
         }
-        assert_eq!(devices.len(), 4, "no shares -> exactly 4 devices");
+        assert_eq!(devices.len(), 5, "no user shares -> exactly 5 devices");
     }
 
     #[test]
@@ -378,15 +423,16 @@ pub(crate) mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(fs_devices.len(), 2);
-        assert_eq!(fs_devices[0].mount_tag, "hostfs-0");
-        assert_eq!(
-            fs_devices[0].shared_dir,
-            Some(PathBuf::from("/Users/me/project"))
-        );
-        assert_eq!(fs_devices[1].mount_tag, "hostfs-1");
+        assert_eq!(fs_devices.len(), 3, "epistate + two user shares");
+        assert_eq!(fs_devices[0].mount_tag, ip_discovery::GUEST_STATE_TAG);
+        assert_eq!(fs_devices[1].mount_tag, "hostfs-0");
         assert_eq!(
             fs_devices[1].shared_dir,
+            Some(PathBuf::from("/Users/me/project"))
+        );
+        assert_eq!(fs_devices[2].mount_tag, "hostfs-1");
+        assert_eq!(
+            fs_devices[2].shared_dir,
             Some(PathBuf::from("/Users/me/data"))
         );
     }
@@ -484,6 +530,57 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn launch_kills_daemon_when_guest_never_reports_ip() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        // Fake daemon records its own pid but never reports an IP.
+        let fake_pid_file = dir.path().join("fake.pid");
+        let fake_daemon = dir.path().join("fake-daemon.sh");
+        std::fs::write(
+            &fake_daemon,
+            format!(
+                "#!/bin/sh\necho $$ > \"{}\"\nsleep 30\n",
+                fake_pid_file.display()
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        unsafe { std::env::set_var("EPI_VZ_DAEMON_BIN", &fake_daemon) };
+        unsafe { std::env::set_var("EPI_VZ_IP_TIMEOUT_SECS", "1") };
+
+        let mut spec = test_spec(dir.path().to_path_buf());
+        let base_image = dir.path().join("base.raw");
+        std::fs::write(&base_image, b"bootsector").unwrap();
+        spec.root_disk = base_image;
+        spec.disk_size = "1M".into();
+        let err = VzBackend.launch(&spec).unwrap_err();
+
+        unsafe { std::env::remove_var("EPI_VZ_DAEMON_BIN") };
+        unsafe { std::env::remove_var("EPI_VZ_IP_TIMEOUT_SECS") };
+
+        assert!(err.to_string().contains("never reported"), "{err}");
+        // The failed launch must not leak the daemon. It's our child:
+        // waitpid both proves it died and reaps it.
+        let pid: i32 = std::fs::read_to_string(&fake_pid_file)
+            .expect("fake daemon wrote its pid")
+            .trim()
+            .parse()
+            .unwrap();
+        let status =
+            nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid), None).expect("reaping daemon");
+        assert!(
+            matches!(
+                status,
+                nix::sys::wait::WaitStatus::Signaled(_, Signal::SIGKILL, _)
+            ),
+            "daemon should have been killed, got {status:?}"
+        );
+    }
+
+    #[test]
     fn status_prefers_control_socket_over_pid() {
         let _lock = ENV_LOCK.lock().unwrap();
         let state_dir = TempDir::new().unwrap();
@@ -572,8 +669,16 @@ pub(crate) mod tests {
     fn launch_spawns_daemon_and_returns_vz_state() {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
+        // Fake daemon reports the guest IP like the real guest unit would.
         let fake_daemon = dir.path().join("fake-daemon.sh");
-        std::fs::write(&fake_daemon, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::write(
+            &fake_daemon,
+            format!(
+                "#!/bin/sh\nprintf '192.168.64.5\\n' > \"{}\"\nsleep 30\n",
+                ip_discovery::ip_file(dir.path()).display()
+            ),
+        )
+        .unwrap();
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&fake_daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -588,6 +693,12 @@ pub(crate) mod tests {
         let rt = VzBackend.launch(&spec).unwrap();
 
         unsafe { std::env::remove_var("EPI_VZ_DAEMON_BIN") };
+
+        assert_eq!(
+            rt.ssh,
+            "192.168.64.5:22".parse::<SocketAddr>().unwrap(),
+            "ssh targets the guest-reported IP on the guest sshd port"
+        );
 
         let pid = vz_pid(&rt).unwrap();
         assert_eq!(

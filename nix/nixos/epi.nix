@@ -128,6 +128,49 @@ let
     '';
   };
 
+  # Report the guest's DHCP-assigned IPv4 to the host through the
+  # epi-internal `epistate` virtio-fs share (macOS VZ backend, epi-26/44).
+  # The share only exists under VZ; on cloud-hypervisor the tag is absent
+  # and this exits quietly. Overwrites on every boot so the host never
+  # reads a stale address.
+  epiReportIp = pkgs.writeShellApplication {
+    name = "epi-report-ip";
+
+    bashOptions = [
+      "errexit"
+      "pipefail"
+    ];
+
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.gawk
+      pkgs.gnugrep
+      pkgs.iproute2
+      pkgs.util-linux
+    ];
+
+    text = ''
+      tag=$(grep --files-with-matches --line-regexp epistate \
+        /sys/bus/virtio/devices/*/mount_tag 2>/dev/null | head -1) || true
+      [ -n "$tag" ] || exit 0
+
+      mkdir -p /run/epi-state
+      mountpoint -q /run/epi-state || mount -t virtiofs epistate /run/epi-state
+
+      for _ in $(seq 1 30); do
+        addr=$(ip -4 -o addr show scope global | awk '{ print $4 }' | cut -d/ -f1 | head -1)
+        if [ -n "$addr" ]; then
+          printf '%s\n' "$addr" > /run/epi-state/ip
+          exit 0
+        fi
+        sleep 1
+      done
+
+      echo "epi-report-ip: no global IPv4 address found" >&2
+      exit 1
+    '';
+  };
+
   epiSshEntry = pkgs.writeShellApplication {
     name = "epi-ssh-entry";
 
@@ -332,6 +375,18 @@ in
         "multi-user.target"
         "sshd.service"
       ];
+      wantedBy = [ "multi-user.target" ];
+    };
+
+    systemd.services.epi-report-ip = {
+      description = "epi report guest IP to host";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = lib.getExe epiReportIp;
+      };
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
     };
 
