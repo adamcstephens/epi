@@ -10,6 +10,7 @@
 //! discovery (epi-26) land separately.
 #![cfg(target_os = "macos")]
 
+pub mod control;
 pub mod overlay;
 
 use anyhow::{Context, Result, bail};

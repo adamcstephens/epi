@@ -315,6 +315,8 @@ dependencies = [
  "anyhow",
  "epi-core",
  "nix",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "vfrust",

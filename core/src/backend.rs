@@ -92,8 +92,10 @@ pub struct VzState {
     pub pid: u32,
 }
 
-/// Liveness of an instance as observed by its backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Liveness of an instance as observed by its backend. Serialized in the
+/// macOS control-socket protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InstanceStatus {
     Running,
     Stopped,
