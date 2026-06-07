@@ -10,6 +10,8 @@
 //! discovery (epi-26) land separately.
 #![cfg(target_os = "macos")]
 
+pub mod overlay;
+
 use anyhow::{Context, Result, bail};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -28,6 +30,9 @@ pub struct VzBackend;
 
 impl Backend for VzBackend {
     fn launch(&self, spec: &LaunchSpec) -> Result<RunningInstance> {
+        let disk_path = spec.instance_dir.join("disk.img");
+        overlay::ensure_writable_disk(&spec.root_disk, &disk_path, &spec.disk_size)?;
+
         let pid = spawn_daemon(&spec.id)?;
         Ok(RunningInstance {
             id: spec.id.clone(),
@@ -39,11 +44,7 @@ impl Backend for VzBackend {
                 path: spec.instance_dir.join("console.pty"),
             },
             backend: BackendState::Vz(VzState { pid }),
-            disk: spec
-                .instance_dir
-                .join("disk.img")
-                .to_string_lossy()
-                .to_string(),
+            disk: disk_path.to_string_lossy().to_string(),
             ssh_key_path: spec
                 .instance_dir
                 .join("id_ed25519")
@@ -425,7 +426,11 @@ mod tests {
         }
         unsafe { std::env::set_var("EPI_VZ_DAEMON_BIN", &fake_daemon) };
 
-        let spec = test_spec(dir.path().to_path_buf());
+        let mut spec = test_spec(dir.path().to_path_buf());
+        let base_image = dir.path().join("base.raw");
+        std::fs::write(&base_image, b"bootsector").unwrap();
+        spec.root_disk = base_image;
+        spec.disk_size = "1M".into();
         let rt = VzBackend.launch(&spec).unwrap();
 
         unsafe { std::env::remove_var("EPI_VZ_DAEMON_BIN") };
@@ -436,6 +441,10 @@ mod tests {
             epi_core::backend::InstanceStatus::Running
         );
         assert_eq!(rt.id, "testvm");
+        let overlay = dir.path().join("disk.img");
+        assert_eq!(rt.disk, overlay.to_string_lossy(), "disk points at overlay");
+        let overlay_meta = std::fs::metadata(&overlay).expect("launch creates the overlay");
+        assert_eq!(overlay_meta.len(), 1 << 20, "overlay grown to disk_size");
         assert_eq!(rt.ports, vec![]);
         match &rt.serial {
             SerialEndpoint::Pty { path } => {
