@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use std::net::SocketAddr;
 
-use epi::backend::{self, ch};
+use epi::backend;
 use epi::{config, console, gcroots, hooks, instance_store, ssh, target, ui, vm_launch};
 
 fn ssh_addr(port: u16) -> SocketAddr {
@@ -32,7 +32,7 @@ pub fn cmd_launch(
         ui::info(&format!(
             "Instance {instance} has stale runtime, cleaning up"
         ));
-        let _ = ch::clear_stale_runtime(instance);
+        let _ = backend::clear_stale_runtime(instance);
     }
 
     let pre_existing = instance_store::find(instance)?.is_some();
@@ -439,7 +439,7 @@ pub fn cmd_start(
 pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
     if !backend::instance_is_running(instance)? {
         if instance_store::find_runtime(instance)?.is_some() {
-            ch::clear_stale_runtime(instance)?;
+            backend::clear_stale_runtime(instance)?;
             ui::info(&format!(
                 "Instance {instance} was already stopped (stale runtime cleared)"
             ));
@@ -469,7 +469,7 @@ pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
     }
 
     let step = ui::Step::start(&format!("Stopping {instance}"));
-    ch::stop_instance(instance, force)?;
+    backend::stop_instance(instance, force)?;
     step.finish(&format!("Stopped {instance}"));
     Ok(())
 }
@@ -493,7 +493,7 @@ pub fn cmd_rm(instance: &str, force: bool) -> Result<()> {
 
     if running {
         let step = ui::Step::start(&format!("Terminating {instance}"));
-        ch::stop_instance(instance, force)?;
+        backend::stop_instance(instance, force)?;
         step.finish(&format!("Terminated {instance}"));
     }
 
@@ -618,7 +618,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
 
             // Stop VM
             let step = ui::Step::start(&format!("Stopping {instance} for reboot"));
-            ch::stop_instance(instance, false)?;
+            backend::stop_instance(instance, false)?;
             step.finish(&format!("Stopped {instance}"));
 
             // Update descriptor and GC roots before restart
@@ -663,7 +663,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
     let was_running = backend::instance_is_running(instance)?;
     if was_running {
         let step = ui::Step::start(&format!("Stopping {instance} for rebuild"));
-        ch::stop_instance(instance, false)?;
+        backend::stop_instance(instance, false)?;
         step.finish(&format!("Stopped {instance}"));
     }
 

@@ -427,7 +427,9 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        let BackendState::CloudHypervisor(ch) = &rt.backend;
+        let BackendState::CloudHypervisor(ch) = &rt.backend else {
+            panic!("expected cloud_hypervisor backend state");
+        };
         assert_eq!(ch.unit_id, "abcd1234");
         assert_eq!(rt.ssh.port(), 2222);
     }
@@ -497,7 +499,9 @@ mod tests {
         assert_eq!(result.target, ".#dev");
         assert_eq!(result.mounts, vec!["/mnt"]);
         let rt = result.runtime.unwrap();
-        let BackendState::CloudHypervisor(ch) = &rt.backend;
+        let BackendState::CloudHypervisor(ch) = &rt.backend else {
+            panic!("expected cloud_hypervisor backend state");
+        };
         assert_eq!(ch.unit_id, "abc12345");
         assert_eq!(rt.ssh.port(), 0);
         match &rt.serial {
@@ -639,7 +643,9 @@ mod tests {
         let state = load_state(name).unwrap().unwrap();
         let rt = state.runtime.expect("runtime missing after migration");
         assert_eq!(rt.id, name);
-        let BackendState::CloudHypervisor(ch) = &rt.backend;
+        let BackendState::CloudHypervisor(ch) = &rt.backend else {
+            panic!("expected cloud_hypervisor backend state");
+        };
         assert_eq!(ch.unit_id, "u-old");
         assert_eq!(rt.ssh.port(), 2222);
         assert_eq!(rt.disk, "/tmp/old/disk.img");

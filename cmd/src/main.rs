@@ -235,6 +235,14 @@ enum Command {
         /// Shell to generate completions for
         shell: Shell,
     },
+
+    /// Internal: long-lived helper holding the Virtualization.framework VM.
+    #[cfg(target_os = "macos")]
+    #[command(name = "__vmm-daemon", hide = true)]
+    VmmDaemon {
+        /// Instance name
+        instance: String,
+    },
 }
 
 fn main() {
@@ -335,5 +343,7 @@ fn run(command: Command) -> Result<()> {
             clap_complete::generate(shell, &mut cmd, "epi", &mut std::io::stdout());
             Ok(())
         }
+        #[cfg(target_os = "macos")]
+        Command::VmmDaemon { instance } => epi::backend::vz::daemon_main(&instance),
     }
 }

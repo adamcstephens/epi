@@ -3,8 +3,7 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
-use crate::backend::ch::CloudHypervisorBackend;
-use crate::backend::{self, Backend, LaunchSpec, PortMapping, RunningInstance, SharedDir};
+use crate::backend::{self, LaunchSpec, PortMapping, RunningInstance, SharedDir};
 use crate::hooks;
 use crate::instance_store;
 use crate::process;
@@ -71,6 +70,7 @@ fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
     if let Some((owner, owner_rt)) = backend::find_running_owner_by_disk(&desc.disk)? {
         let owner_id = match &owner_rt.backend {
             crate::backend::BackendState::CloudHypervisor(ch) => format!("unit {}", ch.unit_id),
+            crate::backend::BackendState::Vz(vz) => format!("pid {}", vz.pid),
         };
         bail!(
             "disk {} is locked by instance {owner} ({owner_id})",
@@ -142,7 +142,7 @@ fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
         instance_dir: inst_dir.clone(),
     };
 
-    CloudHypervisorBackend.launch(&spec)
+    backend::platform_backend().launch(&spec)
 }
 
 fn read_ssh_pubkey(ssh_key_path: &Path) -> Result<String> {

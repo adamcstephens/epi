@@ -76,13 +76,20 @@ pub struct RunningInstance {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BackendState {
     CloudHypervisor(ChState),
-    // `Vz(VzState)` lands with the macOS backend in Phase 2 (epi-25+).
+    Vz(VzState),
 }
 
 /// Per-instance state for the cloud-hypervisor backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChState {
     pub unit_id: String,
+}
+
+/// Per-instance state for the macOS Virtualization.framework backend.
+/// The pid is the `epi __vmm-daemon` helper holding the VM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VzState {
+    pub pid: u32,
 }
 
 /// Liveness of an instance as observed by its backend.
@@ -132,6 +139,16 @@ mod tests {
         assert!(json.contains(r#""kind":"pty""#));
         let parsed: SerialEndpoint = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, se);
+    }
+
+    #[test]
+    fn backend_state_vz_roundtrip() {
+        let bs = BackendState::Vz(VzState { pid: 4242 });
+        let json = serde_json::to_string(&bs).unwrap();
+        assert!(json.contains(r#""kind":"vz""#));
+        assert!(json.contains(r#""pid":4242"#));
+        let parsed: BackendState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, bs);
     }
 
     #[test]

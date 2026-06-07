@@ -1,9 +1,15 @@
 use anyhow::{Result, bail};
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
-use epi::backend::{self, ch};
-use epi::{instance_store, process, ssh, ui};
+use epi::backend;
+#[cfg(target_os = "linux")]
+use epi::backend::ch;
+#[cfg(target_os = "linux")]
+use epi::process;
+use epi::{instance_store, ssh, ui};
 
 pub fn cmd_info(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
@@ -88,48 +94,7 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     // Runtime tree (rendered separately, outside the key-value table)
     if running {
         if let Some(ref rt) = state.runtime {
-            let slice = ch::systemd::slice_name(instance, ch::ch_unit_id(rt))?;
-
-            // Build unit list: vm, passt, virtiofsd(s)
-            let vm_unit = ch::systemd::vm_unit_name(instance, ch::ch_unit_id(rt))?;
-            let mut units = vec![vm_unit];
-
-            let passt_unit = ch::systemd::passt_unit_name(instance, ch::ch_unit_id(rt))?;
-            if process::unit_is_active(&passt_unit)? {
-                units.push(passt_unit);
-            }
-
-            for i in 0.. {
-                let vfsd_unit = ch::systemd::virtiofsd_unit_name(instance, ch::ch_unit_id(rt), i)?;
-                if !process::unit_is_active(&vfsd_unit)? {
-                    break;
-                }
-                units.push(vfsd_unit);
-            }
-
-            // Uptime
-            let uptime_str = process::unit_active_enter_timestamp(&slice)?
-                .and_then(|ts| {
-                    let parsed = chrono_parse_timestamp(&ts)?;
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .ok()?;
-                    let started = Duration::from_secs(parsed);
-                    now.checked_sub(started).map(format_uptime)
-                })
-                .unwrap_or_default();
-
-            println!();
-            if uptime_str.is_empty() {
-                println!("runtime:");
-            } else {
-                let dim = console::Style::new().for_stdout().dim();
-                println!(
-                    "runtime:   {}",
-                    dim.apply_to(format!("uptime {uptime_str}"))
-                );
-            }
-            println!("{}", render_runtime_tree(&slice, &units));
+            print_runtime(instance, rt)?;
         }
     } else {
         let dim = console::Style::new().for_stdout().dim();
@@ -137,6 +102,66 @@ pub fn cmd_info(instance: &str) -> Result<()> {
         println!("runtime:   {}", dim.apply_to("stopped"));
     }
 
+    Ok(())
+}
+
+/// Render the running systemd unit tree with uptime (Linux / CH backend).
+#[cfg(target_os = "linux")]
+fn print_runtime(instance: &str, rt: &backend::RunningInstance) -> Result<()> {
+    let unit_id = ch::ch_unit_id(rt)?;
+    let slice = ch::systemd::slice_name(instance, unit_id)?;
+
+    // Build unit list: vm, passt, virtiofsd(s)
+    let vm_unit = ch::systemd::vm_unit_name(instance, unit_id)?;
+    let mut units = vec![vm_unit];
+
+    let passt_unit = ch::systemd::passt_unit_name(instance, unit_id)?;
+    if process::unit_is_active(&passt_unit)? {
+        units.push(passt_unit);
+    }
+
+    for i in 0.. {
+        let vfsd_unit = ch::systemd::virtiofsd_unit_name(instance, unit_id, i)?;
+        if !process::unit_is_active(&vfsd_unit)? {
+            break;
+        }
+        units.push(vfsd_unit);
+    }
+
+    // Uptime
+    let uptime_str = process::unit_active_enter_timestamp(&slice)?
+        .and_then(|ts| {
+            let parsed = chrono_parse_timestamp(&ts)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?;
+            let started = Duration::from_secs(parsed);
+            now.checked_sub(started).map(format_uptime)
+        })
+        .unwrap_or_default();
+
+    println!();
+    if uptime_str.is_empty() {
+        println!("runtime:");
+    } else {
+        let dim = console::Style::new().for_stdout().dim();
+        println!(
+            "runtime:   {}",
+            dim.apply_to(format!("uptime {uptime_str}"))
+        );
+    }
+    println!("{}", render_runtime_tree(&slice, &units));
+    Ok(())
+}
+
+/// Show the VM-holding daemon pid (macOS / VZ backend). Uptime and helper
+/// detail land with epi-35.
+#[cfg(target_os = "macos")]
+fn print_runtime(_instance: &str, rt: &backend::RunningInstance) -> Result<()> {
+    let pid = backend::vz::vz_pid(rt)?;
+    println!();
+    println!("runtime:");
+    println!("   vmm daemon (pid {pid})");
     Ok(())
 }
 
@@ -219,12 +244,20 @@ pub fn cmd_logs(instance: &str) -> Result<()> {
     let runtime = instance_store::find_runtime(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found or not running"))?;
 
-    let slice = ch::systemd::slice_name(instance, ch::ch_unit_id(&runtime))?;
-    let err = std::process::Command::new("journalctl")
-        .args(["--user", "--unit", &slice, "--follow"])
-        .exec();
+    #[cfg(target_os = "linux")]
+    {
+        let slice = ch::systemd::slice_name(instance, ch::ch_unit_id(&runtime)?)?;
+        let err = std::process::Command::new("journalctl")
+            .args(["--user", "--unit", &slice, "--follow"])
+            .exec();
 
-    bail!("failed to exec journalctl: {err}")
+        bail!("failed to exec journalctl: {err}")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = runtime;
+        bail!("epi logs is not yet supported on macOS (tee'd console log lands with epi-31)")
+    }
 }
 
 pub fn cmd_ssh_config(instance: &str, print: bool) -> Result<()> {
@@ -333,6 +366,7 @@ pub fn render_info(view: &InfoView) -> String {
     table.to_string()
 }
 
+#[cfg(target_os = "linux")]
 /// Parse a systemd timestamp into seconds since epoch.
 /// Uses `date -d` to convert since systemd timestamps have locale-dependent formats.
 fn chrono_parse_timestamp(ts: &str) -> Option<u64> {
@@ -343,6 +377,7 @@ fn chrono_parse_timestamp(ts: &str) -> Option<u64> {
     out.stdout.parse().ok()
 }
 
+#[cfg(target_os = "linux")]
 fn format_uptime(d: Duration) -> String {
     let total_secs = d.as_secs();
     let days = total_secs / 86400;
@@ -358,6 +393,7 @@ fn format_uptime(d: Duration) -> String {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn render_runtime_tree(slice: &str, units: &[String]) -> String {
     let mut lines = Vec::new();
     lines.push(format!("   {slice}"));
@@ -481,6 +517,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn format_uptime_minutes_only() {
         assert_eq!(format_uptime(Duration::from_secs(0)), "0m");
         assert_eq!(format_uptime(Duration::from_secs(59)), "0m");
@@ -489,6 +526,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn format_uptime_hours_and_minutes() {
         assert_eq!(format_uptime(Duration::from_secs(3600)), "1h 0m");
         assert_eq!(format_uptime(Duration::from_secs(5400)), "1h 30m");
@@ -496,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn format_uptime_days_and_hours() {
         assert_eq!(format_uptime(Duration::from_secs(86400)), "1d 0h");
         assert_eq!(format_uptime(Duration::from_secs(90000)), "1d 1h");
@@ -503,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn render_runtime_tree_single_unit() {
         let output = render_runtime_tree("epi-dev_abc.slice", &["epi-dev_abc_vm.service".into()]);
         assert!(output.contains("   epi-dev_abc.slice"));
@@ -510,6 +550,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn render_runtime_tree_multiple_units() {
         let units = vec![
             "epi-dev_abc_vm.service".into(),

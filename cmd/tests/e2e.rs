@@ -4,6 +4,10 @@
 //! Run with: cargo test --test e2e
 //!
 //! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
+//!
+//! These exercise the cloud-hypervisor backend; a macOS VZ variant lands
+//! with epi-29.
+#![cfg(target_os = "linux")]
 
 use epi::backend::ch;
 use epi::{config, hooks, instance_store, process, ssh, target, vm_launch};

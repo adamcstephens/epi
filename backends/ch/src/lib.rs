@@ -1,3 +1,8 @@
+//! Linux cloud-hypervisor backend. Drives passt, virtiofsd, and the VMM
+//! through systemd user units — Linux-only, mirroring the macOS-only VZ
+//! backend crate.
+#![cfg(target_os = "linux")]
+
 pub mod args;
 pub mod passt;
 pub mod systemd;
@@ -29,7 +34,7 @@ impl Backend for CloudHypervisorBackend {
     }
 
     fn stop(&self, instance: &RunningInstance, grace: Duration) -> Result<()> {
-        let unit_id = ch_unit_id(instance);
+        let unit_id = ch_unit_id(instance)?;
         let vm_unit = systemd::vm_unit_name(&instance.id, unit_id)?;
         let slice = systemd::slice_name(&instance.id, unit_id)?;
 
@@ -43,7 +48,7 @@ impl Backend for CloudHypervisorBackend {
     }
 
     fn status(&self, instance: &RunningInstance) -> Result<InstanceStatus> {
-        let unit_id = ch_unit_id(instance);
+        let unit_id = ch_unit_id(instance)?;
         let vm_unit = systemd::vm_unit_name(&instance.id, unit_id)?;
         if process::unit_is_active(&vm_unit)? {
             Ok(InstanceStatus::Running)
@@ -54,10 +59,14 @@ impl Backend for CloudHypervisorBackend {
 }
 
 /// Extract the unit_id from a `RunningInstance` whose backend is CH.
-/// Used by callers that already know they're working with a CH instance.
-pub fn ch_unit_id(instance: &RunningInstance) -> &str {
+/// Errors when the instance belongs to another backend.
+pub fn ch_unit_id(instance: &RunningInstance) -> Result<&str> {
     match &instance.backend {
-        BackendState::CloudHypervisor(ch) => &ch.unit_id,
+        BackendState::CloudHypervisor(ch) => Ok(&ch.unit_id),
+        other => bail!(
+            "instance {} is not a cloud-hypervisor instance: {other:?}",
+            instance.id
+        ),
     }
 }
 
@@ -303,27 +312,6 @@ pub(crate) fn wait_for_socket(path: &str, max_wait_ms: u64) -> Result<()> {
     bail!("socket did not appear: {path}");
 }
 
-/// Stop all units for an instance.
-///
-/// Thin wrapper around `Backend::stop` that reconstitutes a `RunningInstance`
-/// from the persisted `Runtime`. With `force=false`, the VM unit's ExecStop
-/// runs (graceful ACPI shutdown, capped by TimeoutStopSec). With `force=true`,
-/// the VM main process is SIGKILL'd directly.
-pub fn stop_instance(instance_name: &str, force: bool) -> Result<()> {
-    let running = instance_store::find_runtime(instance_name)?
-        .ok_or_else(|| anyhow::anyhow!("instance {instance_name} has no runtime"))?;
-
-    let grace = if force {
-        Duration::ZERO
-    } else {
-        Duration::from_secs(20)
-    };
-
-    CloudHypervisorBackend.stop(&running, grace)?;
-    instance_store::clear_runtime(instance_name)?;
-    Ok(())
-}
-
 /// Clean up a stale runtime: stop any leftover helper units and the slice,
 /// remove stale sockets, and clear runtime state.
 ///
@@ -334,7 +322,7 @@ pub fn clear_stale_runtime(instance_name: &str) -> Result<()> {
     if let Some(state) = instance_store::load_state(instance_name)?
         && let Some(rt) = state.runtime.as_ref()
     {
-        let unit_id = ch_unit_id(rt);
+        let unit_id = ch_unit_id(rt)?;
         let passt_unit = systemd::passt_unit_name(instance_name, unit_id)?;
         let _ = process::stop_unit(&passt_unit);
         for i in 0..state.mounts.len() {
