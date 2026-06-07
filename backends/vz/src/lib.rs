@@ -4,9 +4,10 @@
 //! <instance>`) because Virtualization.framework requires a resident
 //! `VZVirtualMachine`. `VzBackend` spawns and signals that helper.
 //!
-//! Current state (epi-21): launch spawns the daemon, stop/status are
-//! PID-based. The control-socket protocol (epi-22), VmConfig assembly
-//! (epi-25), and IP discovery (epi-26) land separately.
+//! Current state: launch spawns the daemon (epi-21) and `vm_config`
+//! assembles the device tree (epi-25); stop/status are PID-based. The
+//! control-socket protocol (epi-22), supervisor loop (epi-27), and IP
+//! discovery (epi-26) land separately.
 #![cfg(target_os = "macos")]
 
 use anyhow::{Context, Result, bail};
@@ -81,6 +82,54 @@ impl Backend for VzBackend {
             Ok(InstanceStatus::Stopped)
         }
     }
+}
+
+/// Assemble the vfrust `VmConfig` for a launch.
+///
+/// Device order: root overlay disk, epidata seed ISO, one virtio-fs per
+/// share (tags stay `hostfs-{N}` so the guest mount loop in
+/// `nix/nixos/epi.nix` is unchanged), NAT network, pty serial console.
+pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
+    let mut builder = vfrust::VmConfig::builder()
+        .cpus(spec.cpus)
+        .memory_mib(u64::from(spec.memory_mib))
+        .bootloader(vfrust::Bootloader::Linux(vfrust::LinuxBootloader {
+            kernel_path: spec.kernel.clone(),
+            initrd_path: spec.initrd.clone(),
+            command_line: spec.cmdline.clone(),
+        }))
+        .device(vfrust::Device::VirtioBlk(vfrust::VirtioBlk {
+            path: spec.instance_dir.join("disk.img"),
+            read_only: false,
+            ..vfrust::VirtioBlk::default()
+        }))
+        .device(vfrust::Device::VirtioBlk(vfrust::VirtioBlk {
+            path: spec.epidata.clone(),
+            read_only: true,
+            ..vfrust::VirtioBlk::default()
+        }));
+
+    for share in &spec.shares {
+        // VZ single-directory shares carry no read-only flag; epi only
+        // creates writable shares today.
+        builder = builder.device(vfrust::Device::VirtioFs(vfrust::VirtioFs {
+            mount_tag: share.tag.clone(),
+            shared_dir: Some(share.host_path.clone()),
+            directories: vec![],
+        }));
+    }
+
+    let config = builder
+        .device(vfrust::Device::VirtioNet(vfrust::VirtioNet {
+            attachment: vfrust::NetAttachment::Nat,
+            mac_address: None,
+        }))
+        .device(vfrust::Device::VirtioSerial(vfrust::VirtioSerial {
+            attachment: vfrust::SerialAttachment::Pty,
+        }))
+        .build()
+        .map_err(|e| anyhow::anyhow!("assembling vm config for {}: {e}", spec.id))?;
+    Ok(config)
 }
 
 /// Extract the daemon pid from a `RunningInstance` whose backend is VZ.
@@ -186,6 +235,118 @@ mod tests {
             disk_size: "40G".into(),
             instance_dir,
         }
+    }
+
+    #[test]
+    fn vm_config_resources_and_bootloader_from_spec() {
+        let spec = test_spec(PathBuf::from("/inst/testvm"));
+        let config = vm_config(&spec).unwrap();
+
+        assert_eq!(config.cpus(), 2);
+        assert_eq!(config.memory_mib(), 1024);
+        match config.bootloader() {
+            vfrust::Bootloader::Linux(linux) => {
+                assert_eq!(linux.kernel_path, PathBuf::from("/nix/store/fake/kernel"));
+                assert_eq!(linux.initrd_path, None);
+                assert_eq!(linux.command_line, "console=hvc0");
+            }
+            other => panic!("expected linux bootloader, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vm_config_initrd_passed_through() {
+        let mut spec = test_spec(PathBuf::from("/inst/testvm"));
+        spec.initrd = Some(PathBuf::from("/nix/store/fake/initrd"));
+        let config = vm_config(&spec).unwrap();
+
+        match config.bootloader() {
+            vfrust::Bootloader::Linux(linux) => {
+                assert_eq!(
+                    linux.initrd_path,
+                    Some(PathBuf::from("/nix/store/fake/initrd"))
+                );
+            }
+            other => panic!("expected linux bootloader, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vm_config_devices_disks_net_serial() {
+        let spec = test_spec(PathBuf::from("/inst/testvm"));
+        let config = vm_config(&spec).unwrap();
+        let devices = config.devices();
+
+        // Root overlay disk: writable, inside the instance dir
+        match &devices[0] {
+            vfrust::Device::VirtioBlk(blk) => {
+                assert_eq!(blk.path, PathBuf::from("/inst/testvm/disk.img"));
+                assert!(!blk.read_only);
+            }
+            other => panic!("expected root virtio-blk, got {other:?}"),
+        }
+        // epidata seed ISO: read-only
+        match &devices[1] {
+            vfrust::Device::VirtioBlk(blk) => {
+                assert_eq!(blk.path, PathBuf::from("/inst/testvm/epidata.iso"));
+                assert!(blk.read_only);
+            }
+            other => panic!("expected epidata virtio-blk, got {other:?}"),
+        }
+        // NAT network, VZ-assigned mac
+        match &devices[2] {
+            vfrust::Device::VirtioNet(net) => {
+                assert!(matches!(net.attachment, vfrust::NetAttachment::Nat));
+                assert!(net.mac_address.is_none());
+            }
+            other => panic!("expected virtio-net, got {other:?}"),
+        }
+        // Pty serial console
+        match &devices[3] {
+            vfrust::Device::VirtioSerial(serial) => {
+                assert!(matches!(serial.attachment, vfrust::SerialAttachment::Pty));
+            }
+            other => panic!("expected virtio-serial, got {other:?}"),
+        }
+        assert_eq!(devices.len(), 4, "no shares -> exactly 4 devices");
+    }
+
+    #[test]
+    fn vm_config_virtiofs_share_per_mount_keeps_tags() {
+        let mut spec = test_spec(PathBuf::from("/inst/testvm"));
+        spec.shares = vec![
+            epi_core::backend::SharedDir {
+                tag: "hostfs-0".into(),
+                host_path: PathBuf::from("/Users/me/project"),
+                read_only: false,
+            },
+            epi_core::backend::SharedDir {
+                tag: "hostfs-1".into(),
+                host_path: PathBuf::from("/Users/me/data"),
+                read_only: false,
+            },
+        ];
+        let config = vm_config(&spec).unwrap();
+
+        let fs_devices: Vec<_> = config
+            .devices()
+            .iter()
+            .filter_map(|d| match d {
+                vfrust::Device::VirtioFs(fs) => Some(fs),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fs_devices.len(), 2);
+        assert_eq!(fs_devices[0].mount_tag, "hostfs-0");
+        assert_eq!(
+            fs_devices[0].shared_dir,
+            Some(PathBuf::from("/Users/me/project"))
+        );
+        assert_eq!(fs_devices[1].mount_tag, "hostfs-1");
+        assert_eq!(
+            fs_devices[1].shared_dir,
+            Some(PathBuf::from("/Users/me/data"))
+        );
     }
 
     #[test]
