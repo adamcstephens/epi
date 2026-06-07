@@ -12,7 +12,15 @@ serde_json.workspace = true
 # Binds Virtualization.framework — macOS-only, never reaches the Linux build.
 [target.'cfg(target_os = "macos")'.dependencies]
 vfrust = "0.1"
-tokio = { version = "1.52.3", features = ["rt", "macros", "net", "io-util", "time", "sync"] }
+tokio = { version = "1.52.3", features = [
+  "rt",
+  "macros",
+  "net",
+  "io-util",
+  "time",
+  "sync",
+  "signal",
+] }
 nix = { workspace = true, features = ["signal", "process"] }
 
 [dev-dependencies]

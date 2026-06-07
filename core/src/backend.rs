@@ -9,8 +9,9 @@ use anyhow::Result;
 ///
 /// Built by shared orchestration above the backend seam. Contains everything
 /// a backend needs to create a VM from already-resolved host state (store
-/// paths, overlay locations, auth material).
-#[derive(Debug, Clone)]
+/// paths, overlay locations, auth material). Serialized into the instance
+/// dir on macOS so the `epi __vmm-daemon` helper can rebuild its VM config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchSpec {
     pub id: String,
     pub kernel: PathBuf,
@@ -38,7 +39,7 @@ pub struct PortMapping {
 }
 
 /// A host directory shared into the guest via virtio-fs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedDir {
     pub tag: String,
     pub host_path: PathBuf,
@@ -141,6 +142,37 @@ mod tests {
         assert!(json.contains(r#""kind":"pty""#));
         let parsed: SerialEndpoint = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, se);
+    }
+
+    #[test]
+    fn launch_spec_roundtrip() {
+        let spec = LaunchSpec {
+            id: "myvm".into(),
+            kernel: PathBuf::from("/nix/store/k/kernel"),
+            initrd: Some(PathBuf::from("/nix/store/i/initrd")),
+            cmdline: "console=hvc0".into(),
+            root_disk: PathBuf::from("/nix/store/d/disk.raw"),
+            epidata: PathBuf::from("/inst/epidata.iso"),
+            shares: vec![SharedDir {
+                tag: "hostfs-0".into(),
+                host_path: PathBuf::from("/home/me/project"),
+                read_only: false,
+            }],
+            cpus: 4,
+            memory_mib: 2048,
+            ssh_pubkey: "ssh-ed25519 AAAA".into(),
+            ssh_port: 2222,
+            port_forwards: vec![PortMapping {
+                host: 8080,
+                guest: 80,
+                protocol: "tcp".into(),
+            }],
+            disk_size: "40G".into(),
+            instance_dir: PathBuf::from("/inst"),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let parsed: LaunchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, spec);
     }
 
     #[test]

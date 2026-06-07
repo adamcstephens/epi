@@ -4,19 +4,22 @@
 //! <instance>`) because Virtualization.framework requires a resident
 //! `VZVirtualMachine`. `VzBackend` spawns and signals that helper.
 //!
-//! Current state: launch spawns the daemon (epi-21) and `vm_config`
-//! assembles the device tree (epi-25); stop/status are PID-based. The
-//! control-socket protocol (epi-22), supervisor loop (epi-27), and IP
-//! discovery (epi-26) land separately.
+//! `launch` prepares the disk overlay, persists the launch spec, and spawns
+//! the daemon; `stop`/`status` go through the control socket (epi-22) with
+//! a PID-signal fallback for a daemon that can't answer. IP discovery
+//! (epi-26) lands separately.
 #![cfg(target_os = "macos")]
 
 pub mod control;
+pub mod daemon;
 pub mod overlay;
+
+pub use daemon::daemon_main;
 
 use anyhow::{Context, Result, bail};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
@@ -26,6 +29,7 @@ use nix::unistd::Pid;
 use epi_core::backend::{
     Backend, BackendState, InstanceStatus, LaunchSpec, RunningInstance, SerialEndpoint, VzState,
 };
+use epi_core::instance_store;
 
 pub struct VzBackend;
 
@@ -33,8 +37,9 @@ impl Backend for VzBackend {
     fn launch(&self, spec: &LaunchSpec) -> Result<RunningInstance> {
         let disk_path = spec.instance_dir.join("disk.img");
         overlay::ensure_writable_disk(&spec.root_disk, &disk_path, &spec.disk_size)?;
+        daemon::write_launch_spec(&spec.instance_dir, spec)?;
 
-        let pid = spawn_daemon(&spec.id)?;
+        let pid = spawn_daemon(&spec.id, &spec.instance_dir)?;
         Ok(RunningInstance {
             id: spec.id.clone(),
             // Placeholder: vmnet gives the guest its own address, discovered
@@ -57,26 +62,38 @@ impl Backend for VzBackend {
 
     fn stop(&self, instance: &RunningInstance, grace: Duration) -> Result<()> {
         let pid = Pid::from_raw(vz_pid(instance)? as i32);
-        if grace.is_zero() {
-            return force_kill(pid);
-        }
-        // PID-signal stop until the control socket lands (epi-22): the daemon
-        // turns SIGTERM into a graceful guest shutdown before exiting.
-        match kill(pid, Signal::SIGTERM) {
-            Err(Errno::ESRCH) => return Ok(()),
-            r => r.context("sending SIGTERM to vmm daemon")?,
-        }
-        let deadline = Instant::now() + grace;
-        while Instant::now() < deadline {
-            if !process_alive(pid) {
-                return Ok(());
+        let socket = control::socket_path(&instance_store::instance_dir(&instance.id));
+        let request = if grace.is_zero() {
+            control::Request::KillNow
+        } else {
+            control::Request::Stop {
+                grace_seconds: grace.as_secs(),
             }
-            std::thread::sleep(Duration::from_millis(50));
+        };
+        match control::send_request(&socket, &request) {
+            Ok(control::Response::Stopping) | Ok(control::Response::Killed) => {
+                // The daemon coordinates guest shutdown and exits; allow it
+                // the grace period plus margin before forcing.
+                if !wait_for_exit(pid, grace + Duration::from_secs(10)) {
+                    force_kill(pid)?;
+                }
+                Ok(())
+            }
+            Ok(control::Response::Error { message }) => bail!("vmm daemon: {message}"),
+            Ok(other) => bail!("unexpected vmm daemon response: {other:?}"),
+            // Socket gone or daemon wedged — signal the pid directly.
+            Err(_) => signal_stop(pid, grace),
         }
-        force_kill(pid)
     }
 
     fn status(&self, instance: &RunningInstance) -> Result<InstanceStatus> {
+        let socket = control::socket_path(&instance_store::instance_dir(&instance.id));
+        if let Ok(control::Response::Status { status }) =
+            control::send_request(&socket, &control::Request::Status)
+        {
+            return Ok(status);
+        }
+        // Daemon gone or not serving yet — fall back to the pid probe.
         let pid = Pid::from_raw(vz_pid(instance)? as i32);
         if process_alive(pid) {
             Ok(InstanceStatus::Running)
@@ -84,6 +101,34 @@ impl Backend for VzBackend {
             Ok(InstanceStatus::Stopped)
         }
     }
+}
+
+/// PID-signal stop path: SIGTERM (the daemon's supervisor turns it into a
+/// graceful guest shutdown), force after `grace`.
+fn signal_stop(pid: Pid, grace: Duration) -> Result<()> {
+    if grace.is_zero() {
+        return force_kill(pid);
+    }
+    match kill(pid, Signal::SIGTERM) {
+        Err(Errno::ESRCH) => return Ok(()),
+        r => r.context("sending SIGTERM to vmm daemon")?,
+    }
+    if wait_for_exit(pid, grace) {
+        return Ok(());
+    }
+    force_kill(pid)
+}
+
+/// Poll for daemon exit; true when the pid is gone before the deadline.
+fn wait_for_exit(pid: Pid, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !process_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    !process_alive(pid)
 }
 
 /// Assemble the vfrust `VmConfig` for a launch.
@@ -142,30 +187,21 @@ pub fn vz_pid(instance: &RunningInstance) -> Result<u32> {
     }
 }
 
-/// Entrypoint for the hidden `epi __vmm-daemon <instance>` subcommand.
-///
-/// Holds the tokio runtime that will own the `VZVirtualMachine` (epi-25)
-/// and serve the per-instance control socket (epi-22/27). Until those land
-/// it parks until signalled; SIGTERM/SIGKILL from `VzBackend::stop`
-/// terminates it.
-pub fn daemon_main(instance: &str) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .with_context(|| format!("building vmm daemon runtime for {instance}"))?;
-    runtime.block_on(std::future::pending::<()>());
-    Ok(())
-}
-
-/// Spawn the detached VM-holding helper. Plain spawn for now; setsid /
-/// posix_spawn detach hardening lands in epi-28.
-fn spawn_daemon(instance: &str) -> Result<u32> {
+/// Spawn the detached VM-holding helper with its output captured to
+/// `daemon.log`. Plain spawn for now; setsid / posix_spawn detach hardening
+/// lands in epi-28.
+fn spawn_daemon(instance: &str, instance_dir: &Path) -> Result<u32> {
     let exe = match std::env::var("EPI_VZ_DAEMON_BIN") {
         Ok(p) => PathBuf::from(p),
         Err(_) => std::env::current_exe().context("resolving epi binary path")?,
     };
+    let log =
+        std::fs::File::create(instance_dir.join("daemon.log")).context("creating daemon log")?;
     let child = Command::new(&exe)
         .args(["__vmm-daemon", instance])
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().context("cloning daemon log handle")?)
+        .stderr(log)
         .spawn()
         .with_context(|| format!("spawning vmm daemon: {}", exe.display()))?;
     Ok(child.id())
@@ -185,7 +221,7 @@ fn force_kill(pid: Pid) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use epi_core::backend::{
         Backend, BackendState, ChState, LaunchSpec, RunningInstance, SerialEndpoint, VzState,
@@ -200,8 +236,12 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn vz_runtime(pid: u32) -> RunningInstance {
+        vz_runtime_named("testvm", pid)
+    }
+
+    fn vz_runtime_named(id: &str, pid: u32) -> RunningInstance {
         RunningInstance {
-            id: "testvm".into(),
+            id: id.into(),
             ssh: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 2222),
             serial: SerialEndpoint::Pty {
                 path: PathBuf::from("/tmp/console.pty"),
@@ -220,7 +260,7 @@ mod tests {
             .expect("spawning sleeper")
     }
 
-    fn test_spec(instance_dir: PathBuf) -> LaunchSpec {
+    pub(crate) fn test_spec(instance_dir: PathBuf) -> LaunchSpec {
         LaunchSpec {
             id: "testvm".into(),
             kernel: PathBuf::from("/nix/store/fake/kernel"),
@@ -415,6 +455,119 @@ mod tests {
         VzBackend.stop(&rt, Duration::from_secs(1)).unwrap();
     }
 
+    /// Mock daemon socket: serves one connection, records the request,
+    /// replies with `response`.
+    fn spawn_control_daemon(
+        socket: PathBuf,
+        response: control::Response,
+    ) -> (
+        std::sync::Arc<Mutex<Vec<control::Request>>>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{BufRead, BufReader, Write};
+        let received = std::sync::Arc::new(Mutex::new(vec![]));
+        let recorder = received.clone();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            recorder
+                .lock()
+                .unwrap()
+                .push(control::decode::<control::Request>(&line).unwrap());
+            writeln!(writer, "{}", control::encode(&response).unwrap()).unwrap();
+        });
+        (received, handle)
+    }
+
+    #[test]
+    fn status_prefers_control_socket_over_pid() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let state_dir = TempDir::new().unwrap();
+        unsafe { std::env::set_var("EPI_STATE_DIR", state_dir.path()) };
+
+        let name = "socktest-status";
+        let inst_dir = instance_store::ensure_instance_dir(name).unwrap();
+        let (_, server) = spawn_control_daemon(
+            control::socket_path(&inst_dir),
+            control::Response::Status {
+                status: InstanceStatus::Stopped,
+            },
+        );
+
+        // Live pid, but the daemon says Stopped — socket wins.
+        let mut child = spawn_sleeper();
+        let rt = vz_runtime_named(name, child.id());
+        let status = VzBackend.status(&rt).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        server.join().unwrap();
+        unsafe { std::env::remove_var("EPI_STATE_DIR") };
+
+        assert_eq!(status, InstanceStatus::Stopped);
+    }
+
+    #[test]
+    fn stop_sends_grace_over_control_socket() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let state_dir = TempDir::new().unwrap();
+        unsafe { std::env::set_var("EPI_STATE_DIR", state_dir.path()) };
+
+        let name = "socktest-stop";
+        let inst_dir = instance_store::ensure_instance_dir(name).unwrap();
+        let (received, server) =
+            spawn_control_daemon(control::socket_path(&inst_dir), control::Response::Stopping);
+
+        // Daemon pid already gone: stop should return as soon as the daemon
+        // acknowledges.
+        let mut child = spawn_sleeper();
+        let pid = child.id();
+        child.kill().unwrap();
+        child.wait().unwrap();
+
+        let rt = vz_runtime_named(name, pid);
+        let result = VzBackend.stop(&rt, Duration::from_secs(20));
+        server.join().unwrap();
+        unsafe { std::env::remove_var("EPI_STATE_DIR") };
+
+        result.unwrap();
+        assert_eq!(
+            received.lock().unwrap().clone(),
+            vec![control::Request::Stop { grace_seconds: 20 }]
+        );
+    }
+
+    #[test]
+    fn force_stop_sends_kill_now_over_control_socket() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let state_dir = TempDir::new().unwrap();
+        unsafe { std::env::set_var("EPI_STATE_DIR", state_dir.path()) };
+
+        let name = "socktest-kill";
+        let inst_dir = instance_store::ensure_instance_dir(name).unwrap();
+        let (received, server) =
+            spawn_control_daemon(control::socket_path(&inst_dir), control::Response::Killed);
+
+        let mut child = spawn_sleeper();
+        let pid = child.id();
+        child.kill().unwrap();
+        child.wait().unwrap();
+
+        let rt = vz_runtime_named(name, pid);
+        let result = VzBackend.stop(&rt, Duration::ZERO);
+        server.join().unwrap();
+        unsafe { std::env::remove_var("EPI_STATE_DIR") };
+
+        result.unwrap();
+        assert_eq!(
+            received.lock().unwrap().clone(),
+            vec![control::Request::KillNow]
+        );
+    }
+
     #[test]
     fn launch_spawns_daemon_and_returns_vz_state() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -446,6 +599,14 @@ mod tests {
         assert_eq!(rt.disk, overlay.to_string_lossy(), "disk points at overlay");
         let overlay_meta = std::fs::metadata(&overlay).expect("launch creates the overlay");
         assert_eq!(overlay_meta.len(), 1 << 20, "overlay grown to disk_size");
+        assert!(
+            dir.path().join("launch-spec.json").exists(),
+            "launch persists the spec for the daemon"
+        );
+        assert!(
+            dir.path().join("daemon.log").exists(),
+            "daemon output captured to log"
+        );
         assert_eq!(rt.ports, vec![]);
         match &rt.serial {
             SerialEndpoint::Pty { path } => {
