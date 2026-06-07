@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- macOS: `epi launch` boots an aarch64 NixOS guest under Virtualization.framework and `epi stop` shuts it down gracefully; the guest's SSH address is discovered via a virtio-fs share. Use the `manual-test-aarch64` flake target (VZ on Apple Silicon runs aarch64 guests only)
+- macOS: `epi launch`/`ssh`/`exec`/`stop` work against an aarch64 NixOS guest under Virtualization.framework; the guest's SSH address is discovered via a virtio-fs share. Use the `manual-test-aarch64` flake target (VZ on Apple Silicon runs aarch64 guests only). epi uses the system `/usr/bin/ssh` on macOS so guest connections aren't blocked by Local Network Privacy
 - macOS: nix-built `epi` is ad-hoc signed with the `com.apple.security.virtualization` entitlement required by Virtualization.framework; `just sign` signs local cargo builds
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
 - Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)

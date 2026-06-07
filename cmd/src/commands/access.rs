@@ -39,7 +39,9 @@ pub fn cmd_ssh(instance: &str) -> Result<()> {
         args.extend(["-o", "RequestTTY=force", "-o", &remote_cmd_opt]);
     }
 
-    let err = std::process::Command::new("ssh").args(&args).exec();
+    let err = std::process::Command::new(ssh::SSH_PROGRAM)
+        .args(&args)
+        .exec();
 
     bail!("failed to exec ssh: {err}");
 }
@@ -64,7 +66,9 @@ pub fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
 
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let err = std::process::Command::new("ssh").args(&arg_refs).exec();
+    let err = std::process::Command::new(ssh::SSH_PROGRAM)
+        .args(&arg_refs)
+        .exec();
 
     bail!("failed to exec ssh: {err}");
 }
@@ -85,7 +89,9 @@ pub fn cmd_cp(source: &str, dest: &str) -> Result<()> {
     ensure_running(instance)?;
 
     let config = ssh::config_path(instance);
-    let ssh_cmd = format!("ssh -F {}", config.display());
+    // rsync itself doesn't touch the network; its ssh transport does, so this
+    // must be the entitled system ssh on macOS (see ssh::SSH_PROGRAM).
+    let ssh_cmd = format!("{} -F {}", ssh::SSH_PROGRAM, config.display());
 
     let remote = format!("{instance}:{remote_path}");
 

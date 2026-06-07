@@ -7,6 +7,21 @@ use anyhow::{Result, bail};
 use crate::instance_store;
 use crate::process;
 
+/// SSH client binary. On macOS the nix-store `ssh` is blocked from the
+/// guest's vmnet subnet by Local Network Privacy (connect → EHOSTUNREACH);
+/// Apple's `/usr/bin/ssh` carries the local-network entitlement, so use the
+/// system tools there. On Linux, resolve from PATH as usual.
+#[cfg(target_os = "macos")]
+pub const SSH_PROGRAM: &str = "/usr/bin/ssh";
+#[cfg(not(target_os = "macos"))]
+pub const SSH_PROGRAM: &str = "ssh";
+
+/// `ssh-keyscan` binary — same Local Network Privacy constraint as [`SSH_PROGRAM`].
+#[cfg(target_os = "macos")]
+pub const SSH_KEYSCAN_PROGRAM: &str = "/usr/bin/ssh-keyscan";
+#[cfg(not(target_os = "macos"))]
+pub const SSH_KEYSCAN_PROGRAM: &str = "ssh-keyscan";
+
 pub fn user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
 }
@@ -67,7 +82,7 @@ pub fn known_hosts_path(instance: &str) -> PathBuf {
 pub fn record_host_key(ssh: SocketAddr, known_hosts: &Path) -> Result<bool> {
     let port_str = ssh.port().to_string();
     let host_str = ssh.ip().to_string();
-    let out = process::run("ssh-keyscan", &["-p", &port_str, &host_str])?;
+    let out = process::run(SSH_KEYSCAN_PROGRAM, &["-p", &port_str, &host_str])?;
 
     if !out.success() || out.stdout.is_empty() {
         return Ok(false);
@@ -109,13 +124,19 @@ pub fn trust_host_key(
 /// Copy a nix store closure to a running instance via SSH.
 pub fn nix_copy_closure(instance: &str, store_path: &str) -> Result<()> {
     let config = config_path(instance);
+    // nix invokes ssh from PATH; NIX_SSHOPTS only carries options. On macOS
+    // point it at the entitled system ssh via an absolute -o is not possible,
+    // so prepend /usr/bin to PATH so `nix copy` picks up /usr/bin/ssh.
     let ssh_opts = format!("-F {}", config.display());
     let target = format!("ssh://{instance}");
-    let out = process::run_with_env(
-        "nix",
-        &["copy", "--to", &target, store_path],
-        &[("NIX_SSHOPTS", &ssh_opts)],
-    )?;
+    let mut env: Vec<(&str, &str)> = vec![("NIX_SSHOPTS", &ssh_opts)];
+    let patched_path;
+    if cfg!(target_os = "macos") {
+        let existing = std::env::var("PATH").unwrap_or_default();
+        patched_path = format!("/usr/bin:{existing}");
+        env.push(("PATH", &patched_path));
+    }
+    let out = process::run_with_env("nix", &["copy", "--to", &target, store_path], &env)?;
     if !out.success() {
         bail!("nix copy failed (exit {}): {}", out.status, out.stderr);
     }
@@ -126,7 +147,7 @@ pub fn nix_copy_closure(instance: &str, store_path: &str) -> Result<()> {
 pub fn run_on_guest(instance: &str, command: &str) -> Result<()> {
     let config = config_path(instance);
     let config_str = config.to_string_lossy();
-    let out = process::run("ssh", &["-F", &config_str, instance, "--", command])?;
+    let out = process::run(SSH_PROGRAM, &["-F", &config_str, instance, "--", command])?;
     if !out.success() {
         bail!(
             "remote command failed (exit {}): {}",
@@ -149,7 +170,7 @@ pub fn wait_for_ssh(config: &Path, instance: &str, timeout_seconds: u64) -> Resu
         }
 
         let out = process::run(
-            "ssh",
+            SSH_PROGRAM,
             &[
                 "-F",
                 &config_str,
@@ -173,6 +194,17 @@ pub fn wait_for_ssh(config: &Path, instance: &str, timeout_seconds: u64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_programs_are_system_tools_on_macos() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(SSH_PROGRAM, "/usr/bin/ssh");
+            assert_eq!(SSH_KEYSCAN_PROGRAM, "/usr/bin/ssh-keyscan");
+        } else {
+            assert_eq!(SSH_PROGRAM, "ssh");
+            assert_eq!(SSH_KEYSCAN_PROGRAM, "ssh-keyscan");
+        }
+    }
 
     #[test]
     fn test_generate_config_untrusted() {
