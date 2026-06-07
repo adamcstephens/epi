@@ -22,6 +22,16 @@ pub fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Resu
 
     clone_or_copy(source, dest)?;
 
+    // A clone/copy inherits the source's permissions, and nix-store images
+    // are read-only — make the overlay owner-writable before resizing it.
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(dest)
+        .with_context(|| format!("reading overlay metadata: {}", dest.display()))?
+        .permissions();
+    perms.set_mode(perms.mode() | 0o600);
+    fs::set_permissions(dest, perms)
+        .with_context(|| format!("making overlay writable: {}", dest.display()))?;
+
     let target_bytes = parse_disk_size(disk_size)?;
     let current = fs::metadata(dest)
         .with_context(|| format!("reading overlay metadata: {}", dest.display()))?
@@ -119,6 +129,27 @@ mod tests {
         let content = fs::read(&dest).unwrap();
         assert_eq!(&content[..10], b"bootsector");
         assert_eq!(content.len(), 1 << 20, "grown to requested size");
+    }
+
+    #[test]
+    fn overlay_is_writable_from_readonly_source() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("base.raw");
+        let dest = dir.path().join("disk.img");
+        fs::write(&source, b"bootsector").unwrap();
+        // Nix-store images are read-only; a clone inherits that.
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o444)).unwrap();
+
+        ensure_writable_disk(&source, &dest, "1M").unwrap();
+
+        let mode = fs::metadata(&dest).unwrap().permissions().mode();
+        assert!(
+            mode & 0o200 != 0,
+            "overlay must be owner-writable, got {mode:o}"
+        );
+        // And actually writable.
+        fs::OpenOptions::new().write(true).open(&dest).unwrap();
     }
 
     #[test]

@@ -144,23 +144,26 @@ let
     runtimeInputs = [
       pkgs.coreutils
       pkgs.gawk
-      pkgs.gnugrep
       pkgs.iproute2
       pkgs.util-linux
     ];
 
     text = ''
-      tag=$(grep --files-with-matches --line-regexp epistate \
-        /sys/bus/virtio/devices/*/mount_tag 2>/dev/null | head -1) || true
-      [ -n "$tag" ] || exit 0
-
+      # The epistate share only exists under the macOS VZ backend; on
+      # cloud-hypervisor the mount fails and we exit quietly.
       mkdir -p /run/epi-state
-      mountpoint -q /run/epi-state || mount -t virtiofs epistate /run/epi-state
+      if ! mountpoint -q /run/epi-state; then
+        if ! mount -t virtiofs epistate /run/epi-state 2>/dev/null; then
+          echo "epi-report-ip: no epistate share, skipping"
+          exit 0
+        fi
+      fi
 
       for _ in $(seq 1 30); do
         addr=$(ip -4 -o addr show scope global | awk '{ print $4 }' | cut -d/ -f1 | head -1)
         if [ -n "$addr" ]; then
           printf '%s\n' "$addr" > /run/epi-state/ip
+          echo "epi-report-ip: reported $addr"
           exit 0
         fi
         sleep 1

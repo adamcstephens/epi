@@ -18,9 +18,9 @@ pub mod overlay;
 pub use daemon::daemon_main;
 
 use anyhow::{Context, Result, bail};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
@@ -57,19 +57,28 @@ impl Backend for VzBackend {
             .context("creating guest-state dir")?;
         ip_discovery::clear_stale_ip(&spec.instance_dir)?;
 
-        let pid = spawn_daemon(&spec.id, &spec.instance_dir)?;
+        let mut child = spawn_daemon(&spec.id, &spec.instance_dir)?;
+        let pid = child.id();
 
-        // The guest reports its VZ-NAT address once the network is up; ssh
-        // goes directly to it (no host port forward on macOS).
-        let ip = match ip_discovery::wait_for_guest_ip(&spec.instance_dir, ip_timeout()) {
+        // Confirm the helper started the VM and is serving before we wait on
+        // the (much longer) guest boot, then wait for the guest's VZ-NAT
+        // address (ssh goes straight to it — no host port forward on macOS).
+        // On any failure, reap the daemon so a failed launch leaks nothing;
+        // if it already exited the readiness poll reaped it and kill/wait are
+        // no-ops.
+        let ip = wait_for_daemon_ready(&mut child, &spec.instance_dir)
+            .and_then(|()| ip_discovery::wait_for_guest_ip(&spec.instance_dir, ip_timeout()));
+        let ip = match ip {
             Ok(ip) => ip,
             Err(e) => {
-                // Don't leak a booting VM behind a failed launch.
-                let _ = force_kill(Pid::from_raw(pid as i32));
+                let _ = child.kill();
+                let _ = child.wait();
                 return Err(e);
             }
         };
 
+        // Success: detach. Dropping `child` does not reap — the daemon keeps
+        // running and launchd reaps it once epi exits.
         Ok(RunningInstance {
             id: spec.id.clone(),
             ssh: SocketAddr::new(IpAddr::V4(ip), GUEST_SSH_PORT),
@@ -221,24 +230,73 @@ pub fn vz_pid(instance: &RunningInstance) -> Result<u32> {
     }
 }
 
+/// How long launch waits for the daemon to write its pid file (VM started,
+/// control socket about to bind). Fast-fail on daemon death makes the crash
+/// path return in milliseconds regardless.
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Spawn the detached VM-holding helper with its output captured to
-/// `daemon.log`. Plain spawn for now; setsid / posix_spawn detach hardening
-/// lands in epi-28.
-fn spawn_daemon(instance: &str, instance_dir: &Path) -> Result<u32> {
+/// `daemon.log`. `setsid` puts it in its own session so it survives the
+/// `epi` parent exiting — epi's "launch detaches, reconnect later" UX.
+///
+/// The returned `Child` is held only across launch's readiness/boot wait so
+/// a failed launch can reap it. On success it is dropped without reaping;
+/// the daemon keeps running and is reaped by launchd once `epi` exits.
+fn spawn_daemon(instance: &str, instance_dir: &Path) -> Result<Child> {
+    use std::os::unix::process::CommandExt;
+
     let exe = match std::env::var("EPI_VZ_DAEMON_BIN") {
         Ok(p) => PathBuf::from(p),
         Err(_) => std::env::current_exe().context("resolving epi binary path")?,
     };
     let log =
         std::fs::File::create(instance_dir.join("daemon.log")).context("creating daemon log")?;
-    let child = Command::new(&exe)
-        .args(["__vmm-daemon", instance])
+    let mut cmd = Command::new(&exe);
+    cmd.args(["__vmm-daemon", instance])
         .stdin(Stdio::null())
         .stdout(log.try_clone().context("cloning daemon log handle")?)
-        .stderr(log)
-        .spawn()
-        .with_context(|| format!("spawning vmm daemon: {}", exe.display()))?;
-    Ok(child.id())
+        .stderr(log);
+    // SAFETY: setsid is async-signal-safe, the only requirement for a
+    // post-fork pre_exec closure. It detaches the helper into a new session.
+    unsafe {
+        cmd.pre_exec(|| {
+            nix::unistd::setsid().map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+            Ok(())
+        });
+    }
+    cmd.spawn()
+        .with_context(|| format!("spawning vmm daemon: {}", exe.display()))
+}
+
+/// Block until the detached daemon writes its pid file — meaning it created
+/// the VM, started it, and is about to serve the control socket. Fails fast
+/// if the daemon exits during startup (bad config, missing entitlement).
+///
+/// `try_wait` reaps the daemon if it has exited; a `kill(pid, 0)` probe
+/// can't, since the daemon is our (zombie) child until reaped.
+fn wait_for_daemon_ready(child: &mut Child, instance_dir: &Path) -> Result<()> {
+    let pidfile = daemon::pid_file(instance_dir);
+    let deadline = Instant::now() + READY_TIMEOUT;
+    loop {
+        if pidfile.exists() {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait().context("polling vmm daemon")? {
+            let log = std::fs::read_to_string(instance_dir.join("daemon.log")).unwrap_or_default();
+            let log = log.trim();
+            if log.is_empty() {
+                bail!("vmm daemon exited during startup ({status})");
+            }
+            bail!("vmm daemon exited during startup ({status}):\n{log}");
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "vmm daemon did not become ready within {}s",
+                READY_TIMEOUT.as_secs()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// `kill(pid, 0)` liveness probe. EPERM means the pid exists but is not
@@ -530,17 +588,86 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn launch_kills_daemon_when_guest_never_reports_ip() {
+    fn spawn_daemon_detaches_into_new_session() {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
-        // Fake daemon records its own pid but never reports an IP.
-        let fake_pid_file = dir.path().join("fake.pid");
+        let pid_file = dir.path().join("fake.pid");
         let fake_daemon = dir.path().join("fake-daemon.sh");
         std::fs::write(
             &fake_daemon,
             format!(
                 "#!/bin/sh\necho $$ > \"{}\"\nsleep 30\n",
-                fake_pid_file.display()
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        unsafe { std::env::set_var("EPI_VZ_DAEMON_BIN", &fake_daemon) };
+
+        let mut child = spawn_daemon("detachtest", dir.path()).unwrap();
+        unsafe { std::env::remove_var("EPI_VZ_DAEMON_BIN") };
+
+        let pid = Pid::from_raw(child.id() as i32);
+        // setsid makes the child a session and process-group leader: its pgid
+        // equals its pid, and differs from this test process's group.
+        let child_pgid = nix::unistd::getpgid(Some(pid)).unwrap();
+        let own_pgid = nix::unistd::getpgid(None).unwrap();
+        assert_eq!(child_pgid, pid, "daemon should lead its own group");
+        assert_ne!(child_pgid, own_pgid, "daemon detached from launcher group");
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn launch_fails_fast_when_daemon_exits_during_startup() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        // Daemon exits immediately without ever readying.
+        let fake_daemon = dir.path().join("fake-daemon.sh");
+        std::fs::write(&fake_daemon, "#!/bin/sh\necho boom >&2\nexit 7\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        unsafe { std::env::set_var("EPI_VZ_DAEMON_BIN", &fake_daemon) };
+        // Long IP timeout: the readiness gate must fail well before this.
+        unsafe { std::env::set_var("EPI_VZ_IP_TIMEOUT_SECS", "120") };
+
+        let mut spec = test_spec(dir.path().to_path_buf());
+        let base_image = dir.path().join("base.raw");
+        std::fs::write(&base_image, b"bootsector").unwrap();
+        spec.root_disk = base_image;
+        spec.disk_size = "1M".into();
+
+        let start = std::time::Instant::now();
+        let err = VzBackend.launch(&spec).unwrap_err();
+        let elapsed = start.elapsed();
+
+        unsafe { std::env::remove_var("EPI_VZ_DAEMON_BIN") };
+        unsafe { std::env::remove_var("EPI_VZ_IP_TIMEOUT_SECS") };
+
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "should fail fast, took {elapsed:?}"
+        );
+        assert!(err.to_string().contains("daemon"), "{err}");
+    }
+
+    #[test]
+    fn launch_kills_daemon_when_guest_never_reports_ip() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        // Fake daemon readies (writes its pid file) but never reports an IP.
+        let fake_daemon = dir.path().join("fake-daemon.sh");
+        std::fs::write(
+            &fake_daemon,
+            format!(
+                "#!/bin/sh\necho $$ > \"{}\"\nsleep 30\n",
+                daemon::pid_file(dir.path()).display()
             ),
         )
         .unwrap();
@@ -562,21 +689,16 @@ pub(crate) mod tests {
         unsafe { std::env::remove_var("EPI_VZ_IP_TIMEOUT_SECS") };
 
         assert!(err.to_string().contains("never reported"), "{err}");
-        // The failed launch must not leak the daemon. It's our child:
-        // waitpid both proves it died and reaps it.
-        let pid: i32 = std::fs::read_to_string(&fake_pid_file)
+        // The failed launch must not leak the daemon — it kills and reaps it,
+        // so the pid is gone.
+        let pid: i32 = std::fs::read_to_string(daemon::pid_file(dir.path()))
             .expect("fake daemon wrote its pid")
             .trim()
             .parse()
             .unwrap();
-        let status =
-            nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid), None).expect("reaping daemon");
         assert!(
-            matches!(
-                status,
-                nix::sys::wait::WaitStatus::Signaled(_, Signal::SIGKILL, _)
-            ),
-            "daemon should have been killed, got {status:?}"
+            !process_alive(Pid::from_raw(pid)),
+            "daemon should have been killed and reaped"
         );
     }
 
@@ -669,12 +791,14 @@ pub(crate) mod tests {
     fn launch_spawns_daemon_and_returns_vz_state() {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
-        // Fake daemon reports the guest IP like the real guest unit would.
+        // Fake daemon readies (writes its pid file) then reports the guest
+        // IP, like the real supervisor + guest unit would.
         let fake_daemon = dir.path().join("fake-daemon.sh");
         std::fs::write(
             &fake_daemon,
             format!(
-                "#!/bin/sh\nprintf '192.168.64.5\\n' > \"{}\"\nsleep 30\n",
+                "#!/bin/sh\necho $$ > \"{}\"\nprintf '192.168.64.5\\n' > \"{}\"\nsleep 30\n",
+                daemon::pid_file(dir.path()).display(),
                 ip_discovery::ip_file(dir.path()).display()
             ),
         )

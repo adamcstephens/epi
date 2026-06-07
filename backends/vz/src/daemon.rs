@@ -32,15 +32,19 @@ pub fn daemon_main(instance: &str) -> Result<()> {
     let instance_dir = instance_store::instance_dir(instance);
     let spec = read_launch_spec(&instance_dir)?;
     let config = crate::vm_config(&spec)?;
-    let vm = vfrust::VirtualMachine::new(config)
-        .with_context(|| format!("creating virtual machine for {instance}"))?;
-    let handle = vm.handle();
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .with_context(|| format!("building vmm daemon runtime for {instance}"))?;
-    runtime.block_on(supervise(&VfrustVm(handle), &instance_dir))
+    runtime.block_on(async {
+        // vfrust needs a live tokio reactor when the VM is created, so build
+        // it inside the runtime. Keep `vm` bound across `supervise` — its
+        // drop tears the VM down (after supervise has already stopped it).
+        let vm = vfrust::VirtualMachine::new(config)
+            .with_context(|| format!("creating virtual machine for {instance}"))?;
+        supervise(&VfrustVm(vm.handle()), &instance_dir).await
+    })
 }
 
 /// Persist the launch spec for the daemon to rebuild its VM config from.

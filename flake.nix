@@ -16,10 +16,9 @@
           "aarch64-darwin"
         ];
 
-        flake.nixosConfigurations = {
-          manual-test = nixpkgs.lib.nixosSystem {
-            system = "x86_64-linux";
-            modules = [
+        flake.nixosConfigurations =
+          let
+            manualTestModules = [
               ./nix/nixos/epi.nix
               (
                 { pkgs, ... }:
@@ -42,9 +41,22 @@
                 }
               )
             ];
-          };
+          in
+          {
+            # x86_64 guest for the Linux cloud-hypervisor backend.
+            manual-test = nixpkgs.lib.nixosSystem {
+              system = "x86_64-linux";
+              modules = manualTestModules;
+            };
 
-        };
+            # aarch64 guest for the macOS Virtualization.framework backend
+            # (VZ on Apple Silicon runs aarch64 guests only). Building this
+            # from macOS requires an aarch64-linux builder.
+            manual-test-aarch64 = nixpkgs.lib.nixosSystem {
+              system = "aarch64-linux";
+              modules = manualTestModules;
+            };
+          };
 
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
 

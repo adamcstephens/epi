@@ -4,10 +4,6 @@ use std::net::SocketAddr;
 use epi::backend;
 use epi::{config, console, gcroots, hooks, instance_store, ssh, target, ui, vm_launch};
 
-fn ssh_addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
-
 use super::info::cmd_info;
 
 pub fn cmd_launch(
@@ -78,17 +74,20 @@ pub fn cmd_launch(
     };
 
     let ssh_key_path = runtime.ssh_key_path.clone();
-    let port = runtime.ssh.port();
+    // The backend records the reachable SSH address: 127.0.0.1:<port> behind
+    // passt on Linux, the guest's vmnet IP on port 22 on macOS.
+    let ssh_sock = runtime.ssh;
+    let port = ssh_sock.port();
     let ssh_port: Option<u16> = (port != 0).then_some(port);
 
     instance_store::set_provisioned(instance, runtime, Some(descriptor))?;
 
-    // Write SSH config immediately — port and key are known
-    if let Some(ssh_port) = ssh_port {
+    // Write SSH config immediately — address and key are known
+    if ssh_port.is_some() {
         ssh::generate_config(
             &ssh::config_path(instance),
             instance,
-            ssh_addr(ssh_port),
+            ssh_sock,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
@@ -120,7 +119,7 @@ pub fn cmd_launch(
                 ssh::wait_for_ssh(&config, &inst, timeout)?;
                 ssh::trust_host_key(
                     &inst,
-                    ssh_addr(ssh_port),
+                    ssh_sock,
                     &ssh::user(),
                     std::path::Path::new(&key),
                     &extra_ssh,
@@ -146,7 +145,7 @@ pub fn cmd_launch(
 
         wait_and_trust_ssh(
             instance,
-            ssh_port,
+            ssh_sock,
             &ssh_key_path,
             timeout,
             &resolved.ssh_extra_config,
@@ -260,7 +259,7 @@ fn launch_with_descriptor(
     instance: &str,
     state: &instance_store::InstanceState,
     desc: &target::Descriptor,
-) -> Result<(Option<u16>, String)> {
+) -> Result<(Option<SocketAddr>, String)> {
     let mounts = state.mounts.clone();
     let params = vm_launch::ProvisionParams {
         instance_name: instance,
@@ -286,16 +285,16 @@ fn launch_with_descriptor(
     };
 
     let ssh_key_path = runtime.ssh_key_path.clone();
-    let port = runtime.ssh.port();
-    let ssh_port: Option<u16> = (port != 0).then_some(port);
+    let ssh_sock = runtime.ssh;
+    let ssh_sock: Option<SocketAddr> = (ssh_sock.port() != 0).then_some(ssh_sock);
 
     instance_store::set_provisioned(instance, runtime, Some(desc.clone()))?;
 
-    if let Some(ssh_port) = ssh_port {
+    if let Some(ssh_sock) = ssh_sock {
         ssh::generate_config(
             &ssh::config_path(instance),
             instance,
-            ssh_addr(ssh_port),
+            ssh_sock,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
@@ -303,7 +302,7 @@ fn launch_with_descriptor(
         )?;
     }
 
-    Ok((ssh_port, ssh_key_path))
+    Ok((ssh_sock, ssh_key_path))
 }
 
 fn run_pre_stop_hooks(
@@ -334,7 +333,7 @@ fn run_pre_stop_hooks(
 
 fn wait_and_trust_ssh(
     instance: &str,
-    ssh_port: u16,
+    ssh: SocketAddr,
     ssh_key_path: &str,
     wait_timeout: u64,
     ssh_extra_config: &[String],
@@ -351,7 +350,7 @@ fn wait_and_trust_ssh(
 
     ssh::trust_host_key(
         instance,
-        ssh_addr(ssh_port),
+        ssh,
         &ssh::user(),
         std::path::Path::new(ssh_key_path),
         ssh_extra_config,
@@ -417,12 +416,12 @@ pub fn cmd_start(
     // Create GC roots
     gcroots::create(instance, &desc)?;
 
-    let (ssh_port, ssh_key_path) = launch_with_descriptor(instance, &state, &desc)?;
+    let (ssh_sock, ssh_key_path) = launch_with_descriptor(instance, &state, &desc)?;
 
-    if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
+    if let Some(ssh_sock) = ssh_sock.filter(|_| !no_provision) {
         wait_and_trust_ssh(
             instance,
-            ssh_port,
+            ssh_sock,
             &ssh_key_path,
             wait_timeout,
             &state.ssh_extra_config,
@@ -625,10 +624,10 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
             instance_store::update_descriptor(instance, new_desc.clone())?;
             gcroots::create(instance, &new_desc)?;
 
-            let (new_ssh_port, new_ssh_key_path) =
+            let (new_ssh_sock, new_ssh_key_path) =
                 launch_with_descriptor(instance, &state, &new_desc)?;
 
-            if let Some(new_ssh_port) = new_ssh_port {
+            if let Some(new_ssh_sock) = new_ssh_sock {
                 let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
                     .ok()
                     .and_then(|v| v.parse().ok())
@@ -636,7 +635,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
 
                 wait_and_trust_ssh(
                     instance,
-                    new_ssh_port,
+                    new_ssh_sock,
                     &new_ssh_key_path,
                     timeout,
                     &state.ssh_extra_config,
@@ -645,7 +644,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
                 run_post_launch_hooks(
                     instance,
                     &state.target,
-                    new_ssh_port,
+                    new_ssh_sock.port(),
                     &new_ssh_key_path,
                     state.project_dir.clone(),
                 )?;
@@ -687,16 +686,16 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
     let (runtime, descriptor) = prepare_and_provision(&params)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
-    let port = runtime.ssh.port();
-    let ssh_port: Option<u16> = (port != 0).then_some(port);
+    let ssh_sock = runtime.ssh;
+    let ssh_sock: Option<SocketAddr> = (ssh_sock.port() != 0).then_some(ssh_sock);
 
     instance_store::set_provisioned(instance, runtime, Some(descriptor))?;
 
-    if let Some(ssh_port) = ssh_port {
+    if let Some(ssh_sock) = ssh_sock {
         ssh::generate_config(
             &ssh::config_path(instance),
             instance,
-            ssh_addr(ssh_port),
+            ssh_sock,
             &ssh::user(),
             std::path::Path::new(&ssh_key_path),
             None,
@@ -704,10 +703,10 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         )?;
     }
 
-    if let Some(ssh_port) = ssh_port {
+    if let Some(ssh_sock) = ssh_sock {
         wait_and_trust_ssh(
             instance,
-            ssh_port,
+            ssh_sock,
             &ssh_key_path,
             120,
             &state.ssh_extra_config,
@@ -716,7 +715,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         run_post_launch_hooks(
             instance,
             &state.target,
-            ssh_port,
+            ssh_sock.port(),
             &ssh_key_path,
             state.project_dir.clone(),
         )?;
