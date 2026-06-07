@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  stdenv,
   systemdMinimal,
 }:
 
@@ -23,7 +24,7 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../Cargo.lock;
 
-  nativeCheckInputs = [
+  nativeCheckInputs = lib.optionals stdenv.isLinux [
     systemdMinimal
   ];
 

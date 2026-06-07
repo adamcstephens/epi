@@ -8,6 +8,7 @@
   qemu-utils,
   rsync,
   runCommand,
+  stdenv,
   virtiofsd,
   xorriso,
 }:
@@ -22,14 +23,18 @@ runCommand "epi"
   ''
     mkdir -vp $out/bin/
     makeWrapper ${lib.getExe epi-unwrapped} $out/bin/epi --prefix PATH : ${
-      lib.makeBinPath [
-        cloud-hypervisor
-        passt
-        qemu-utils
-        rsync
-        virtiofsd
-        xorriso
-      ]
+      lib.makeBinPath (
+        [
+          qemu-utils
+          rsync
+          xorriso
+        ]
+        ++ lib.optionals stdenv.isLinux [
+          cloud-hypervisor
+          passt
+          virtiofsd
+        ]
+      )
     }
 
     installShellCompletion --cmd epi \

@@ -8,7 +8,7 @@
   outputs =
     inputs@{ flake-parts, nixpkgs, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } (
-      { ... }:
+      { lib, ... }:
       {
         systems = [
           "x86_64-linux"
@@ -56,14 +56,10 @@
                 pkgs.beans
                 pkgs.just
 
-                self'.packages.cloud-hypervisor
                 pkgs.jq
                 pkgs.nixfmt
                 pkgs.openssh
-                pkgs.passt
-                pkgs.qemu-utils
                 pkgs.rsync
-                pkgs.virtiofsd
                 pkgs.xorriso
 
                 pkgs.cargo
@@ -71,6 +67,12 @@
                 pkgs.rustc
                 pkgs.rust-analyzer
                 pkgs.rustfmt
+              ]
+              ++ lib.optionals pkgs.stdenv.isLinux [
+                pkgs.passt
+                pkgs.qemu-utils
+                pkgs.virtiofsd
+                self'.packages.cloud-hypervisor
               ];
             };
 
