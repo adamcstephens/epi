@@ -3,13 +3,8 @@
 ## [Unreleased]
 
 ### Added
-- Hooks now receive `EPI_SSH_HOST` (the guest's reachable address) alongside `EPI_SSH_PORT`, so hook scripts can connect to the guest portably instead of assuming `localhost` — required for the macOS backend where the guest has its own IP
-- macOS: the VM daemon always stops the guest before exiting — on supervisor errors and panics, not just the normal path — so shutdown stays fast (~1.5s) instead of blocking on Virtualization.framework's synchronous teardown
-- macOS: Virtualization.framework failures surface as actionable messages instead of raw NSError dumps — e.g. a missing codesigning entitlement now points at `just sign`
-- macOS: `epi list` / `epi info` detect a dead VM daemon and reap the stale instance — killing any leftover helper, removing its sockets/pid/ip files, and clearing the recorded runtime (parity with the Linux stale-unit cleanup)
-- macOS: `epi console` attaches to the guest serial console interactively and `epi console-log` shows captured output — the VZ daemon bridges the guest serial pty to a unix socket (teed to `console.log`), matching the Linux console behavior
-- macOS: `epi launch`/`ssh`/`exec`/`stop` work against an aarch64 NixOS guest under Virtualization.framework; the guest's SSH address is discovered via a virtio-fs share. Use the `manual-test-aarch64` flake target (VZ on Apple Silicon runs aarch64 guests only). epi uses the system `/usr/bin/ssh` on macOS so guest connections aren't blocked by Local Network Privacy
-- macOS: nix-built `epi` is ad-hoc signed with the `com.apple.security.virtualization` entitlement required by Virtualization.framework; `just sign` signs local cargo builds
+- **macOS support (Apple Silicon)**: epi now runs on macOS using Virtualization.framework. `launch`, `ssh`, `exec`, `console`, `console-log`, and `stop` all work against an aarch64 NixOS guest, with the same UX as Linux. Requires an aarch64 `nixosConfiguration` (VZ runs aarch64 guests only); nix-built binaries are codesigned automatically, and `just sign` signs local dev builds.
+- Hooks receive `EPI_SSH_HOST` (the guest's address) alongside `EPI_SSH_PORT`, so hook scripts can reach the guest without assuming `localhost`
 - `ssh_extra_config`: Allow custom SSH config lines in user/project config (e.g. `LocalForward`, `ForwardAgent`), appended to generated SSH config for each instance
 - Print informational message when project config is detected during launch (e.g. `using project config: ~/projects/foo/.epi/config.toml`)
 - `upgrade`: Live-upgrade a running instance to a new configuration without rebuilding the disk image. Supports `--mode switch` (default, live activation) and `--mode boot` (reboot with new kernel/initrd)
