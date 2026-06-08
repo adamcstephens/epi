@@ -59,7 +59,8 @@ pub fn stop_instance(instance_name: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Clean up a stale runtime (recorded state whose VM is no longer running).
+/// Clean up a stale runtime (recorded state whose VM is no longer running):
+/// reap leftover helpers and clear the stored runtime.
 pub fn clear_stale_runtime(instance: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -67,8 +68,24 @@ pub fn clear_stale_runtime(instance: &str) -> Result<()> {
     }
     #[cfg(target_os = "macos")]
     {
-        // Stale daemon-pid reaping lands with epi-35; clear stored state only.
-        instance_store::clear_runtime(instance)
+        vz::clear_stale_runtime(instance)
+    }
+}
+
+/// Whether the instance is running, reaping its stale runtime first if the
+/// backend reports it stopped (dead daemon / torn-down units). Use in read
+/// paths (`list`, `info`) so a crashed helper's leftover state is cleaned up
+/// on inspection. Single status check, unlike `instance_is_running` +
+/// separate reap.
+pub fn is_running_reaping(name: &str) -> Result<bool> {
+    let Some(rt) = instance_store::find_runtime(name)? else {
+        return Ok(false);
+    };
+    if backend_for(&rt)?.status(&rt)? == InstanceStatus::Running {
+        Ok(true)
+    } else {
+        clear_stale_runtime(name)?;
+        Ok(false)
     }
 }
 

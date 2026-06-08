@@ -15,7 +15,7 @@ pub fn cmd_info(instance: &str) -> Result<()> {
     let state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
 
-    let running = backend::instance_is_running(instance)?;
+    let running = backend::is_running_reaping(instance)?;
 
     // Build sections
     let mut sections = Vec::new();
@@ -200,7 +200,7 @@ pub fn cmd_list() -> Result<()> {
 
     let mut rows = Vec::new();
     for (name, target_str, project_dir) in &instances {
-        let running = backend::instance_is_running(name)?;
+        let running = backend::is_running_reaping(name)?;
         let status = ui::status_dot(running);
         let (ssh, ports_str) = if running {
             let rt = instance_store::find_runtime(name)?;

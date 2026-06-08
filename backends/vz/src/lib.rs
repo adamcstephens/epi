@@ -238,6 +238,32 @@ pub fn vz_pid(instance: &RunningInstance) -> Result<u32> {
     }
 }
 
+/// Reap a stale instance whose daemon is gone: kill the daemon if somehow
+/// still alive, remove the per-instance sockets/pid/ip files it leaves
+/// behind, and clear the stored runtime. Idempotent — safe to call when
+/// nothing is recorded.
+pub fn clear_stale_runtime(instance: &str) -> Result<()> {
+    if let Some(rt) = instance_store::find_runtime(instance)?
+        && let Ok(pid) = vz_pid(&rt)
+    {
+        let _ = force_kill(Pid::from_raw(pid as i32));
+    }
+
+    let dir = instance_store::instance_dir(instance);
+    let mut stale: Vec<PathBuf> = ["control.sock", "serial.sock", "daemon.pid"]
+        .iter()
+        .map(|f| dir.join(f))
+        .collect();
+    stale.push(ip_discovery::ip_file(&dir));
+    for p in stale {
+        if p.exists() {
+            std::fs::remove_file(&p).with_context(|| format!("removing {}", p.display()))?;
+        }
+    }
+
+    instance_store::clear_runtime(instance)
+}
+
 /// How long launch waits for the daemon to write its pid file (VM started,
 /// control socket about to bind). Fast-fail on daemon death makes the crash
 /// path return in milliseconds regardless.
@@ -708,6 +734,57 @@ pub(crate) mod tests {
             !process_alive(Pid::from_raw(pid)),
             "daemon should have been killed and reaped"
         );
+    }
+
+    #[test]
+    fn clear_stale_runtime_removes_helpers_and_clears_state() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let state_dir = TempDir::new().unwrap();
+        unsafe { std::env::set_var("EPI_STATE_DIR", state_dir.path()) };
+
+        let name = "stalevm";
+        let inst_dir = instance_store::ensure_instance_dir(name).unwrap();
+        for f in ["control.sock", "serial.sock", "daemon.pid"] {
+            std::fs::write(inst_dir.join(f), "").unwrap();
+        }
+        std::fs::create_dir_all(ip_discovery::guest_state_dir(&inst_dir)).unwrap();
+        std::fs::write(ip_discovery::ip_file(&inst_dir), "192.168.64.5").unwrap();
+
+        let state = instance_store::InstanceState {
+            target: ".#dev".into(),
+            // A dead pid (init is never our reapable daemon).
+            runtime: Some(vz_runtime_named(name, 999_999)),
+            mounts: vec![],
+            project_dir: None,
+            disk_size: String::new(),
+            cpus: 1,
+            memory_mib: 1024,
+            port_specs: vec![],
+            ssh_extra_config: vec![],
+            descriptor: None,
+        };
+        instance_store::save_state(name, &state).unwrap();
+
+        clear_stale_runtime(name).unwrap();
+
+        for f in ["control.sock", "serial.sock", "daemon.pid"] {
+            assert!(!inst_dir.join(f).exists(), "{f} should be removed");
+        }
+        assert!(!ip_discovery::ip_file(&inst_dir).exists());
+        let after = instance_store::load_state(name).unwrap().unwrap();
+        assert!(after.runtime.is_none(), "runtime should be cleared");
+        assert_eq!(after.target, ".#dev", "non-runtime state preserved");
+
+        unsafe { std::env::remove_var("EPI_STATE_DIR") };
+    }
+
+    #[test]
+    fn clear_stale_runtime_no_runtime_is_ok() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let state_dir = TempDir::new().unwrap();
+        unsafe { std::env::set_var("EPI_STATE_DIR", state_dir.path()) };
+        clear_stale_runtime("missing-instance").unwrap();
+        unsafe { std::env::remove_var("EPI_STATE_DIR") };
     }
 
     #[test]
