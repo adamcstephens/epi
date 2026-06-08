@@ -39,17 +39,45 @@ pub fn daemon_main(instance: &str) -> Result<()> {
         .with_context(|| format!("building vmm daemon runtime for {instance}"))?;
     runtime.block_on(async {
         // vfrust needs a live tokio reactor when the VM is created, so build
-        // it inside the runtime. Keep `vm` bound across `supervise` — its
-        // drop tears the VM down (after supervise has already stopped it).
+        // it inside the runtime.
         let vm = vfrust::VirtualMachine::new(config).map_err(|e| {
             anyhow::anyhow!(
                 "creating VM for {instance}: {}",
                 crate::error::friendly_error(&e)
             )
         })?;
+        let handle = vm.handle();
         let pty = vm.serial_pty_paths().first().cloned();
-        supervise(&VfrustVm(vm.handle()), &instance_dir, pty.as_deref()).await
+
+        // Run the supervisor on a task so a panic becomes a JoinError rather
+        // than unwinding through `vm` — whose Drop would then block ~5s
+        // force-stopping. Whatever the outcome, force the VM to a terminal
+        // state before `vm` drops so that drop is fast.
+        let sup_handle = handle.clone();
+        let dir = instance_dir.clone();
+        let outcome =
+            tokio::spawn(
+                async move { supervise(&VfrustVm(sup_handle), &dir, pty.as_deref()).await },
+            )
+            .await;
+        ensure_stopped(&handle).await;
+
+        match outcome {
+            Ok(result) => result,
+            Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+            Err(e) => Err(anyhow::anyhow!("vmm supervisor task failed: {e}")),
+        }
     })
+}
+
+/// Force the VM to a terminal state so vfrust's `Drop` doesn't block on a
+/// synchronous force-stop. Best-effort: an error means it's already
+/// stopping/stopped, and `supervise` normally stops it first (this is the
+/// belt-and-suspenders path for supervisor panics).
+async fn ensure_stopped(handle: &vfrust::VmHandle) {
+    if handle.state().can_stop() {
+        let _ = handle.stop().await;
+    }
 }
 
 /// Persist the launch spec for the daemon to rebuild its VM config from.
@@ -104,6 +132,7 @@ impl VmControl for VfrustVm {
     }
 }
 
+#[derive(Clone, Copy)]
 enum ShutdownPlan {
     /// `request_stop`, force after the grace period.
     Graceful(Duration),
@@ -126,6 +155,35 @@ pub(crate) async fn supervise<V: VmControl>(
 ) -> Result<()> {
     vm.start().await?;
 
+    // Once the VM is running, guarantee it reaches a terminal state before we
+    // return on EVERY path — a supervisor error must not leave it running, or
+    // the caller's `VirtualMachine` drop blocks on vfrust's synchronous stop.
+    let outcome = run_supervisor(vm, instance_dir, serial_pty_path).await;
+    let plan = match &outcome {
+        Ok(plan) => *plan,
+        // Error mid-supervision: tear the VM down before surfacing it.
+        Err(_) => ShutdownPlan::Force,
+    };
+    match plan {
+        ShutdownPlan::AlreadyStopped => {}
+        ShutdownPlan::Graceful(grace) => shutdown_gracefully(vm, grace).await,
+        ShutdownPlan::Force => force_stop(vm).await,
+    }
+
+    let _ = fs::remove_file(control::socket_path(instance_dir));
+    let _ = fs::remove_file(crate::serial_socket_path(instance_dir));
+    let _ = fs::remove_file(pid_file(instance_dir));
+    outcome.map(|_| ())
+}
+
+/// The running-VM phase: start the serial bridge, write the pid file, serve
+/// the control socket, and watch VM state. Returns the shutdown plan implied
+/// by how it ended, or an error (the caller still stops the VM).
+async fn run_supervisor<V: VmControl>(
+    vm: &V,
+    instance_dir: &Path,
+    serial_pty_path: Option<&str>,
+) -> Result<ShutdownPlan> {
     if let Some(pty) = serial_pty_path {
         let console_log = instance_dir.join("console.log");
         let serial_sock = crate::serial_socket_path(instance_dir);
@@ -147,12 +205,12 @@ pub(crate) async fn supervise<V: VmControl>(
     let mut states = vm.state_stream();
     let mut sigterm = signal(SignalKind::terminate()).context("installing SIGTERM handler")?;
 
-    let plan = loop {
+    loop {
         tokio::select! {
             conn = listener.accept() => {
                 let (stream, _) = conn.context("accepting control connection")?;
                 match serve_connection(vm, stream).await {
-                    Ok(Some(plan)) => break plan,
+                    Ok(Some(plan)) => return Ok(plan),
                     Ok(None) => {}
                     // A misbehaving client must not take the VM down.
                     Err(e) => eprintln!("control connection error: {e:#}"),
@@ -160,23 +218,12 @@ pub(crate) async fn supervise<V: VmControl>(
             }
             changed = states.changed() => {
                 if changed.is_err() || terminal(*states.borrow_and_update()) {
-                    break ShutdownPlan::AlreadyStopped;
+                    return Ok(ShutdownPlan::AlreadyStopped);
                 }
             }
-            _ = sigterm.recv() => break ShutdownPlan::Graceful(SIGTERM_GRACE),
+            _ = sigterm.recv() => return Ok(ShutdownPlan::Graceful(SIGTERM_GRACE)),
         }
-    };
-
-    match plan {
-        ShutdownPlan::AlreadyStopped => {}
-        ShutdownPlan::Graceful(grace) => shutdown_gracefully(vm, grace).await,
-        ShutdownPlan::Force => force_stop(vm).await,
     }
-
-    let _ = fs::remove_file(&socket);
-    let _ = fs::remove_file(crate::serial_socket_path(instance_dir));
-    let _ = fs::remove_file(pid_file(instance_dir));
-    Ok(())
 }
 
 /// Handle one request on a fresh connection. Returns the shutdown plan the
@@ -411,6 +458,24 @@ mod tests {
 
         assert_eq!(vm.calls(), vec!["start"]);
         assert!(!socket_path(dir.path()).exists(), "socket cleaned up");
+    }
+
+    #[tokio::test]
+    async fn stops_vm_when_supervisor_errors_after_start() {
+        let dir = TempDir::new().unwrap();
+        let vm = MockVm::new(true);
+        // Parent doesn't exist, so the pid-file write in run_supervisor fails
+        // *after* the VM has started — the error path must still stop the VM.
+        let bad = dir.path().join("missing").join("inst");
+
+        let result = supervise(&vm, &bad, None).await;
+
+        assert!(result.is_err(), "supervisor error should surface");
+        assert_eq!(
+            vm.calls(),
+            vec!["start", "stop"],
+            "VM force-stopped despite the supervisor error"
+        );
     }
 
     #[tokio::test]
