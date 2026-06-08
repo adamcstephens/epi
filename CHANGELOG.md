@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-07
+
 ### Added
 - **macOS support (Apple Silicon)**: epi now runs on macOS using Virtualization.framework. `launch`, `ssh`, `exec`, `console`, `console-log`, and `stop` all work against an aarch64 NixOS guest, with the same UX as Linux. Requires an aarch64 `nixosConfiguration` (VZ runs aarch64 guests only); nix-built binaries are codesigned automatically, and `just sign` signs local dev builds.
 - Hooks receive `EPI_SSH_HOST` (the guest's address) alongside `EPI_SSH_PORT`, so hook scripts can reach the guest without assuming `localhost`
