@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- macOS: Virtualization.framework failures surface as actionable messages instead of raw NSError dumps — e.g. a missing codesigning entitlement now points at `just sign`
 - macOS: `epi list` / `epi info` detect a dead VM daemon and reap the stale instance — killing any leftover helper, removing its sockets/pid/ip files, and clearing the recorded runtime (parity with the Linux stale-unit cleanup)
 - macOS: `epi console` attaches to the guest serial console interactively and `epi console-log` shows captured output — the VZ daemon bridges the guest serial pty to a unix socket (teed to `console.log`), matching the Linux console behavior
 - macOS: `epi launch`/`ssh`/`exec`/`stop` work against an aarch64 NixOS guest under Virtualization.framework; the guest's SSH address is discovered via a virtio-fs share. Use the `manual-test-aarch64` flake target (VZ on Apple Silicon runs aarch64 guests only). epi uses the system `/usr/bin/ssh` on macOS so guest connections aren't blocked by Local Network Privacy

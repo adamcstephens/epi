@@ -41,8 +41,12 @@ pub fn daemon_main(instance: &str) -> Result<()> {
         // vfrust needs a live tokio reactor when the VM is created, so build
         // it inside the runtime. Keep `vm` bound across `supervise` — its
         // drop tears the VM down (after supervise has already stopped it).
-        let vm = vfrust::VirtualMachine::new(config)
-            .with_context(|| format!("creating virtual machine for {instance}"))?;
+        let vm = vfrust::VirtualMachine::new(config).map_err(|e| {
+            anyhow::anyhow!(
+                "creating VM for {instance}: {}",
+                crate::error::friendly_error(&e)
+            )
+        })?;
         let pty = vm.serial_pty_paths().first().cloned();
         supervise(&VfrustVm(vm.handle()), &instance_dir, pty.as_deref()).await
     })
@@ -87,7 +91,10 @@ impl VmControl for VfrustVm {
         self.0.state_stream()
     }
     async fn start(&self) -> Result<()> {
-        Ok(self.0.start().await?)
+        self.0
+            .start()
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", crate::error::friendly_error(&e)))
     }
     async fn request_stop(&self) -> Result<()> {
         Ok(self.0.request_stop().await?)

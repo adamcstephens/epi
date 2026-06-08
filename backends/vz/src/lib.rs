@@ -12,6 +12,7 @@
 
 pub mod control;
 pub mod daemon;
+pub mod error;
 pub mod ip_discovery;
 pub mod overlay;
 pub mod serial;
@@ -226,7 +227,13 @@ pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
             attachment: vfrust::SerialAttachment::Pty,
         }))
         .build()
-        .map_err(|e| anyhow::anyhow!("assembling vm config for {}: {e}", spec.id))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "assembling vm config for {}: {}",
+                spec.id,
+                error::friendly_error(&e)
+            )
+        })?;
     Ok(config)
 }
 
