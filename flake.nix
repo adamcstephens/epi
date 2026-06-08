@@ -84,7 +84,7 @@
                 pkgs.passt
                 pkgs.qemu-utils
                 pkgs.virtiofsd
-                self'.packages.cloud-hypervisor
+                pkgs.cloud-hypervisor
               ];
             };
 
@@ -92,19 +92,10 @@
               default = epi;
 
               epi = pkgs.callPackage ./nix/wrapper.nix {
-                inherit cloud-hypervisor epi-unwrapped;
+                inherit epi-unwrapped;
               };
 
               epi-unwrapped = pkgs.callPackage ./nix/package.nix { };
-
-              cloud-hypervisor = pkgs.cloud-hypervisor.overrideAttrs (old: {
-                patches = (old.patches or [ ]) ++ [
-                  (pkgs.fetchpatch {
-                    url = "https://github.com/cloud-hypervisor/cloud-hypervisor/commit/57e766bdbbfcdf1f36f696fc735fbebbea97f5ca.patch";
-                    hash = "sha256-hmLE/QT7LfPuaxqspbK7EvO/4VYNHx0SMt6PnAZ2L6I=";
-                  })
-                ];
-              });
             };
           };
       }
