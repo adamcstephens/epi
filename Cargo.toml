@@ -13,3 +13,9 @@ serde_json = "1"
 thiserror = "2"
 nix = { version = "0.31.2", features = ["fs", "user"] }
 tempfile = "3"
+
+# Local fork of vfrust while we carry a patch exposing the serial pty path
+# (needed for interactive `epi console` on macOS). Iterating in-tree; will move
+# to a pinned git fork + upstream PR before this is finalized.
+[patch.crates-io]
+vfrust = { path = "third_party/vfrust" }

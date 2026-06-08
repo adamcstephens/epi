@@ -20,6 +20,8 @@ rustPlatform.buildRustPackage {
         ../cmd
         ../core
         ../backends
+        # Patched fork of vfrust (see [patch.crates-io] in root Cargo.toml).
+        ../third_party
       ];
     };
 

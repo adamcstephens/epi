@@ -1042,8 +1042,6 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "vfrust"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51c36cf539501b18777dc50b24a80ee39672b8f4ed2ae1cd825941a32db0ff5f"
 dependencies = [
  "block2",
  "dispatch2",
