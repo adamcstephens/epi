@@ -60,7 +60,7 @@ impl Drop for InstanceGuard {
             let mut buf = String::new();
             let _ = std::io::stdin().read_line(&mut buf);
         }
-        let _ = ch::stop_instance(&self.name, true);
+        let _ = epi::backend::stop_instance(&self.name, true);
         let _ = instance_store::remove(&self.name);
     }
 }
@@ -198,7 +198,7 @@ fn e2e_lifecycle() {
     assert_eq!(state.memory_mib, 512);
 
     // Verify passt was started with the additional port forwarding arg
-    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime).unwrap();
     let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
     let passt_cmd = process::run(
         &process::systemctl_bin(),
@@ -236,7 +236,7 @@ fn e2e_lifecycle() {
     assert!(epi::backend::instance_is_running(&name).unwrap());
 
     // Stop
-    ch::stop_instance(&name, false).expect("stop failed");
+    epi::backend::stop_instance(&name, false).expect("stop failed");
 
     // Verify runtime cleared
     assert!(instance_store::find_runtime(&name).unwrap().is_none());
@@ -260,7 +260,7 @@ fn e2e_lifecycle() {
     assert_eq!(out.stdout, "back");
 
     // Remove
-    ch::stop_instance(&name, false).expect("stop failed");
+    epi::backend::stop_instance(&name, false).expect("stop failed");
     instance_store::remove(&name).expect("remove failed");
     assert!(instance_store::find(&name).unwrap().is_none());
 }
@@ -458,6 +458,7 @@ fn e2e_hooks() {
     let ssh_port = runtime.ssh.port();
     let env = hooks::HookEnv {
         instance_name: name.clone(),
+        ssh_host: "127.0.0.1".to_string(),
         ssh_port,
         ssh_key_path: runtime.ssh_key_path.clone(),
         ssh_user: "root".to_string(),
@@ -493,7 +494,7 @@ fn e2e_graceful_shutdown() {
 
     // Stop and measure time — should complete well under 90s
     let start = std::time::Instant::now();
-    ch::stop_instance(&name, false).expect("stop failed");
+    epi::backend::stop_instance(&name, false).expect("stop failed");
     let elapsed = start.elapsed();
 
     assert!(
@@ -516,7 +517,7 @@ fn e2e_force_shutdown() {
 
     // Force stop should be near-instant — no ACPI, just SIGKILL.
     let start = std::time::Instant::now();
-    ch::stop_instance(&name, true).expect("force stop failed");
+    epi::backend::stop_instance(&name, true).expect("force stop failed");
     let elapsed = start.elapsed();
 
     assert!(
@@ -535,7 +536,7 @@ fn e2e_clean_shutdown_stops_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime).unwrap();
 
     // Construct expected unit names
     let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, unit_id).unwrap();
@@ -557,7 +558,7 @@ fn e2e_clean_shutdown_stops_helpers() {
     );
 
     // Stop the instance
-    ch::stop_instance(&name, false).expect("stop failed");
+    epi::backend::stop_instance(&name, false).expect("stop failed");
 
     // All units should be inactive after stop
     assert!(
@@ -598,7 +599,7 @@ fn e2e_stop_start_ssh() {
     assert_eq!(out.stdout, "first-boot");
 
     // Stop the VM
-    ch::stop_instance(&name, false).expect("stop failed");
+    epi::backend::stop_instance(&name, false).expect("stop failed");
 
     // Second boot: re-provision (reuses persistent disk) and verify SSH
     let runtime2 = provision_and_wait_with(&name, resolved);
@@ -623,7 +624,7 @@ fn e2e_no_env_leak() {
     unsafe { std::env::set_var(sentinel, "leaked") };
 
     let runtime = provision_and_wait(&name);
-    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime).unwrap();
 
     let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, unit_id).unwrap();
     let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
@@ -664,7 +665,7 @@ fn e2e_vm_crash_stops_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = epi::backend::ch::ch_unit_id(&runtime);
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime).unwrap();
 
     let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, unit_id).unwrap();
     let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, unit_id).unwrap();
@@ -708,7 +709,7 @@ fn e2e_clear_stale_runtime_kills_lingering_helpers() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let unit_id = epi::backend::ch::ch_unit_id(&runtime).to_string();
+    let unit_id = epi::backend::ch::ch_unit_id(&runtime).unwrap().to_string();
     let vm_unit = epi::backend::ch::systemd::vm_unit_name(&name, &unit_id).unwrap();
     let passt_unit = epi::backend::ch::systemd::passt_unit_name(&name, &unit_id).unwrap();
     let inst_dir = instance_store::instance_dir(&name);
