@@ -133,11 +133,14 @@ Scripts receive the following environment variables:
 | Variable | Description |
 |---|---|
 | `EPI_INSTANCE` | Instance name |
-| `EPI_SSH_PORT` | SSH port on localhost |
+| `EPI_SSH_HOST` | SSH host (`127.0.0.1` on Linux; the guest's IP on macOS) |
+| `EPI_SSH_PORT` | SSH port (forwarded localhost port on Linux; the guest's sshd port on macOS) |
 | `EPI_SSH_KEY` | Path to the SSH private key |
 | `EPI_SSH_USER` | SSH username |
 | `EPI_STATE_DIR` | Instance state directory |
 | `EPI_BIN` | Path to the running epi binary |
+
+For portable guest access from a hook, prefer `$EPI_BIN exec "$EPI_INSTANCE" -- …`, or connect with `$EPI_SSH_HOST`/`$EPI_SSH_PORT` rather than assuming `localhost`.
 
 If any hook exits non-zero, execution stops and the error is reported.
 

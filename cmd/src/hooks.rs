@@ -7,6 +7,7 @@ use crate::{process, ui};
 
 pub struct HookEnv {
     pub instance_name: String,
+    pub ssh_host: String,
     pub ssh_port: u16,
     pub ssh_key_path: String,
     pub ssh_user: String,
@@ -115,6 +116,7 @@ pub fn execute(env: &HookEnv, scripts: &[PathBuf]) -> Result<()> {
     let port_str = env.ssh_port.to_string();
     let mut env_vars: Vec<(&str, &str)> = vec![
         ("EPI_INSTANCE", &env.instance_name),
+        ("EPI_SSH_HOST", &env.ssh_host),
         ("EPI_SSH_PORT", &port_str),
         ("EPI_SSH_KEY", &env.ssh_key_path),
         ("EPI_SSH_USER", &env.ssh_user),
@@ -241,6 +243,7 @@ mod tests {
 
         let env = HookEnv {
             instance_name: "test".into(),
+            ssh_host: "127.0.0.1".into(),
             ssh_port: 2222,
             ssh_key_path: "/tmp/key".into(),
             ssh_user: "root".into(),
@@ -269,6 +272,7 @@ mod tests {
 
         let env = HookEnv {
             instance_name: "test".into(),
+            ssh_host: "127.0.0.1".into(),
             ssh_port: 2222,
             ssh_key_path: "/tmp/key".into(),
             ssh_user: "root".into(),
@@ -279,6 +283,34 @@ mod tests {
 
         let output = fs::read_to_string(&log).unwrap();
         assert_eq!(output.trim(), "/home/user/myproject");
+    }
+
+    #[test]
+    fn execute_exports_ssh_host_and_port() {
+        let dir = TempDir::new().unwrap();
+        let log = dir.path().join("log.txt");
+        let log_path = log.to_string_lossy();
+
+        let script = dir.path().join("check.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$EPI_SSH_HOST:$EPI_SSH_PORT\" > {log_path}\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let env = HookEnv {
+            instance_name: "test".into(),
+            ssh_host: "192.168.64.5".into(),
+            ssh_port: 22,
+            ssh_key_path: "/tmp/key".into(),
+            ssh_user: "root".into(),
+            state_dir: "/tmp/state".into(),
+            project_dir: None,
+        };
+        execute(&env, &[script]).unwrap();
+
+        assert_eq!(fs::read_to_string(&log).unwrap().trim(), "192.168.64.5:22");
     }
 
     #[test]
@@ -297,6 +329,7 @@ mod tests {
 
         let env = HookEnv {
             instance_name: "test".into(),
+            ssh_host: "127.0.0.1".into(),
             ssh_port: 2222,
             ssh_key_path: "/tmp/key".into(),
             ssh_user: "root".into(),
@@ -318,6 +351,7 @@ mod tests {
 
         let env = HookEnv {
             instance_name: "test".into(),
+            ssh_host: "127.0.0.1".into(),
             ssh_port: 2222,
             ssh_key_path: "/tmp/key".into(),
             ssh_user: "root".into(),

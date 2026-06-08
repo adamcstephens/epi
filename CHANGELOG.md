@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Hooks now receive `EPI_SSH_HOST` (the guest's reachable address) alongside `EPI_SSH_PORT`, so hook scripts can connect to the guest portably instead of assuming `localhost` — required for the macOS backend where the guest has its own IP
 - macOS: the VM daemon always stops the guest before exiting — on supervisor errors and panics, not just the normal path — so shutdown stays fast (~1.5s) instead of blocking on Virtualization.framework's synchronous teardown
 - macOS: Virtualization.framework failures surface as actionable messages instead of raw NSError dumps — e.g. a missing codesigning entitlement now points at `just sign`
 - macOS: `epi list` / `epi info` detect a dead VM daemon and reap the stale instance — killing any leftover helper, removing its sockets/pid/ip files, and clearing the recorded runtime (parity with the Linux stale-unit cleanup)

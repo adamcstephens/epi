@@ -103,7 +103,7 @@ pub fn cmd_launch(
     if attach_console {
         // Run SSH wait + hooks in background so console attaches immediately
         // Skip spinners — raw terminal mode would be corrupted
-        let wait_handle = if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
+        let wait_handle = if ssh_port.is_some() && !no_provision {
             let inst = instance.to_string();
             let key = ssh_key_path.clone();
             let tgt = resolved.target.clone();
@@ -125,7 +125,7 @@ pub fn cmd_launch(
                     &extra_ssh,
                 )?;
                 eprintln!("Instance {inst} is ready");
-                run_post_launch_hooks(&inst, &tgt, ssh_port, &key, pdir)?;
+                run_post_launch_hooks(&inst, &tgt, ssh_sock, &key, pdir)?;
                 Ok(())
             }))
         } else {
@@ -137,7 +137,7 @@ pub fn cmd_launch(
         if let Some(handle) = wait_handle {
             let _ = handle.join();
         }
-    } else if let Some(ssh_port) = ssh_port.filter(|_| !no_provision) {
+    } else if ssh_port.is_some() && !no_provision {
         let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -154,7 +154,7 @@ pub fn cmd_launch(
         run_post_launch_hooks(
             instance,
             &resolved.target,
-            ssh_port,
+            ssh_sock,
             &ssh_key_path,
             project_dir_ref,
         )?;
@@ -308,7 +308,7 @@ fn launch_with_descriptor(
 fn run_pre_stop_hooks(
     instance: &str,
     target_str: &str,
-    ssh_port: u16,
+    ssh: SocketAddr,
     ssh_key_path: &str,
     project_dir: Option<String>,
 ) -> Result<()> {
@@ -320,7 +320,8 @@ fn run_pre_stop_hooks(
     if !hook_scripts.is_empty() {
         let env = hooks::HookEnv {
             instance_name: instance.to_string(),
-            ssh_port,
+            ssh_host: ssh.ip().to_string(),
+            ssh_port: ssh.port(),
             ssh_key_path: ssh_key_path.to_string(),
             ssh_user: ssh::user(),
             state_dir: instance_store::state_dir().to_string_lossy().to_string(),
@@ -362,7 +363,7 @@ fn wait_and_trust_ssh(
 fn run_post_launch_hooks(
     instance: &str,
     target_str: &str,
-    ssh_port: u16,
+    ssh: SocketAddr,
     ssh_key_path: &str,
     project_dir: Option<String>,
 ) -> Result<()> {
@@ -374,7 +375,8 @@ fn run_post_launch_hooks(
     if !hook_scripts.is_empty() {
         let env = hooks::HookEnv {
             instance_name: instance.to_string(),
-            ssh_port,
+            ssh_host: ssh.ip().to_string(),
+            ssh_port: ssh.port(),
             ssh_key_path: ssh_key_path.to_string(),
             ssh_user: ssh::user(),
             state_dir: instance_store::state_dir().to_string_lossy().to_string(),
@@ -454,12 +456,11 @@ pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
         if let Some(ref st) = state
             && let Some(ref rt) = st.runtime
         {
-            let port = rt.ssh.port();
-            if port != 0 {
+            if rt.ssh.port() != 0 {
                 run_pre_stop_hooks(
                     instance,
                     &st.target,
-                    port,
+                    rt.ssh,
                     &rt.ssh_key_path,
                     st.project_dir.clone(),
                 )?;
@@ -522,10 +523,10 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("instance {instance} has no runtime"))?;
 
-    let ssh_port = match runtime.ssh.port() {
-        0 => bail!("instance {instance} has no SSH port"),
-        p => p,
-    };
+    let ssh_sock = runtime.ssh;
+    if ssh_sock.port() == 0 {
+        bail!("instance {instance} has no SSH port");
+    }
     let ssh_key_path = runtime.ssh_key_path.clone();
 
     // Step 1: Re-evaluate target (force cache bust)
@@ -610,7 +611,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
             run_pre_stop_hooks(
                 instance,
                 &state.target,
-                ssh_port,
+                ssh_sock,
                 &ssh_key_path,
                 state.project_dir.clone(),
             )?;
@@ -644,7 +645,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
                 run_post_launch_hooks(
                     instance,
                     &state.target,
-                    new_ssh_sock.port(),
+                    new_ssh_sock,
                     &new_ssh_key_path,
                     state.project_dir.clone(),
                 )?;
@@ -715,7 +716,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         run_post_launch_hooks(
             instance,
             &state.target,
-            ssh_sock.port(),
+            ssh_sock,
             &ssh_key_path,
             state.project_dir.clone(),
         )?;
