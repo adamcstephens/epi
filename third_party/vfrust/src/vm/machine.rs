@@ -46,6 +46,15 @@ impl VirtualMachine {
         &self.inner.snapshot
     }
 
+    /// Slave device paths of pty-attached serial ports, in configuration
+    /// order. A console client can open one of these to talk to the guest's
+    /// serial port. Empty unless a [`SerialAttachment::Pty`] was configured.
+    ///
+    /// [`SerialAttachment::Pty`]: crate::config::device::serial::SerialAttachment::Pty
+    pub fn serial_pty_paths(&self) -> &[String] {
+        &self.inner.serial_pty_paths
+    }
+
     /// Create a thread-safe handle for cross-thread VM control.
     pub fn handle(&self) -> VmHandle {
         VmHandle::new(&self.inner)

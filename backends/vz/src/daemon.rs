@@ -43,7 +43,8 @@ pub fn daemon_main(instance: &str) -> Result<()> {
         // drop tears the VM down (after supervise has already stopped it).
         let vm = vfrust::VirtualMachine::new(config)
             .with_context(|| format!("creating virtual machine for {instance}"))?;
-        supervise(&VfrustVm(vm.handle()), &instance_dir).await
+        let pty = vm.serial_pty_paths().first().cloned();
+        supervise(&VfrustVm(vm.handle()), &instance_dir, pty.as_deref()).await
     })
 }
 
@@ -107,8 +108,25 @@ enum ShutdownPlan {
 
 /// Start the VM and run until something ends it: a control-socket stop, the
 /// guest powering off, or SIGTERM.
-pub(crate) async fn supervise<V: VmControl>(vm: &V, instance_dir: &Path) -> Result<()> {
+///
+/// `serial_pty_path` is the host pty slave for the guest serial port (from
+/// `VirtualMachine::serial_pty_paths`), if any; the serial bridge tees it to
+/// `console.log` and serves the interactive console socket.
+pub(crate) async fn supervise<V: VmControl>(
+    vm: &V,
+    instance_dir: &Path,
+    serial_pty_path: Option<&str>,
+) -> Result<()> {
     vm.start().await?;
+
+    if let Some(pty) = serial_pty_path {
+        let console_log = instance_dir.join("console.log");
+        let serial_sock = crate::serial_socket_path(instance_dir);
+        if let Err(e) = crate::serial::spawn_bridge(pty, &console_log, &serial_sock) {
+            // Console is non-essential; log and keep the VM running.
+            eprintln!("serial bridge failed: {e:#}");
+        }
+    }
 
     fs::write(pid_file(instance_dir), std::process::id().to_string())
         .context("writing daemon pid file")?;
@@ -149,6 +167,7 @@ pub(crate) async fn supervise<V: VmControl>(vm: &V, instance_dir: &Path) -> Resu
     }
 
     let _ = fs::remove_file(&socket);
+    let _ = fs::remove_file(crate::serial_socket_path(instance_dir));
     let _ = fs::remove_file(pid_file(instance_dir));
     Ok(())
 }
@@ -326,7 +345,7 @@ mod tests {
             (status, pid, killed)
         });
 
-        supervise(&vm, dir.path()).await.unwrap();
+        supervise(&vm, dir.path(), None).await.unwrap();
         let (status, pid, killed) = client.await.unwrap();
 
         assert_eq!(
@@ -351,7 +370,7 @@ mod tests {
             send_request(socket, &Request::Stop { grace_seconds: 5 }).unwrap()
         });
 
-        supervise(&vm, dir.path()).await.unwrap();
+        supervise(&vm, dir.path(), None).await.unwrap();
         assert_eq!(client.await.unwrap(), Response::Stopping);
         assert_eq!(vm.calls(), vec!["start", "request_stop"]);
     }
@@ -365,7 +384,7 @@ mod tests {
             send_request(socket, &Request::Stop { grace_seconds: 0 }).unwrap()
         });
 
-        supervise(&vm, dir.path()).await.unwrap();
+        supervise(&vm, dir.path(), None).await.unwrap();
         assert_eq!(client.await.unwrap(), Response::Stopping);
         assert_eq!(vm.calls(), vec!["start", "request_stop", "stop"]);
     }
@@ -380,7 +399,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             tx.send_replace(VmState::Stopped);
         };
-        let (result, ()) = tokio::join!(supervise(&vm, dir.path()), poweroff);
+        let (result, ()) = tokio::join!(supervise(&vm, dir.path(), None), poweroff);
         result.unwrap();
 
         assert_eq!(vm.calls(), vec!["start"]);
@@ -406,7 +425,7 @@ mod tests {
             (garbage_reply, killed)
         });
 
-        supervise(&vm, dir.path()).await.unwrap();
+        supervise(&vm, dir.path(), None).await.unwrap();
         let (garbage_reply, killed) = client.await.unwrap();
 
         assert!(matches!(garbage_reply, Response::Error { .. }));

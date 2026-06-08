@@ -14,6 +14,7 @@ pub mod control;
 pub mod daemon;
 pub mod ip_discovery;
 pub mod overlay;
+pub mod serial;
 
 pub use daemon::daemon_main;
 
@@ -36,6 +37,12 @@ pub struct VzBackend;
 
 /// The guest's sshd port — connections go straight to the VZ-NAT address.
 const GUEST_SSH_PORT: u16 = 22;
+
+/// Per-instance serial console socket served by the daemon's serial bridge.
+/// Same unix-socket shape as the Linux backend, so `console::attach` is shared.
+pub fn serial_socket_path(instance_dir: &Path) -> PathBuf {
+    instance_dir.join("serial.sock")
+}
 
 /// How long launch waits for the guest to report its IP. Overridable for
 /// tests via `EPI_VZ_IP_TIMEOUT_SECS`.
@@ -82,9 +89,10 @@ impl Backend for VzBackend {
         Ok(RunningInstance {
             id: spec.id.clone(),
             ssh: SocketAddr::new(IpAddr::V4(ip), GUEST_SSH_PORT),
-            // The daemon symlinks the allocated pty slave here (epi-31/33).
-            serial: SerialEndpoint::Pty {
-                path: spec.instance_dir.join("console.pty"),
+            // The daemon's serial bridge serves this socket (pty ↔ console.log
+            // + interactive), matching the Linux unix-socket console shape.
+            serial: SerialEndpoint::UnixSocket {
+                path: serial_socket_path(&spec.instance_dir),
             },
             backend: BackendState::Vz(VzState { pid }),
             disk: disk_path.to_string_lossy().to_string(),
@@ -844,10 +852,10 @@ pub(crate) mod tests {
         );
         assert_eq!(rt.ports, vec![]);
         match &rt.serial {
-            SerialEndpoint::Pty { path } => {
-                assert!(path.starts_with(dir.path()), "pty path in instance dir");
+            SerialEndpoint::UnixSocket { path } => {
+                assert_eq!(path, &serial_socket_path(dir.path()));
             }
-            other => panic!("expected pty serial endpoint, got {other:?}"),
+            other => panic!("expected unix-socket serial endpoint, got {other:?}"),
         }
 
         VzBackend.stop(&rt, Duration::ZERO).unwrap();

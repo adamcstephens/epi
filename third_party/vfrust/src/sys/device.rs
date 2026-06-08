@@ -31,6 +31,9 @@ pub(crate) struct BuiltDevices {
     pub dir_sharing: Retained<NSArray<VZDirectorySharingDeviceConfiguration>>,
     pub audio: Retained<NSArray<VZAudioDeviceConfiguration>>,
     pub usb_controllers: Retained<NSArray<VZUSBControllerConfiguration>>,
+    /// Slave device paths of any `SerialAttachment::Pty` serial ports, in the
+    /// order they were configured. Lets the caller connect a console client.
+    pub serial_pty_paths: Vec<String>,
 }
 
 pub(crate) fn build_devices(devices: &[Device]) -> crate::Result<BuiltDevices> {
@@ -46,6 +49,7 @@ pub(crate) fn build_devices(devices: &[Device]) -> crate::Result<BuiltDevices> {
     let mut dir_sharing_list: Vec<Retained<VZDirectorySharingDeviceConfiguration>> = Vec::new();
     let mut audio_list: Vec<Retained<VZAudioDeviceConfiguration>> = Vec::new();
     let mut usb_controller_list: Vec<Retained<VZUSBControllerConfiguration>> = Vec::new();
+    let mut serial_pty_paths: Vec<String> = Vec::new();
 
     for device in devices {
         match device {
@@ -54,7 +58,9 @@ pub(crate) fn build_devices(devices: &[Device]) -> crate::Result<BuiltDevices> {
             Device::UsbMassStorage(usb) => storage_list.push(build_usb_mass_storage(usb)?),
             Device::Nbd(nbd) => storage_list.push(build_nbd(nbd)?),
             Device::VirtioNet(net) => network_list.push(build_virtio_net(net)?),
-            Device::VirtioSerial(serial) => serial_list.push(build_virtio_serial(serial)?),
+            Device::VirtioSerial(serial) => {
+                serial_list.push(build_virtio_serial(serial, &mut serial_pty_paths)?)
+            }
             Device::VirtioVsock(vsock) => socket_list.push(build_virtio_vsock(vsock)?),
             Device::VirtioGpu(gpu) => graphics_list.push(build_virtio_gpu(gpu)?),
             Device::MacGraphics(mac_gpu) => graphics_list.push(build_mac_graphics(mac_gpu)?),
@@ -84,6 +90,7 @@ pub(crate) fn build_devices(devices: &[Device]) -> crate::Result<BuiltDevices> {
         dir_sharing: NSArray::from_retained_slice(&dir_sharing_list),
         audio: NSArray::from_retained_slice(&audio_list),
         usb_controllers: NSArray::from_retained_slice(&usb_controller_list),
+        serial_pty_paths,
     })
 }
 
@@ -481,6 +488,7 @@ fn set_raw_mode(fd: libc::c_int) {
 
 fn build_virtio_serial(
     serial: &VirtioSerial,
+    pty_paths: &mut Vec<String>,
 ) -> crate::Result<Retained<VZSerialPortConfiguration>> {
     unsafe {
         let attachment: Retained<VZSerialPortAttachment> = match &serial.attachment {
@@ -517,7 +525,8 @@ fn build_virtio_serial(
             // setConsoleDevices() in config_builder, and splitting PTY vs Stdio/File into
             // different device arrays. Keeping serial port path for now for simplicity.
             SerialAttachment::Pty => {
-                let (master_fh, _slave_path) = open_pty_raw()?;
+                let (master_fh, slave_path) = open_pty_raw()?;
+                pty_paths.push(slave_path);
                 let attachment =
                     VZFileHandleSerialPortAttachment::initWithFileHandleForReading_fileHandleForWriting(
                         VZFileHandleSerialPortAttachment::alloc(),

@@ -8,9 +8,11 @@ use crate::config::vm::VmConfig;
 use crate::sys::bootloader::build_bootloader;
 use crate::sys::device::build_devices;
 
+/// Build the VZ configuration, also returning the slave device paths of any
+/// pty-attached serial ports (in configuration order).
 pub(crate) fn build_vz_config(
     config: &VmConfig,
-) -> crate::Result<Retained<VZVirtualMachineConfiguration>> {
+) -> crate::Result<(Retained<VZVirtualMachineConfiguration>, Vec<String>)> {
     // Validate: nested virtualization cannot be used with macOS bootloader.
     if config.nested && matches!(config.bootloader, Bootloader::MacOs(_)) {
         return Err(crate::Error::InvalidConfiguration(
@@ -34,6 +36,7 @@ pub(crate) fn build_vz_config(
 
         // Devices
         let built = build_devices(&config.devices)?;
+        let serial_pty_paths = built.serial_pty_paths.clone();
         vz_config.setStorageDevices(&built.storage);
         vz_config.setNetworkDevices(&built.network);
         vz_config.setSerialPorts(&built.serial);
@@ -65,7 +68,7 @@ pub(crate) fn build_vz_config(
             }
         }
 
-        Ok(vz_config)
+        Ok((vz_config, serial_pty_paths))
     }
 }
 

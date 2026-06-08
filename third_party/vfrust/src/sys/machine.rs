@@ -88,11 +88,13 @@ pub(crate) struct InnerMachine {
     /// identifier) resolved from Virtualization.framework.  Use this for
     /// save/restore round-trips.
     pub(crate) snapshot: VmConfig,
+    /// Slave device paths of pty-attached serial ports, in config order.
+    pub(crate) serial_pty_paths: Vec<String>,
 }
 
 impl InnerMachine {
     pub(crate) fn new(config: VmConfig) -> crate::Result<Self> {
-        let vz_config = build_vz_config(&config)?;
+        let (vz_config, serial_pty_paths) = build_vz_config(&config)?;
         let queue = DispatchQueue::new("com.vfrust.vm", DispatchQueueAttr::SERIAL);
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<DelegateEvent>();
@@ -194,6 +196,7 @@ impl InnerMachine {
             state_tx,
             config,
             snapshot,
+            serial_pty_paths,
         })
     }
 
