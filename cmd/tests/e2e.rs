@@ -873,7 +873,7 @@ fn e2e_cpus_override() {
 fn e2e_upgrade_switch() {
     let name = unique_name("upgrade");
     let _guard = InstanceGuard::new(&name);
-    let (target_str, _) = &*DESCRIPTOR;
+    let (target_str, desc) = &*DESCRIPTOR;
 
     let runtime = provision_and_wait(&name);
 
@@ -891,17 +891,38 @@ fn e2e_upgrade_switch() {
         "pre-upgrade toplevel should not be empty"
     );
 
-    // Build toplevel
+    // Seed a stale descriptor so we can verify that a switch-mode upgrade
+    // rewrites it. The descriptor controls what a later `epi start` boots,
+    // so even a no-reboot upgrade must update it (epi-61).
+    let mut stale = desc.clone();
+    stale.cmdline = "console=ttyS0 init=/nix/store/stale-sentinel/init".to_string();
+    instance_store::update_descriptor(&name, stale).expect("seeding stale descriptor failed");
+
+    // Build toplevel so we know what the upgrade should activate.
     let toplevel = target::build_toplevel(target_str).expect("build_toplevel failed");
     assert!(
         std::path::Path::new(&toplevel).exists(),
         "toplevel path should exist: {toplevel}"
     );
 
-    // Copy closure to guest and activate
-    ssh::nix_copy_closure(&name, &toplevel).expect("nix_copy_closure failed");
-    let switch_cmd = format!("sudo {toplevel}/bin/switch-to-configuration switch");
-    ssh::run_on_guest(&name, &switch_cmd).expect("switch-to-configuration failed");
+    // Invoke `epi upgrade` (default mode: switch) via the CLI binary so we
+    // exercise the real command flow. Override XDG_CONFIG_HOME to an empty
+    // dir so the user's host-side hooks don't run during the test.
+    let empty_xdg = TempDir::new().expect("tempdir failed");
+    let xdg_str = empty_xdg.path().to_string_lossy().into_owned();
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["upgrade", &name],
+        &[("XDG_CONFIG_HOME", &xdg_str)],
+    )
+    .expect("epi upgrade failed to spawn");
+    assert!(
+        out.success(),
+        "epi upgrade failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
 
     // Verify guest is still reachable and running the new toplevel
     let out = ssh_exec(&runtime, "readlink /run/current-system");
@@ -914,6 +935,24 @@ fn e2e_upgrade_switch() {
     assert_eq!(
         out.stdout, toplevel,
         "post-upgrade toplevel should match the built toplevel"
+    );
+
+    // The stored descriptor must point at the new toplevel so any reboot
+    // (`epi start` after a stop) boots the upgraded system.
+    let state = instance_store::load_state(&name)
+        .expect("load_state failed")
+        .expect("instance state missing after upgrade");
+    let stored = state
+        .descriptor
+        .expect("descriptor missing after upgrade --mode switch");
+    assert!(
+        stored.cmdline.contains(&format!("init={toplevel}/init")),
+        "descriptor cmdline should boot the new toplevel, got: {}",
+        stored.cmdline
+    );
+    assert_eq!(
+        stored.disk, desc.disk,
+        "switch upgrade must preserve the original disk image path"
     );
 }
 

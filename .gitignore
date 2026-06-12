@@ -1,7 +1,7 @@
 *.img
 
-.epi/cache
-.epi/state
+**/.epi/cache
+**/.epi/state
 
 target/
 .cargo-home/
