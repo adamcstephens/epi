@@ -277,9 +277,7 @@ in
       cmdline = "console=ttyS0 console=hvc0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
       configuredUsers =
         let
-          normalUsers = lib.filterAttrs
-            (_: user: user.isNormalUser)
-            config.users.users;
+          normalUsers = lib.filterAttrs (_: user: user.isNormalUser) config.users.users;
         in
         builtins.attrNames normalUsers;
     };
@@ -334,35 +332,33 @@ in
     # to stop before SIGKILL. Without this, a single user service that
     # ignores SIGTERM blocks `multi-user.target` shutdown for the full
     # DefaultTimeoutStopSec (90s), which makes `epi stop` painfully slow.
-    systemd.user.extraConfig = ''
-      DefaultTimeoutStopSec=5s
-    '';
+    systemd.user.settings.Manager.DefaultTimeoutStopSec = "5s";
 
     # Blacklist kernel modules not needed in a cloud-hypervisor VM
     boot.blacklistedKernelModules = [
-      "cfg80211"     # wireless
-      "rfkill"       # wireless killswitch
-      "8021q"        # VLANs
-      "edac_core"    # ECC memory error detection
+      "cfg80211" # wireless
+      "rfkill" # wireless killswitch
+      "8021q" # VLANs
+      "edac_core" # ECC memory error detection
       "intel_rapl_msr" # power management
       "intel_rapl_common"
-      "ccp"          # AMD crypto coprocessor
-      "mac_hid"      # macOS HID emulation
-      "atkbd"        # AT keyboard
-      "libps2"       # PS/2
-      "serio"        # serial I/O
+      "ccp" # AMD crypto coprocessor
+      "mac_hid" # macOS HID emulation
+      "atkbd" # AT keyboard
+      "libps2" # PS/2
+      "serio" # serial I/O
       "vivaldi_fmap" # chromebook keyboard
-      "efi_pstore"   # EFI pstore
+      "efi_pstore" # EFI pstore
       "vmw_vsock_vmci_transport" # VMware vsock
       "vmw_vsock_virtio_transport_common"
       "vsock_loopback"
       "vsock"
-      "vmw_vmci"     # VMware VMCI
-      "dmi_sysfs"    # DMI/SMBIOS sysfs
-      "qemu_fw_cfg"  # QEMU firmware config
-      "autofs4"      # automounting
-      "dm_mod"       # device mapper
-      "loop"         # loop devices
+      "vmw_vmci" # VMware VMCI
+      "dmi_sysfs" # DMI/SMBIOS sysfs
+      "qemu_fw_cfg" # QEMU firmware config
+      "autofs4" # automounting
+      "dm_mod" # device mapper
+      "loop" # loop devices
     ];
 
     systemd.services.epi-init = {
