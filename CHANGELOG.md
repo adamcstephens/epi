@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- NixOS module: Replace systemd-timesyncd with chrony for guest time sync. The guest clock now recovers immediately after host sleep/wake: chrony steps any large offset (`makestep 1.0 -1`) and, on cloud-hypervisor/KVM, syncs directly off the host clock via the `ptp_kvm` PHC refclock without needing the network
+
 ## [0.9.0] - 2026-06-07
 
 ### Added

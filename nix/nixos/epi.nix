@@ -317,6 +317,36 @@ in
     # Disable firewall — VM runs behind passt (user-mode networking)
     networking.firewall.enable = false;
 
+    # Recover the guest clock quickly after host sleep. timesyncd is
+    # SNTP-only with poll backoff up to ~34 min and no host-clock source,
+    # so the clock stays wrong for a long time after wake. chrony steps
+    # any large offset immediately (makestep) and, under KVM/cloud-
+    # hypervisor, syncs straight off the host clock via the ptp_kvm PHC
+    # with no network needed. The PHC does not exist under VZ and chronyd
+    # treats a missing refclock device as a fatal error, so the refclock
+    # line is generated at startup only when the device is present.
+    services.timesyncd.enable = false;
+    services.chrony = {
+      enable = true;
+      # makestep.limit can't express -1 (unlimited); use extraConfig
+      makestep.enable = false;
+      extraConfig = ''
+        makestep 1.0 -1
+        confdir /run/chrony.d
+      '';
+    };
+    boot.kernelModules = [ "ptp_kvm" ];
+    systemd.services.chronyd = {
+      serviceConfig.RuntimeDirectory = "chrony.d";
+      preStart = ''
+        if [ -e /dev/ptp_kvm ]; then
+          echo 'refclock PHC /dev/ptp_kvm poll 0 dpoll -2' > /run/chrony.d/ptp-kvm.conf
+        else
+          rm -f /run/chrony.d/ptp-kvm.conf
+        fi
+      '';
+    };
+
     nix.settings = {
       experimental-features = "nix-command flakes";
       trusted-users = [
