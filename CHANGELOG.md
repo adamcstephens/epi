@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `ssh`/`exec`/`cp`: When the instance exists but is stopped, prompt to start it before connecting. Pass `--start` to start it without prompting (e.g. in scripts); with no TTY and no `--start`, the command errors and points at `epi start`
+
 ### Changed
 - NixOS module: Replace systemd-timesyncd with chrony for guest time sync. The guest clock now recovers immediately after host sleep/wake: chrony steps any large offset (`makestep 1.0 -1`) and, on cloud-hypervisor/KVM, syncs directly off the host clock via the `ptp_kvm` PHC refclock without needing the network
 

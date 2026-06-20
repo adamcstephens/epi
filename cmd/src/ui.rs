@@ -1,3 +1,4 @@
+use anyhow::Result;
 use console::{Style, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::{Duration, Instant};
@@ -196,6 +197,19 @@ pub fn format_elapsed(d: Duration) -> String {
         let secs = total_secs as u64 % 60;
         format!("{mins}m{secs}s")
     }
+}
+
+/// Ask a yes/no question on stderr, returning `default` on empty input.
+pub fn confirm(question: &str, default: bool) -> Result<bool> {
+    let hint = if default { "Y/n" } else { "y/N" };
+    eprint!("{question} [{hint}] ");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let answer = input.trim().to_lowercase();
+    if answer.is_empty() {
+        return Ok(default);
+    }
+    Ok(answer == "y" || answer == "yes")
 }
 
 pub fn info(msg: &str) {

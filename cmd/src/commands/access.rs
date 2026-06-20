@@ -1,11 +1,32 @@
 use anyhow::{Result, bail};
+use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 
-use epi::{console, cp, instance_store, ssh};
+use super::lifecycle;
+use epi::{backend, console, cp, instance_store, ssh, ui};
 
-fn ensure_running(instance: &str) -> Result<()> {
-    instance_store::find_runtime(instance)?
-        .ok_or_else(|| anyhow::anyhow!("instance {instance} is not running"))?;
+/// Ensure the instance is running. If it exists but is stopped, start it —
+/// either because `start` was passed, or after an interactive confirmation.
+fn ensure_running(instance: &str, start: bool) -> Result<()> {
+    if backend::instance_is_running(instance)? {
+        return Ok(());
+    }
+
+    if instance_store::find(instance)?.is_none() {
+        bail!("instance {instance} not found");
+    }
+
+    // Exists but stopped.
+    if !start {
+        if !std::io::stdin().is_terminal() {
+            bail!("instance {instance} is stopped — run 'epi start {instance}' or pass --start");
+        }
+        if !ui::confirm(&format!("Instance {instance} is stopped. Start it?"), true)? {
+            bail!("instance {instance} is stopped");
+        }
+    }
+
+    lifecycle::cmd_start(instance, false, false, 120)?;
     Ok(())
 }
 
@@ -22,8 +43,8 @@ pub fn cmd_console_log(instance: &str) -> Result<()> {
     console::show_log(instance)
 }
 
-pub fn cmd_ssh(instance: &str) -> Result<()> {
-    ensure_running(instance)?;
+pub fn cmd_ssh(instance: &str, start: bool) -> Result<()> {
+    ensure_running(instance, start)?;
 
     let config = ssh::config_path(instance);
     let config_str = config.to_string_lossy();
@@ -46,12 +67,12 @@ pub fn cmd_ssh(instance: &str) -> Result<()> {
     bail!("failed to exec ssh: {err}");
 }
 
-pub fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
+pub fn cmd_exec(instance: &str, command: &[String], start: bool) -> Result<()> {
     if command.is_empty() {
         bail!("no command specified");
     }
 
-    ensure_running(instance)?;
+    ensure_running(instance, start)?;
 
     let config = ssh::config_path(instance);
     let config_str = config.to_string_lossy();
@@ -73,7 +94,7 @@ pub fn cmd_exec(instance: &str, command: &[String]) -> Result<()> {
     bail!("failed to exec ssh: {err}");
 }
 
-pub fn cmd_cp(source: &str, dest: &str) -> Result<()> {
+pub fn cmd_cp(source: &str, dest: &str, start: bool) -> Result<()> {
     let spec = cp::parse_copy_spec(source, dest)?;
 
     let (instance, remote_path, is_push) = match (&spec.source, &spec.dest) {
@@ -86,7 +107,7 @@ pub fn cmd_cp(source: &str, dest: &str) -> Result<()> {
         _ => unreachable!("parse_copy_spec validates exactly one side is remote"),
     };
 
-    ensure_running(instance)?;
+    ensure_running(instance, start)?;
 
     let config = ssh::config_path(instance);
     // rsync itself doesn't touch the network; its ssh transport does, so this

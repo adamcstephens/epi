@@ -157,6 +157,10 @@ enum Command {
         /// Instance name
         #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
+
+        /// Start the instance first if it is stopped (no prompt)
+        #[arg(long)]
+        start: bool,
     },
 
     /// Execute a command in an instance.
@@ -164,6 +168,10 @@ enum Command {
         /// Instance name
         #[arg(add = ArgValueCompleter::new(complete_instance))]
         instance: Option<String>,
+
+        /// Start the instance first if it is stopped (no prompt)
+        #[arg(long)]
+        start: bool,
 
         /// Command and arguments to execute
         #[arg(last = true)]
@@ -199,6 +207,10 @@ enum Command {
 
         /// Destination path (local or <instance>:<path>)
         dest: String,
+
+        /// Start the instance first if it is stopped (no prompt)
+        #[arg(long)]
+        start: bool,
     },
 
     /// Show instance logs.
@@ -322,11 +334,19 @@ fn run(command: Command) -> Result<()> {
         Command::ConsoleLog { instance } => {
             commands::cmd_console_log(&resolve_instance_name(instance)?)
         }
-        Command::Ssh { instance } => commands::cmd_ssh(&resolve_instance_name(instance)?),
-        Command::Exec { instance, command } => {
-            commands::cmd_exec(&resolve_instance_name(instance)?, &command)
+        Command::Ssh { instance, start } => {
+            commands::cmd_ssh(&resolve_instance_name(instance)?, start)
         }
-        Command::Cp { source, dest } => commands::cmd_cp(&source, &dest),
+        Command::Exec {
+            instance,
+            start,
+            command,
+        } => commands::cmd_exec(&resolve_instance_name(instance)?, &command, start),
+        Command::Cp {
+            source,
+            dest,
+            start,
+        } => commands::cmd_cp(&source, &dest, start),
         Command::Upgrade {
             instance,
             mode,

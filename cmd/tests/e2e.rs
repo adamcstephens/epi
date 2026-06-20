@@ -1078,3 +1078,107 @@ fn e2e_mount_home_ownership() {
         out.stdout
     );
 }
+
+fn save_stopped_state(name: &str) {
+    instance_store::save_state(
+        name,
+        &instance_store::InstanceState {
+            target: e2e_target(),
+            runtime: None,
+            mounts: vec![],
+            project_dir: None,
+            disk_size: "40G".to_string(),
+            cpus: 1,
+            memory_mib: 1024,
+            port_specs: vec![],
+            ssh_extra_config: vec![],
+            descriptor: None,
+        },
+    )
+    .expect("save_state failed");
+}
+
+/// No VM required: a stopped instance with no TTY must refuse to connect and
+/// point the user at `epi start` / `--start` rather than starting silently.
+#[test]
+fn ssh_stopped_without_tty_suggests_start() {
+    let name = unique_name("sshstopped");
+    let _guard = InstanceGuard::new(&name);
+    save_stopped_state(&name);
+
+    let out =
+        process::run(env!("CARGO_BIN_EXE_epi"), &["ssh", &name]).expect("epi ssh failed to spawn");
+
+    assert!(
+        !out.success(),
+        "epi ssh on a stopped instance without a TTY should fail, got success:\n{}",
+        out.stdout
+    );
+    assert!(
+        out.stderr.contains("stopped"),
+        "stderr should report the instance is stopped, got: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("--start"),
+        "stderr should suggest --start, got: {}",
+        out.stderr
+    );
+}
+
+/// `--start` boots a stopped instance non-interactively, then runs the command.
+#[test]
+#[ignore]
+fn e2e_exec_start_flag_boots_stopped() {
+    let name = unique_name("execstart");
+    let _guard = InstanceGuard::new(&name);
+
+    // Launch through the CLI so a real descriptor is recorded, then stop it.
+    let empty_xdg = TempDir::new().expect("tempdir failed");
+    let xdg_str = empty_xdg.path().to_string_lossy().into_owned();
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["launch", &name, "--target", &e2e_target()],
+        &[("XDG_CONFIG_HOME", &xdg_str)],
+    )
+    .expect("epi launch failed to spawn");
+    assert!(
+        out.success(),
+        "epi launch failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+
+    epi::backend::stop_instance(&name, false).expect("stop failed");
+    assert!(
+        instance_store::find_runtime(&name)
+            .expect("find_runtime failed")
+            .is_none(),
+        "instance should have no runtime after stop"
+    );
+
+    // `epi exec --start` must boot it and run the command.
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["exec", &name, "--start", "--", "echo", "hello"],
+        &[("XDG_CONFIG_HOME", &xdg_str)],
+    )
+    .expect("epi exec --start failed to spawn");
+    assert!(
+        out.success(),
+        "epi exec --start failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("hello"),
+        "remote command output should contain 'hello', got: {}",
+        out.stdout
+    );
+    assert!(
+        epi::backend::instance_is_running(&name).expect("instance_is_running failed"),
+        "instance should be running after exec --start"
+    );
+}
