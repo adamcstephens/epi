@@ -4,6 +4,7 @@
   rustPlatform,
   stdenv,
   systemdMinimal,
+  writableTmpDirAsHomeHook,
 }:
 
 rustPlatform.buildRustPackage {
@@ -31,7 +32,10 @@ rustPlatform.buildRustPackage {
     rcodesign
   ];
 
-  nativeCheckInputs = lib.optionals stdenv.isLinux [
+  nativeCheckInputs = [
+    writableTmpDirAsHomeHook
+  ]
+  ++ lib.optionals stdenv.isLinux [
     systemdMinimal
   ];
 
