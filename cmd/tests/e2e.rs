@@ -3,25 +3,34 @@
 //! These require a working nix flake target and systemd user session.
 //! Run with: cargo test --test e2e
 //!
-//! The target is read from EPI_E2E_TARGET (default: '.#manual-test').
+//! The target is read from EPI_E2E_TARGET (default: '.#manual-test' on Linux,
+//! '.#manual-test-aarch64' on macOS where VZ runs aarch64 guests).
 //!
-//! These exercise the cloud-hypervisor backend; a macOS VZ variant lands
-//! with epi-29.
-#![cfg(target_os = "linux")]
+//! The backend is platform-selected: cloud-hypervisor on Linux, the macOS
+//! Virtualization.framework (VZ) backend on aarch64-darwin. Tests that assert
+//! ch-specific internals (systemd units, passt, api.sock) are gated to Linux;
+//! the rest drive whichever backend the platform provides via `runtime.ssh`.
 
-use epi::backend::ch;
 use epi::{config, hooks, instance_store, process, ssh, target, vm_launch};
 use std::fs;
-use std::net::SocketAddr;
 use std::sync::LazyLock;
 use tempfile::TempDir;
 
-fn ssh_addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
+#[cfg(target_os = "linux")]
+use epi::backend::ch;
 
 fn e2e_target() -> String {
-    std::env::var("EPI_E2E_TARGET").unwrap_or_else(|_| ".#manual-test".to_string())
+    std::env::var("EPI_E2E_TARGET").unwrap_or_else(|_| default_target().to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn default_target() -> &'static str {
+    ".#manual-test-aarch64"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_target() -> &'static str {
+    ".#manual-test"
 }
 
 static DESCRIPTOR: LazyLock<(String, target::Descriptor)> = LazyLock::new(|| {
@@ -119,11 +128,10 @@ fn provision_and_wait_with(
 
     instance_store::set_provisioned(name, runtime.clone(), None).expect("set_provisioned failed");
 
-    let ssh_port = runtime.ssh.port();
     ssh::generate_config(
         &ssh::config_path(name),
         name,
-        ssh_addr(ssh_port),
+        runtime.ssh,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,
@@ -141,9 +149,9 @@ fn ssh_user() -> String {
 
 fn ssh_exec(runtime: &instance_store::RunningInstance, cmd: &str) -> process::Output {
     let port = runtime.ssh.port().to_string();
-    let user_host = format!("{}@127.0.0.1", ssh_user());
+    let user_host = format!("{}@{}", ssh_user(), runtime.ssh.ip());
     process::run(
-        "ssh",
+        ssh::SSH_PROGRAM,
         &[
             "-o",
             "StrictHostKeyChecking=no",
@@ -165,6 +173,9 @@ fn ssh_exec(runtime: &instance_store::RunningInstance, cmd: &str) -> process::Ou
     .expect("ssh exec failed")
 }
 
+// Exercises passt host-port forwarding and systemd unit internals; both are
+// ch-only. VZ lifecycle (launch/ssh/stop/restart) is covered by e2e_stop_start_ssh.
+#[cfg(target_os = "linux")]
 #[test]
 #[ignore] // requires real VM — run explicitly
 fn e2e_lifecycle() {
@@ -272,12 +283,11 @@ fn e2e_ssh_config_trusted_after_launch() {
     let _guard = InstanceGuard::new(&name);
 
     let runtime = provision_and_wait(&name);
-    let ssh_port = runtime.ssh.port();
 
     // Record host key and rewrite config
     ssh::trust_host_key(
         &name,
-        ssh_addr(ssh_port),
+        runtime.ssh,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         &[],
@@ -308,7 +318,11 @@ fn e2e_ssh_config_trusted_after_launch() {
 
     // Verify SSH still works with the trusted config
     let config_str = config.to_string_lossy();
-    let out = process::run("ssh", &["-F", &config_str, &name, "echo", "trusted"]).unwrap();
+    let out = process::run(
+        ssh::SSH_PROGRAM,
+        &["-F", &config_str, &name, "echo", "trusted"],
+    )
+    .unwrap();
     assert!(
         out.success(),
         "SSH with trusted config failed: {}",
@@ -344,14 +358,22 @@ fn e2e_mount() {
     let _guard = InstanceGuard::new(&name);
     let (target_str, _) = &*DESCRIPTOR;
 
-    // Create two temp dirs with distinct markers to test multiple mounts
+    // Create two temp dirs with distinct markers to test multiple mounts.
+    // Canonicalize the host paths: epi mounts the canonical path into the
+    // guest, and on macOS the temp dir lives under /var → /private/var.
     let mount_dir_a = TempDir::new().unwrap();
     fs::write(mount_dir_a.path().join("marker.txt"), "mount-a").unwrap();
-    let mount_path_a = mount_dir_a.path().to_string_lossy().to_string();
+    let mount_path_a = fs::canonicalize(mount_dir_a.path())
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let mount_dir_b = TempDir::new().unwrap();
     fs::write(mount_dir_b.path().join("marker.txt"), "mount-b").unwrap();
-    let mount_path_b = mount_dir_b.path().to_string_lossy().to_string();
+    let mount_path_b = fs::canonicalize(mount_dir_b.path())
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
 
     let mounts = vec![mount_path_a.clone(), mount_path_b.clone()];
 
@@ -386,11 +408,10 @@ fn e2e_mount() {
 
     instance_store::set_provisioned(&name, runtime.clone(), None).unwrap();
 
-    let ssh_port = runtime.ssh.port();
     ssh::generate_config(
         &ssh::config_path(&name),
         &name,
-        ssh_addr(ssh_port),
+        runtime.ssh,
         &ssh::user(),
         std::path::Path::new(&runtime.ssh_key_path),
         None,
@@ -487,21 +508,30 @@ fn e2e_graceful_shutdown() {
     let _runtime = provision_and_wait(&name);
     assert!(epi::backend::instance_is_running(&name).unwrap());
 
-    // Verify API socket exists
-    let inst_dir = instance_store::instance_dir(&name);
-    let api_socket = inst_dir.join("api.sock");
-    assert!(api_socket.exists(), "api.sock should exist after launch");
+    // The cloud-hypervisor control socket (ch-only) should exist after launch.
+    #[cfg(target_os = "linux")]
+    {
+        let inst_dir = instance_store::instance_dir(&name);
+        let api_socket = inst_dir.join("api.sock");
+        assert!(api_socket.exists(), "api.sock should exist after launch");
+    }
 
     // Stop and measure time — should complete well under 90s
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
     epi::backend::stop_instance(&name, false).expect("stop failed");
-    let elapsed = start.elapsed();
 
-    assert!(
-        elapsed.as_secs() < 30,
-        "stop took {}s, expected < 30s (graceful shutdown should be fast)",
-        elapsed.as_secs()
-    );
+    // ch reaches a clean ACPI poweroff fast. On VZ the guest doesn't react to
+    // the stop request yet, so a graceful stop waits the full grace + force
+    // fallback (epi-66); only assert the fast-path bound on cloud-hypervisor.
+    #[cfg(target_os = "linux")]
+    {
+        let elapsed = _start.elapsed();
+        assert!(
+            elapsed.as_secs() < 30,
+            "stop took {}s, expected < 30s (graceful shutdown should be fast)",
+            elapsed.as_secs()
+        );
+    }
 
     assert!(!epi::backend::instance_is_running(&name).unwrap());
 }
@@ -516,19 +546,25 @@ fn e2e_force_shutdown() {
     assert!(epi::backend::instance_is_running(&name).unwrap());
 
     // Force stop should be near-instant — no ACPI, just SIGKILL.
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
     epi::backend::stop_instance(&name, true).expect("force stop failed");
-    let elapsed = start.elapsed();
 
-    assert!(
-        elapsed.as_secs() < 2,
-        "force stop took {:?}, expected < 2s",
-        elapsed
-    );
+    // ch SIGKILLs immediately; VZ force-stop is not yet immediate (epi-8), so
+    // only assert the near-instant bound on the cloud-hypervisor backend.
+    #[cfg(target_os = "linux")]
+    {
+        let elapsed = _start.elapsed();
+        assert!(
+            elapsed.as_secs() < 2,
+            "force stop took {:?}, expected < 2s",
+            elapsed
+        );
+    }
 
     assert!(!epi::backend::instance_is_running(&name).unwrap());
 }
 
+#[cfg(target_os = "linux")] // asserts systemd unit state (ch-only)
 #[test]
 #[ignore]
 fn e2e_clean_shutdown_stops_helpers() {
@@ -613,6 +649,7 @@ fn e2e_stop_start_ssh() {
     assert_eq!(out2.stdout, "second-boot");
 }
 
+#[cfg(target_os = "linux")] // inspects systemd unit Environment (ch-only)
 #[test]
 #[ignore]
 fn e2e_no_env_leak() {
@@ -658,6 +695,7 @@ fn e2e_no_env_leak() {
     unsafe { std::env::remove_var(sentinel) };
 }
 
+#[cfg(target_os = "linux")] // relies on systemd PartOf= helper teardown (ch-only)
 #[test]
 #[ignore]
 fn e2e_vm_crash_stops_helpers() {
@@ -702,6 +740,7 @@ fn e2e_vm_crash_stops_helpers() {
     );
 }
 
+#[cfg(target_os = "linux")] // drives systemd units + passt.sock cleanup (ch-only)
 #[test]
 #[ignore]
 fn e2e_clear_stale_runtime_kills_lingering_helpers() {
@@ -775,10 +814,12 @@ fn e2e_cp_file_to_vm() {
 
     // Build rsync command matching cmd_cp's logic
     let ssh_cmd = format!(
-        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i {} -p {}",
-        runtime.ssh_key_path, ssh_port
+        "{} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i {} -p {}",
+        ssh::SSH_PROGRAM,
+        runtime.ssh_key_path,
+        ssh_port
     );
-    let remote_dest = format!("{}@127.0.0.1:/tmp/test-cp.txt", ssh_user());
+    let remote_dest = format!("{}@{}:/tmp/test-cp.txt", ssh_user(), runtime.ssh.ip());
 
     let out = process::run(
         "rsync",
