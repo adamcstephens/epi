@@ -68,6 +68,7 @@ let
 
       # Virtiofs mounts
       USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
+      HOST_HOME=$(jq -r '.host_home // empty' "$EPI_JSON")
       MOUNT_COUNT=$(jq -r '.mounts // [] | length' "$EPI_JSON")
       for i in $(seq 0 $((MOUNT_COUNT - 1))); do
         MOUNT_PATH=$(jq -r ".mounts[$i]" "$EPI_JSON")
@@ -77,6 +78,17 @@ let
           mkdir -p "$MOUNT_PATH"
         fi
         mount -t virtiofs "hostfs-$i" "$MOUNT_PATH"
+
+        # When the host home differs from the guest home (e.g. macOS
+        # /Users/<user> vs /home/<user>), bind the mount into the guest home so
+        # it is reachable at the natural path too.
+        if [ -n "$HOST_HOME" ] && [ -n "$USER_HOME" ] && [[ "$MOUNT_PATH" == "$HOST_HOME"/* ]]; then
+          BIND_TARGET="$USER_HOME''${MOUNT_PATH#"$HOST_HOME"}"
+          if [ "$BIND_TARGET" != "$MOUNT_PATH" ]; then
+            su - "$USERNAME" -c "mkdir -p '$BIND_TARGET'"
+            mount --bind "$MOUNT_PATH" "$BIND_TARGET"
+          fi
+        fi
       done
     '';
   };

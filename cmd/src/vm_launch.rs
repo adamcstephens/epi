@@ -221,9 +221,17 @@ fn generate_seed_iso(
         })
         .collect();
 
+    let host_home = std::env::var("HOME").ok().and_then(|home| {
+        Path::new(&home)
+            .canonicalize()
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    });
+
     let epi_json = serde_json::json!({
         "hostname": instance_name,
         "user": user_obj,
+        "host_home": host_home,
         "mounts": canonical_mounts
     });
 

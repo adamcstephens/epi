@@ -1023,8 +1023,9 @@ fn e2e_mount_home_ownership() {
     let name = unique_name("mntowner");
     let _guard = InstanceGuard::new(&name);
 
-    // Create a nested mount dir under $HOME so intermediate dirs must be
-    // created under the user's home directory inside the guest.
+    // Create a nested mount dir under the host $HOME. On macOS the host home
+    // (/Users/<user>) differs from the guest home (/home/<user>), so epi-init
+    // mounts at the real host path and bind-mounts it into the guest home.
     let home = std::env::var("HOME").expect("HOME not set");
     let user = ssh_user();
     let test_dir = format!("{home}/.epi-test-{name}");
@@ -1047,36 +1048,44 @@ fn e2e_mount_home_ownership() {
 
     let runtime = provision_and_wait_with(&name, resolved);
 
-    // Verify the mount works
+    // The real mount is reachable at the host path inside the guest.
     let cat_cmd = format!("cat {nested_mount}/marker.txt");
     let out = ssh_exec(&runtime, &cat_cmd);
-    assert!(out.success(), "cat marker failed: {}", out.stderr);
-    assert_eq!(out.stdout, "home-mount");
-
-    // Intermediate directory created by mkdir -p should be owned by the user,
-    // not root. The mount itself sits at nested_mount (a/b), so check a/ and
-    // the test_dir root — these are plain directories, not mount points.
-    let stat_cmd = format!("stat -c '%U' {test_dir}/a");
-    let out = ssh_exec(&runtime, &stat_cmd);
     assert!(
         out.success(),
-        "stat intermediate dir failed: {}",
+        "cat marker at host path failed: {}",
         out.stderr
     );
-    assert_eq!(
-        out.stdout, user,
-        "intermediate directory {test_dir}/a should be owned by {user}, got {}",
-        out.stdout
-    );
+    assert_eq!(out.stdout, "home-mount");
 
-    let stat_cmd = format!("stat -c '%U' {test_dir}");
-    let out = ssh_exec(&runtime, &stat_cmd);
-    assert!(out.success(), "stat test dir failed: {}", out.stderr);
-    assert_eq!(
-        out.stdout, user,
-        "directory {test_dir} should be owned by {user}, got {}",
-        out.stdout
+    // The same content is bind-mounted into the guest home, at the path
+    // produced by swapping the host home prefix for the guest home.
+    let rel = test_dir.strip_prefix(&home).expect("test_dir under home");
+    let guest_test_dir = format!("/home/{user}{rel}");
+    let guest_nested = format!("{guest_test_dir}/a/b");
+    let cat_cmd = format!("cat {guest_nested}/marker.txt");
+    let out = ssh_exec(&runtime, &cat_cmd);
+    assert!(
+        out.success(),
+        "cat marker at guest home path failed: {}",
+        out.stderr
     );
+    assert_eq!(out.stdout, "home-mount");
+
+    // Intermediate directories of the guest-home bind target are created by
+    // the user, not root. The bind target sits at a/b, so check a/ and the
+    // guest test_dir root — these are plain directories, not mount points.
+    let guest_a = format!("{guest_test_dir}/a");
+    for dir in [&guest_a, &guest_test_dir] {
+        let stat_cmd = format!("stat -c '%U' {dir}");
+        let out = ssh_exec(&runtime, &stat_cmd);
+        assert!(out.success(), "stat {dir} failed: {}", out.stderr);
+        assert_eq!(
+            out.stdout, user,
+            "directory {dir} should be owned by {user}, got {}",
+            out.stdout
+        );
+    }
 }
 
 fn save_stopped_state(name: &str) {
