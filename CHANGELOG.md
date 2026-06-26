@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- macOS (VZ) backend: Enable nested virtualization for Linux guests, so the guest exposes `/dev/kvm` and can run nested VMs (requires Apple Silicon M3+ and macOS 15+)
 - `ssh`/`exec`/`cp`: When the instance exists but is stopped, prompt to start it before connecting. Pass `--start` to start it without prompting (e.g. in scripts); with no TTY and no `--start`, the command errors and points at `epi start`
 
 ### Changed

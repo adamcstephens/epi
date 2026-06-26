@@ -186,6 +186,7 @@ pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
     let mut builder = vfrust::VmConfig::builder()
         .cpus(spec.cpus)
         .memory_mib(u64::from(spec.memory_mib))
+        .nested(true)
         .bootloader(vfrust::Bootloader::Linux(vfrust::LinuxBootloader {
             kernel_path: spec.kernel.clone(),
             initrd_path: spec.initrd.clone(),
@@ -427,6 +428,16 @@ pub(crate) mod tests {
             }
             other => panic!("expected linux bootloader, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn vm_config_enables_nested_virtualization() {
+        let spec = test_spec(PathBuf::from("/inst/testvm"));
+        let config = vm_config(&spec).unwrap();
+        assert!(
+            config.nested(),
+            "vz backend should enable nested virtualization"
+        );
     }
 
     #[test]

@@ -888,6 +888,26 @@ fn e2e_memory_override() {
 }
 
 #[test]
+#[ignore]
+fn e2e_nested_virtualization() {
+    let name = unique_name("nested");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+
+    // Nested virtualization is enabled unconditionally, so the guest kernel can
+    // load kvm and expose /dev/kvm for running L2 VMs.
+    let out = ssh_exec(&runtime, "test -e /dev/kvm && echo present");
+    assert!(
+        out.success(),
+        "/dev/kvm should be present in the guest (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "present");
+}
+
+#[test]
 #[ignore] // cloud-hypervisor crashes with boot>1 + vhost-user passt: https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7766
 fn e2e_cpus_override() {
     let name = unique_name("cpuover");
