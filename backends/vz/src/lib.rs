@@ -195,6 +195,10 @@ pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
         .device(vfrust::Device::VirtioBlk(vfrust::VirtioBlk {
             path: spec.instance_dir.join("disk.img"),
             read_only: false,
+            // VZ's default Automatic caching corrupts ext4 under heavy I/O
+            // (nix builds); Cached + Full is what UTM settled on.
+            caching_mode: vfrust::DiskCachingMode::Cached,
+            sync_mode: vfrust::DiskSyncMode::Full,
             ..vfrust::VirtioBlk::default()
         }))
         .device(vfrust::Device::VirtioBlk(vfrust::VirtioBlk {
@@ -468,6 +472,10 @@ pub(crate) mod tests {
             vfrust::Device::VirtioBlk(blk) => {
                 assert_eq!(blk.path, PathBuf::from("/inst/testvm/disk.img"));
                 assert!(!blk.read_only);
+                // VZ's default Automatic caching corrupts ext4 under heavy
+                // I/O; Cached + Full is the configuration UTM settled on.
+                assert!(matches!(blk.caching_mode, vfrust::DiskCachingMode::Cached));
+                assert!(matches!(blk.sync_mode, vfrust::DiskSyncMode::Full));
             }
             other => panic!("expected root virtio-blk, got {other:?}"),
         }
