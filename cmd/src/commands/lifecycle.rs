@@ -455,16 +455,15 @@ pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
         let state = instance_store::load_state(instance)?;
         if let Some(ref st) = state
             && let Some(ref rt) = st.runtime
+            && rt.ssh.port() != 0
         {
-            if rt.ssh.port() != 0 {
-                run_pre_stop_hooks(
-                    instance,
-                    &st.target,
-                    rt.ssh,
-                    &rt.ssh_key_path,
-                    st.project_dir.clone(),
-                )?;
-            }
+            run_pre_stop_hooks(
+                instance,
+                &st.target,
+                rt.ssh,
+                &rt.ssh_key_path,
+                st.project_dir.clone(),
+            )?;
         }
     }
 
