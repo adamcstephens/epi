@@ -7,9 +7,9 @@
 - tests pass
 - if user-facing then changelog updated
 - code committed with all ticket changes included
-  - Ticket ID in the body
-  - Co-Authored-By line always included
-  - Use jj commit, never git commit
+  - Prefer no or very short commit body
+  - Ticket ID in the body (when relevant)
+  - Assisted-By line always included
 - wait for user confirmation
 - ticket marked done
 
