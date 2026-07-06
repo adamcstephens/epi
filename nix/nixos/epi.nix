@@ -334,12 +334,20 @@ in
     # so the clock stays wrong for a long time after wake. chrony steps
     # any large offset immediately (makestep) and, under KVM/cloud-
     # hypervisor, syncs straight off the host clock via the ptp_kvm PHC
-    # with no network needed. The PHC does not exist under VZ and chronyd
-    # treats a missing refclock device as a fatal error, so the refclock
-    # line is generated at startup only when the device is present.
+    # with no network needed.
+    #
+    # The host clock is authoritative: when the PHC exists it is the ONLY
+    # source. Mixing it with pool servers lets the selection algorithm
+    # outvote the PHC as a falseticker whenever the host disagrees with
+    # the pool by more than the pool's error bars, and after a long host
+    # sleep the PHC's accumulated dispersion exceeds maxdistance right
+    # when it is needed — leaving no selectable source, so makestep never
+    # fires. Pool servers are only used when the PHC is absent (VZ, where
+    # chronyd would treat the missing refclock device as a fatal error).
     services.timesyncd.enable = false;
     services.chrony = {
       enable = true;
+      servers = [ ];
       # makestep.limit can't express -1 (unlimited); use extraConfig
       makestep.enable = false;
       extraConfig = ''
@@ -352,9 +360,11 @@ in
       serviceConfig.RuntimeDirectory = "chrony.d";
       preStart = ''
         if [ -e /dev/ptp_kvm ]; then
-          echo 'refclock PHC /dev/ptp_kvm poll 0 dpoll -2' > /run/chrony.d/ptp-kvm.conf
+          echo 'refclock PHC /dev/ptp_kvm poll 0 dpoll -2' > /run/chrony.d/epi.conf
         else
-          rm -f /run/chrony.d/ptp-kvm.conf
+          cat > /run/chrony.d/epi.conf <<EOF
+        ${lib.concatMapStringsSep "\n" (s: "pool ${s} iburst") config.networking.timeServers}
+        EOF
         fi
       '';
     };

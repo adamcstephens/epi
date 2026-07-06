@@ -11,7 +11,7 @@
 
 ### Changed
 - Mounts under the host home directory are now also reachable at the guest home path. On macOS (host home `/Users/<user>`, guest home `/home/<user>`) the share mounts at the real host path and is bind-mounted into the guest home, so `~/project` resolves inside the guest
-- NixOS module: Replace systemd-timesyncd with chrony for guest time sync. The guest clock now recovers immediately after host sleep/wake: chrony steps any large offset (`makestep 1.0 -1`) and, on cloud-hypervisor/KVM, syncs directly off the host clock via the `ptp_kvm` PHC refclock without needing the network
+- NixOS module: Replace systemd-timesyncd with chrony for guest time sync. The guest clock now recovers immediately after host sleep/wake: chrony steps any large offset (`makestep 1.0 -1`) and, on cloud-hypervisor/KVM, syncs directly off the host clock via the `ptp_kvm` PHC refclock without needing the network. The host clock is authoritative — when the PHC is present it is the only source; NTP pool servers are used only when it is absent (VZ), so pool voting can never reject the host clock as a falseticker
 
 ## [0.9.0] - 2026-06-07
 
