@@ -312,7 +312,7 @@ in
         }
         ''
           mkdir -p $out
-          qemu-img convert -f raw -O qcow2 \
+          qemu-img convert -f raw -O qcow2 -c -o compression_type=zstd \
             ${config.system.build.image}/${config.image.baseName}.raw \
             $out/${config.image.baseName}.qcow2
         '';
