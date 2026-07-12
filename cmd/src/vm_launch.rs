@@ -67,14 +67,14 @@ fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
         .context("canonicalizing instance dir")?;
 
     // Check disk lock
-    if let Some((owner, owner_rt)) = backend::find_running_owner_by_disk(&desc.disk)? {
+    if let Some((owner, owner_rt)) = backend::find_running_owner_by_disk(desc.root_disk())? {
         let owner_id = match &owner_rt.backend {
             crate::backend::BackendState::CloudHypervisor(ch) => format!("unit {}", ch.unit_id),
             crate::backend::BackendState::Vz(vz) => format!("pid {}", vz.pid),
         };
         bail!(
             "disk {} is locked by instance {owner} ({owner_id})",
-            desc.disk
+            desc.root_disk()
         );
     }
 
@@ -130,7 +130,7 @@ fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
         kernel: PathBuf::from(&desc.kernel),
         initrd: desc.initrd.as_ref().map(PathBuf::from),
         cmdline: desc.cmdline.clone(),
-        root_disk: PathBuf::from(&desc.disk),
+        root_disk: PathBuf::from(desc.root_disk()),
         epidata,
         shares,
         cpus: config.cpus,

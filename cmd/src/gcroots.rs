@@ -17,7 +17,7 @@ fn store_paths_to_root(desc: &Descriptor) -> Vec<(String, &str)> {
     let mut paths = Vec::new();
 
     paths.push(("kernel".to_string(), desc.kernel.as_str()));
-    paths.push(("disk".to_string(), desc.disk.as_str()));
+    paths.push(("disk".to_string(), desc.root_disk()));
 
     if let Some(ref initrd) = desc.initrd {
         paths.push(("initrd".to_string(), initrd.as_str()));
@@ -80,6 +80,7 @@ mod tests {
         let desc = Descriptor {
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
+            disk_qcow2: None,
             initrd: None,
             cmdline: String::new(),
             configured_users: vec![],
@@ -98,11 +99,32 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn store_paths_to_root_uses_qcow2_disk_on_linux() {
+        let desc = Descriptor {
+            kernel: "/nix/store/abc-kernel/bzImage".into(),
+            disk: "/nix/store/def-image/image.raw".into(),
+            disk_qcow2: Some("/nix/store/ghi-qcow2/image.qcow2".into()),
+            initrd: None,
+            cmdline: String::new(),
+            configured_users: vec![],
+            hooks: HooksDescriptor::default(),
+        };
+
+        let paths = store_paths_to_root(&desc);
+        assert_eq!(
+            paths[1],
+            ("disk".to_string(), "/nix/store/ghi-qcow2/image.qcow2")
+        );
+    }
+
     #[test]
     fn store_paths_to_root_with_initrd() {
         let desc = Descriptor {
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
+            disk_qcow2: None,
             initrd: Some("/nix/store/ghi-initrd/initrd".into()),
             cmdline: String::new(),
             configured_users: vec![],
@@ -127,6 +149,7 @@ mod tests {
         let desc = Descriptor {
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
+            disk_qcow2: None,
             initrd: None,
             cmdline: String::new(),
             configured_users: vec![],
@@ -152,6 +175,7 @@ mod tests {
         let desc = Descriptor {
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
+            disk_qcow2: None,
             initrd: None,
             cmdline: String::new(),
             configured_users: vec![],

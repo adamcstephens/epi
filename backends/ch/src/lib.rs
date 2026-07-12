@@ -259,6 +259,13 @@ fn generate_mac(instance_name: &str) -> String {
     )
 }
 
+fn backing_format(source: &Path) -> &'static str {
+    match source.extension().and_then(|e| e.to_str()) {
+        Some("qcow2") => "qcow2",
+        _ => "raw",
+    }
+}
+
 fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Result<()> {
     if dest.exists() {
         return Ok(());
@@ -278,7 +285,7 @@ fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Result<(
                 "-b",
                 &source_str,
                 "-F",
-                "raw",
+                backing_format(source),
                 &dest.to_string_lossy(),
             ],
         )?;
@@ -371,6 +378,13 @@ mod tests {
     use tempfile::TempDir;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn backing_format_detects_qcow2_extension() {
+        assert_eq!(backing_format(Path::new("/nix/store/x/img.qcow2")), "qcow2");
+        assert_eq!(backing_format(Path::new("/nix/store/x/img.raw")), "raw");
+        assert_eq!(backing_format(Path::new("/nix/store/x/img")), "raw");
+    }
 
     #[test]
     fn generate_mac_is_deterministic() {

@@ -10,6 +10,7 @@
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 
 ### Changed
+- NixOS module: Build the disk image at a fixed 20G size instead of `Minimize = "guess"`, which populated the filesystem twice to find the minimal size — image builds are roughly twice as fast. The raw image is sparse on disk; a new qcow2 conversion (`system.build.epiDiskQcow2`, descriptor field `diskQcow2`) keeps the image compact through `nix copy`/binary caches. The cloud-hypervisor backend now boots from the qcow2 (raw fallback for older descriptors); the VZ backend keeps using the raw image
 - Mounts under the host home directory are now also reachable at the guest home path. On macOS (host home `/Users/<user>`, guest home `/home/<user>`) the share mounts at the real host path and is bind-mounted into the guest home, so `~/project` resolves inside the guest
 - NixOS module: Replace systemd-timesyncd with chrony for guest time sync. The guest clock now recovers immediately after host sleep/wake: chrony steps any large offset (`makestep 1.0 -1`) and, on cloud-hypervisor/KVM, syncs directly off the host clock via the `ptp_kvm` PHC refclock without needing the network. The host clock is authoritative — when the PHC is present it is the only source; NTP pool servers are used only when it is absent (VZ), so pool voting can never reject the host clock as a falseticker
 

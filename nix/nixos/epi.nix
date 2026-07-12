@@ -239,7 +239,12 @@ in
 
     disk = lib.mkOption {
       type = lib.types.str;
-      description = "Disk image path used by epi up cloud-hypervisor launch.";
+      description = "Raw disk image path used by the epi vz backend.";
+    };
+
+    diskQcow2 = lib.mkOption {
+      type = lib.types.str;
+      description = "qcow2 disk image path used by the epi cloud-hypervisor backend.";
     };
 
     initrd = lib.mkOption {
@@ -286,6 +291,7 @@ in
       kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
       disk = "${config.system.build.image}/${config.image.baseName}.raw";
+      diskQcow2 = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
       cmdline = "console=ttyS0 console=hvc0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
       configuredUsers =
         let
@@ -296,6 +302,20 @@ in
 
     system.extraDependencies =
       (lib.attrValues cfg.hooks.post-launch) ++ (lib.attrValues cfg.hooks.pre-stop);
+
+    # qcow2 stores only allocated clusters, so unlike the fixed-size sparse
+    # raw it stays small through NAR serialization (nix copy, binary caches).
+    system.build.epiDiskQcow2 =
+      pkgs.runCommand "epi-disk-qcow2"
+        {
+          nativeBuildInputs = [ pkgs.qemu-utils ];
+        }
+        ''
+          mkdir -p $out
+          qemu-img convert -f raw -O qcow2 \
+            ${config.system.build.image}/${config.image.baseName}.raw \
+            $out/${config.image.baseName}.qcow2
+        '';
 
     environment.systemPackages = [
       pkgs.jq
@@ -476,7 +496,12 @@ in
           Type = "root";
           Format = "ext4";
           Label = "nixos";
-          Minimize = "guess";
+          # Fixed size instead of Minimize=guess: guess populates the
+          # filesystem twice to find the minimal size. The raw stays sparse
+          # on disk, and backends grow the disk to the instance size at
+          # launch, so the image itself needs no free-space headroom.
+          SizeMinBytes = "20G";
+          SizeMaxBytes = "20G";
         };
         storePaths = imageStorePaths;
         contents = {

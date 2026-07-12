@@ -813,6 +813,7 @@ mod tests {
         let desc = Descriptor {
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
+            disk_qcow2: None,
             initrd: Some("/nix/store/ghi-initrd/initrd".into()),
             cmdline: "console=ttyS0 root=/dev/vda2 ro".into(),
             configured_users: vec!["root".into()],

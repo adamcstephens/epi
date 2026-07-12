@@ -537,6 +537,7 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
     // and we don't build a new disk image during upgrade.
     if let Some(ref old_desc) = state.descriptor {
         new_desc.disk = old_desc.disk.clone();
+        new_desc.disk_qcow2 = old_desc.disk_qcow2.clone();
     }
 
     // Step 2: Build toplevel (includes kernel + initrd in its closure)
