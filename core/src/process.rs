@@ -41,7 +41,7 @@ pub fn run_with_env(prog: &str, args: &[&str], env: &[(&str, &str)]) -> Result<O
 }
 
 pub fn generate_unit_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let bytes: [u8; 4] = rng.random();
     hex_encode(&bytes)

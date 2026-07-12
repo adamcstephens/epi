@@ -20,7 +20,7 @@ thiserror.workspace = true
 epi-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
 clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
-toml = "0.8"
+toml = "1.1"
 crossterm = "0.29"
 rand = "0.10"
 indicatif = "0.18"
