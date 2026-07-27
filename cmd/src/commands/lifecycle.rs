@@ -484,7 +484,7 @@ pub fn cmd_rm(instance: &str, force: bool) -> Result<()> {
         anyhow::bail!("instance {instance} not found");
     }
 
-    let running = backend::instance_is_running(instance)?;
+    let running = backend::is_running_reaping(instance)?;
 
     if running && !force {
         anyhow::bail!("instance {instance} is running — use --force to terminate and remove");
