@@ -35,13 +35,3 @@ test-e2e *args:
 [macos]
 sign bin="target/debug/epi":
     /usr/bin/codesign --sign - --force --entitlements nix/epi.entitlements {{ bin }}
-
-# Release: just release 0.3.0
-release version:
-    sed -i 's/^version = ".*"/version = "{{ version }}"/' Cargo.toml
-    cargo generate-lockfile --offline
-    jj commit --message "release {{ version }}" Cargo.*
-    jj bookmark move main --to @-
-    git tag -a "v{{ version }}" -m "release {{ version }}"
-    git push origin "v{{ version }}"
-    jj git push

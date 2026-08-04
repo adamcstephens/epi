@@ -7,6 +7,7 @@
 - tests pass
 - if user-facing then changelog updated
 - code committed with all ticket changes included
+  - update date-based package version
   - Prefer no or very short commit body
   - Ticket ID in the body (when relevant)
   - Assisted-By line always included

@@ -285,7 +285,7 @@ checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "epi"
-version = "0.9.1"
+version = "0.20260804.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "epi-core"
-version = "0.9.1"
+version = "0.20260804.0"
 dependencies = [
  "anyhow",
  "rand",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "epi-vmm-linux"
-version = "0.9.1"
+version = "0.20260804.0"
 dependencies = [
  "anyhow",
  "epi-core",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "epi-vmm-macos"
-version = "0.9.1"
+version = "0.20260804.0"
 dependencies = [
  "anyhow",
  "epi-core",
