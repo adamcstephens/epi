@@ -1,24 +1,22 @@
 use anyhow::{Result, bail};
+use std::io::BufRead;
 use std::path::Path;
 
 use epi::{config, ui};
 
-fn prompt(label: &str, default: Option<&str>) -> Result<String> {
+fn prompt(reader: &mut impl BufRead, label: &str, default: Option<&str>) -> Result<Option<String>> {
     if let Some(def) = default {
         eprint!("{label} [{def}]: ");
     } else {
-        eprint!("{label}: ");
+        eprint!("{label} (optional): ");
     }
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input = input.trim().to_string();
+    reader.read_line(&mut input)?;
+    let input = input.trim();
     if input.is_empty() {
-        if let Some(def) = default {
-            return Ok(def.to_string());
-        }
-        bail!("{label} is required");
+        return Ok(default.map(str::to_string));
     }
-    Ok(input)
+    Ok(Some(input.to_string()))
 }
 
 pub fn cmd_init(target: Option<String>, no_confirm: bool) -> Result<()> {
@@ -33,31 +31,30 @@ pub fn cmd_init(target: Option<String>, no_confirm: bool) -> Result<()> {
         .unwrap_or_else(|| "default".to_string());
 
     let (target, default_name, cpus, memory) = if no_confirm {
-        let target = target
-            .ok_or_else(|| anyhow::anyhow!("--target is required when using --no-confirm"))?;
-        (target, dir_basename, None, None)
+        (target, Some(dir_basename), None, None)
     } else {
-        let target_default = target.as_deref();
-        let target = prompt("target", target_default)?;
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
 
-        let default_name = prompt("default_name", Some(&dir_basename))?;
+        let target = prompt(&mut reader, "target", target.as_deref())?;
+        let default_name = prompt(&mut reader, "default_name", Some(&dir_basename))?;
 
-        let cpus_str = prompt("cpus", Some("2"))?;
-        let cpus: u32 = cpus_str
-            .parse()
+        let cpus = prompt(&mut reader, "cpus", Some("2"))?
+            .map(|s| s.parse())
+            .transpose()
             .map_err(|_| anyhow::anyhow!("cpus must be a number"))?;
 
-        let memory_str = prompt("memory", Some("2048"))?;
-        let memory: u32 = memory_str
-            .parse()
+        let memory = prompt(&mut reader, "memory", Some("2048"))?
+            .map(|s| s.parse())
+            .transpose()
             .map_err(|_| anyhow::anyhow!("memory must be a number"))?;
 
-        (target, default_name, Some(cpus), Some(memory))
+        (target, default_name, cpus, memory)
     };
 
     let init_config = config::Config {
-        target: Some(target),
-        default_name: Some(default_name),
+        target,
+        default_name,
         cpus,
         memory,
         ..config::Config::default()
@@ -71,4 +68,43 @@ pub fn cmd_init(target: Option<String>, no_confirm: bool) -> Result<()> {
     ui::info("initialized epi project in .epi/config.toml");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn empty_without_default_is_none() {
+        let mut input = Cursor::new("\n");
+        assert_eq!(prompt(&mut input, "target", None).unwrap(), None);
+    }
+
+    #[test]
+    fn empty_with_default_uses_default() {
+        let mut input = Cursor::new("\n");
+        assert_eq!(
+            prompt(&mut input, "cpus", Some("2")).unwrap(),
+            Some("2".to_string())
+        );
+    }
+
+    #[test]
+    fn input_overrides_default() {
+        let mut input = Cursor::new("4\n");
+        assert_eq!(
+            prompt(&mut input, "cpus", Some("2")).unwrap(),
+            Some("4".to_string())
+        );
+    }
+
+    #[test]
+    fn input_is_trimmed() {
+        let mut input = Cursor::new("  .#dev  \n");
+        assert_eq!(
+            prompt(&mut input, "target", None).unwrap(),
+            Some(".#dev".to_string())
+        );
+    }
 }

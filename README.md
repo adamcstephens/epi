@@ -67,7 +67,7 @@ Mount paths in config are resolved relative to the config file's directory, so `
 epi init
 ```
 
-Interactively creates a `.epi/config.toml` with target selection and default settings.
+Interactively creates a `.epi/config.toml` with target selection and default settings. `target` is optional — leave it empty and the field is omitted, so the project inherits the target from your user config.
 
 ## Commands
 

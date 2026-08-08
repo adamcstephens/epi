@@ -569,6 +569,22 @@ memory = 2048
     }
 
     #[test]
+    fn generate_toml_without_target() {
+        let config = Config {
+            default_name: Some("myvm".into()),
+            cpus: Some(4),
+            memory: Some(2048),
+            ..Config::default()
+        };
+        let toml_str = generate_toml(&config);
+        assert!(!toml_str.contains("target"));
+
+        let parsed = parse(&toml_str, Path::new("/")).unwrap();
+        assert!(parsed.target.is_none());
+        assert_eq!(parsed.default_name.unwrap(), "myvm");
+    }
+
+    #[test]
     fn generate_toml_empty() {
         let config = Config::default();
         let toml_str = generate_toml(&config);
