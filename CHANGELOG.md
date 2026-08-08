@@ -11,6 +11,7 @@
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 
 ### Changed
+- `init`: `default_name` now defaults to `<directory>-dev` rather than the bare directory name, so `epi launch` in a project called `foo` creates `foo-dev`
 - `init`: `target` is now optional. Press enter at the prompt, or pass `--no-confirm` without `--target`, and the field is omitted from the generated `.epi/config.toml` — `launch` then falls back to the target in your user config
 - NixOS module: Build the disk image at a fixed 20G size instead of `Minimize = "guess"`, which populated the filesystem twice to find the minimal size — image builds are roughly twice as fast. The raw image is sparse on disk; a new zstd-compressed qcow2 conversion (`system.build.epiDiskQcow2`, descriptor field `diskQcow2`) keeps the image compact through `nix copy`/binary caches (~3x smaller than the uncompressed qcow2). The cloud-hypervisor backend now boots from the qcow2 (raw fallback for older descriptors); the VZ backend keeps using the raw image
 - Mounts under the host home directory are now also reachable at the guest home path. On macOS (host home `/Users/<user>`, guest home `/home/<user>`) the share mounts at the real host path and is bind-mounted into the guest home, so `~/project` resolves inside the guest
