@@ -67,7 +67,7 @@ Mount paths in config are resolved relative to the config file's directory, so `
 epi init
 ```
 
-Interactively creates a `.epi/config.toml` with target selection and default settings. `target` is optional — leave it empty and the field is omitted, so the project inherits the target from your user config.
+Interactively creates a `.epi/config.toml` with target selection and default settings. `target` and `ports` are optional — leave either empty and the field is omitted, so the project inherits the target from your user config. Ports are entered as a space-separated list of `HOST:GUEST` or `:GUEST` mappings, e.g. `:8080 3000:3000`.
 
 ## Commands
 

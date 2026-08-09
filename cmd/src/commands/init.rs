@@ -2,13 +2,13 @@ use anyhow::{Result, bail};
 use std::io::BufRead;
 use std::path::Path;
 
-use epi::{config, ui};
+use epi::{config, instance_store, ui};
 
 fn prompt(reader: &mut impl BufRead, label: &str, default: Option<&str>) -> Result<Option<String>> {
     if let Some(def) = default {
         eprint!("{label} [{def}]: ");
     } else {
-        eprint!("{label} (optional): ");
+        eprint!("{label}: ");
     }
     let mut input = String::new();
     reader.read_line(&mut input)?;
@@ -17,6 +17,13 @@ fn prompt(reader: &mut impl BufRead, label: &str, default: Option<&str>) -> Resu
         return Ok(default.map(str::to_string));
     }
     Ok(Some(input.to_string()))
+}
+
+fn parse_ports(input: &str) -> Result<Vec<String>> {
+    input
+        .split_whitespace()
+        .map(|spec| instance_store::parse_port_mapping(spec).map(|_| spec.to_string()))
+        .collect()
 }
 
 fn default_instance_name(dir: &Path) -> String {
@@ -35,13 +42,13 @@ pub fn cmd_init(target: Option<String>, no_confirm: bool) -> Result<()> {
 
     let name_default = default_instance_name(&std::env::current_dir()?);
 
-    let (target, default_name, cpus, memory) = if no_confirm {
-        (target, Some(name_default), None, None)
+    let (target, default_name, cpus, memory, ports) = if no_confirm {
+        (target, Some(name_default), None, None, None)
     } else {
         let stdin = std::io::stdin();
         let mut reader = stdin.lock();
 
-        let target = prompt(&mut reader, "target", target.as_deref())?;
+        let target = prompt(&mut reader, "target (optional)", target.as_deref())?;
         let default_name = prompt(&mut reader, "default_name", Some(&name_default))?;
 
         let cpus = prompt(&mut reader, "cpus", Some("2"))?
@@ -54,7 +61,11 @@ pub fn cmd_init(target: Option<String>, no_confirm: bool) -> Result<()> {
             .transpose()
             .map_err(|_| anyhow::anyhow!("memory must be a number"))?;
 
-        (target, default_name, cpus, memory)
+        let ports = prompt(&mut reader, "ports (optional, e.g. :8080 3000:3000)", None)?
+            .map(|s| parse_ports(&s))
+            .transpose()?;
+
+        (target, default_name, cpus, memory, ports)
     };
 
     let init_config = config::Config {
@@ -62,6 +73,7 @@ pub fn cmd_init(target: Option<String>, no_confirm: bool) -> Result<()> {
         default_name,
         cpus,
         memory,
+        ports,
         ..config::Config::default()
     };
 
@@ -99,6 +111,29 @@ mod tests {
     #[test]
     fn instance_name_falls_back_when_no_basename() {
         assert_eq!(default_instance_name(Path::new("/")), "default-dev");
+    }
+
+    #[test]
+    fn ports_split_on_whitespace() {
+        assert_eq!(
+            parse_ports(":8080   3000:3000").unwrap(),
+            vec![":8080", "3000:3000"]
+        );
+    }
+
+    #[test]
+    fn ports_single_mapping() {
+        assert_eq!(parse_ports(":8080").unwrap(), vec![":8080"]);
+    }
+
+    #[test]
+    fn ports_reject_mapping_without_colon() {
+        assert!(parse_ports(":8080 8080").is_err());
+    }
+
+    #[test]
+    fn ports_reject_out_of_range_port() {
+        assert!(parse_ports(":99999").is_err());
     }
 
     #[test]

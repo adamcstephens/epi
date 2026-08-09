@@ -301,6 +301,13 @@ pub fn generate_toml(config: &Config) -> String {
     if let Some(memory) = config.memory {
         lines.push(format!("memory = {memory}"));
     }
+    if let Some(ref ports) = config.ports {
+        let items: Vec<String> = ports
+            .iter()
+            .map(|p| toml::Value::String(p.clone()).to_string())
+            .collect();
+        lines.push(format!("ports = [{}]", items.join(", ")));
+    }
     if !lines.is_empty() {
         lines.push(String::new()); // trailing newline
     }
@@ -566,6 +573,20 @@ memory = 2048
         assert!(!toml_str.contains("default_name"));
         assert!(!toml_str.contains("cpus"));
         assert!(!toml_str.contains("memory"));
+    }
+
+    #[test]
+    fn generate_toml_ports() {
+        let config = Config {
+            target: Some(".#dev".into()),
+            ports: Some(vec![":8080".into(), "3000:3000".into()]),
+            ..Config::default()
+        };
+        let toml_str = generate_toml(&config);
+        assert!(toml_str.contains(r#"ports = [":8080", "3000:3000"]"#));
+
+        let parsed = parse(&toml_str, Path::new("/")).unwrap();
+        assert_eq!(parsed.ports.unwrap(), vec![":8080", "3000:3000"]);
     }
 
     #[test]
