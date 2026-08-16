@@ -445,6 +445,42 @@ fn e2e_mount() {
 
 #[test]
 #[ignore]
+fn e2e_mount_explicit_dst() {
+    let name = unique_name("mountdst");
+    let _guard = InstanceGuard::new(&name);
+
+    let mount_dir = TempDir::new().unwrap();
+    fs::write(mount_dir.path().join("marker.txt"), "explicit-dst").unwrap();
+    let mount_path = fs::canonicalize(mount_dir.path())
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    let mut resolved = default_resolved();
+    resolved.mounts = vec![format!("{mount_path}:/workspace")];
+
+    let runtime = provision_and_wait_with(&name, resolved);
+
+    let out = ssh_exec(&runtime, "cat /workspace/marker.txt");
+    assert!(
+        out.success(),
+        "cat marker at explicit dst failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "explicit-dst");
+
+    // Not also reachable at the host-derived path when dst is overridden.
+    let cat_host_path = format!("cat {mount_path}/marker.txt");
+    let out = ssh_exec(&runtime, &cat_host_path);
+    assert!(
+        !out.success(),
+        "marker should not be reachable at the host-derived path when dst is overridden"
+    );
+}
+
+#[test]
+#[ignore]
 fn e2e_hooks() {
     let name = unique_name("hooks");
     let _guard = InstanceGuard::new(&name);
@@ -1147,6 +1183,52 @@ fn e2e_mount_home_ownership() {
             out.stdout
         );
     }
+}
+
+#[test]
+#[ignore]
+fn e2e_mount_explicit_dst_skips_home_remap() {
+    let name = unique_name("mountdsthome");
+    let _guard = InstanceGuard::new(&name);
+
+    let home = std::env::var("HOME").expect("HOME not set");
+    let user = ssh_user();
+    let test_dir = format!("{home}/.epi-test-{name}");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(format!("{test_dir}/marker.txt"), "explicit-dst-home").unwrap();
+
+    struct CleanupGuard(String);
+    impl Drop for CleanupGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = CleanupGuard(test_dir.clone());
+
+    let mut resolved = default_resolved();
+    resolved.mounts = vec![format!("{test_dir}:/workspace")];
+
+    let runtime = provision_and_wait_with(&name, resolved);
+
+    let out = ssh_exec(&runtime, "cat /workspace/marker.txt");
+    assert!(
+        out.success(),
+        "cat marker at explicit dst failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "explicit-dst-home");
+
+    // The home-remap bind must not fire when dst is explicit: nothing is
+    // bind-mounted at the guest-home-equivalent path.
+    let rel = test_dir.strip_prefix(&home).expect("test_dir under home");
+    let guest_home_path = format!("/home/{user}{rel}");
+    let cat_cmd = format!("cat {guest_home_path}/marker.txt");
+    let out = ssh_exec(&runtime, &cat_cmd);
+    assert!(
+        !out.success(),
+        "marker should not be reachable at the guest-home-equivalent path when dst is explicit"
+    );
 }
 
 fn save_stopped_state(name: &str) {

@@ -43,6 +43,9 @@ pub struct PortMapping {
 pub struct SharedDir {
     pub tag: String,
     pub host_path: PathBuf,
+    /// Defaults to `host_path` when no destination was given, so
+    /// `guest_path == host_path` means "not overridden".
+    pub guest_path: PathBuf,
     pub read_only: bool,
 }
 
@@ -156,6 +159,7 @@ mod tests {
             shares: vec![SharedDir {
                 tag: "hostfs-0".into(),
                 host_path: PathBuf::from("/home/me/project"),
+                guest_path: PathBuf::from("/home/me/project"),
                 read_only: false,
             }],
             cpus: 4,
@@ -173,6 +177,20 @@ mod tests {
         let json = serde_json::to_string(&spec).unwrap();
         let parsed: LaunchSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, spec);
+    }
+
+    #[test]
+    fn shared_dir_with_overridden_guest_path_roundtrip() {
+        let share = SharedDir {
+            tag: "hostfs-0".into(),
+            host_path: PathBuf::from("/home/me/project"),
+            guest_path: PathBuf::from("/workspace"),
+            read_only: false,
+        };
+        let json = serde_json::to_string(&share).unwrap();
+        let parsed: SharedDir = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, share);
+        assert_ne!(parsed.guest_path, parsed.host_path);
     }
 
     #[test]

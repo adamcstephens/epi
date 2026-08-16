@@ -98,32 +98,19 @@ fn launch_vm(config: &LaunchConfig) -> Result<RunningInstance> {
         });
     }
 
+    // Parse mount specs into shares (host path canonicalized, guest path
+    // resolved from an explicit `:dst` or defaulted to the host path)
+    let shares = resolve_shares(config.mounts)?;
+
     // Generate seed ISO
     let epidata = inst_dir.join("epidata.iso");
     generate_seed_iso(
         instance_name,
         &ssh_key_path,
-        config.mounts,
+        &shares,
         &desc.configured_users,
         &epidata,
     )?;
-
-    // Canonicalize mount paths into shares
-    let mut shares = Vec::with_capacity(config.mounts.len());
-    for (i, mount_path) in config.mounts.iter().enumerate() {
-        let mount_dir = Path::new(mount_path);
-        if !mount_dir.is_dir() {
-            bail!("mount path is not a directory: {mount_path}");
-        }
-        let abs_mount = mount_dir
-            .canonicalize()
-            .with_context(|| format!("canonicalizing mount path: {mount_path}"))?;
-        shares.push(SharedDir {
-            tag: format!("hostfs-{i}"),
-            host_path: abs_mount,
-            read_only: false,
-        });
-    }
 
     let spec = LaunchSpec {
         id: instance_name.to_string(),
@@ -181,10 +168,32 @@ fn allocate_port() -> Result<u16> {
     Ok(port)
 }
 
+fn resolve_shares(mounts: &[String]) -> Result<Vec<SharedDir>> {
+    let mut shares = Vec::with_capacity(mounts.len());
+    for (i, spec) in mounts.iter().enumerate() {
+        let (src, dst) = instance_store::parse_mount_spec(spec)?;
+        let mount_dir = Path::new(&src);
+        if !mount_dir.is_dir() {
+            bail!("mount path is not a directory: {src}");
+        }
+        let host_path = mount_dir
+            .canonicalize()
+            .with_context(|| format!("canonicalizing mount path: {src}"))?;
+        let guest_path = dst.map(PathBuf::from).unwrap_or_else(|| host_path.clone());
+        shares.push(SharedDir {
+            tag: format!("hostfs-{i}"),
+            host_path,
+            guest_path,
+            read_only: false,
+        });
+    }
+    Ok(shares)
+}
+
 fn generate_seed_iso(
     instance_name: &str,
     ssh_key_path: &std::path::Path,
-    mounts: &[String],
+    shares: &[SharedDir],
     configured_users: &[String],
     iso_path: &std::path::Path,
 ) -> Result<()> {
@@ -211,13 +220,13 @@ fn generate_seed_iso(
         let uid = nix::unistd::getuid().as_raw();
         user_obj["uid"] = serde_json::json!(uid);
     }
-    let canonical_mounts: Vec<String> = mounts
+    let mount_entries: Vec<serde_json::Value> = shares
         .iter()
-        .map(|m| {
-            Path::new(m)
-                .canonicalize()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| m.clone())
+        .map(|s| {
+            serde_json::json!({
+                "host": s.host_path.to_string_lossy(),
+                "guest": s.guest_path.to_string_lossy(),
+            })
         })
         .collect();
 
@@ -232,7 +241,7 @@ fn generate_seed_iso(
         "hostname": instance_name,
         "user": user_obj,
         "host_home": host_home,
-        "mounts": canonical_mounts
+        "mounts": mount_entries
     });
 
     fs::write(
@@ -277,4 +286,58 @@ fn generate_seed_iso(
     fs::remove_dir_all(&staging)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn resolve_shares_without_dst_defaults_guest_to_host() {
+        let dir = TempDir::new().unwrap();
+        let mounts = vec![dir.path().to_string_lossy().to_string()];
+        let shares = resolve_shares(&mounts).unwrap();
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].tag, "hostfs-0");
+        assert_eq!(shares[0].guest_path, shares[0].host_path);
+    }
+
+    #[test]
+    fn resolve_shares_with_dst_sets_guest_path() {
+        let dir = TempDir::new().unwrap();
+        let mounts = vec![format!("{}:/workspace", dir.path().display())];
+        let shares = resolve_shares(&mounts).unwrap();
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].guest_path, PathBuf::from("/workspace"));
+        assert_eq!(shares[0].host_path, dir.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_shares_tags_by_index() {
+        let dir_a = TempDir::new().unwrap();
+        let dir_b = TempDir::new().unwrap();
+        let mounts = vec![
+            dir_a.path().to_string_lossy().to_string(),
+            dir_b.path().to_string_lossy().to_string(),
+        ];
+        let shares = resolve_shares(&mounts).unwrap();
+        assert_eq!(shares[0].tag, "hostfs-0");
+        assert_eq!(shares[1].tag, "hostfs-1");
+    }
+
+    #[test]
+    fn resolve_shares_not_a_directory_errors() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("not-a-dir");
+        fs::write(&file_path, "x").unwrap();
+        let mounts = vec![file_path.to_string_lossy().to_string()];
+        assert!(resolve_shares(&mounts).is_err());
+    }
+
+    #[test]
+    fn resolve_shares_invalid_spec_errors() {
+        let mounts = vec!["src:relative".to_string()];
+        assert!(resolve_shares(&mounts).is_err());
+    }
 }

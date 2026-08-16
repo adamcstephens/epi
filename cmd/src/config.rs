@@ -3,6 +3,8 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::instance_store;
+
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     pub target: Option<String>,
@@ -49,6 +51,15 @@ fn resolve_path(path: &str, base: &Path) -> PathBuf {
     }
 }
 
+fn resolve_mount_spec(spec: &str, base: &Path) -> Result<String> {
+    let (src, dst) = instance_store::parse_mount_spec(spec)?;
+    let resolved_src = resolve_path(&src, base).to_string_lossy().to_string();
+    Ok(match dst {
+        Some(dst) => format!("{resolved_src}:{dst}"),
+        None => resolved_src,
+    })
+}
+
 fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<Config>> {
     if !path.exists() {
         return Ok(None);
@@ -62,8 +73,8 @@ fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<Config>
     if let Some(ref mut mounts) = config.mounts {
         *mounts = mounts
             .iter()
-            .map(|m| resolve_path(m, base).to_string_lossy().to_string())
-            .collect();
+            .map(|m| resolve_mount_spec(m, base))
+            .collect::<Result<Vec<_>>>()?;
     }
 
     Ok(Some(config))
@@ -230,10 +241,13 @@ pub fn resolve(
     };
     if auto_mount && let Some(ref dir) = project_dir()? {
         let already_mounted = mounts.iter().any(|m| {
-            Path::new(m)
+            let src = instance_store::parse_mount_spec(m)
+                .map(|(src, _)| src)
+                .unwrap_or_else(|_| m.clone());
+            Path::new(&src)
                 .canonicalize()
                 .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| m.clone())
+                .unwrap_or(src)
                 == *dir
         });
         if !already_mounted {
@@ -321,8 +335,8 @@ pub fn parse(content: &str, base: &Path) -> Result<Config> {
     if let Some(ref mut mounts) = config.mounts {
         *mounts = mounts
             .iter()
-            .map(|m| resolve_path(m, base).to_string_lossy().to_string())
-            .collect();
+            .map(|m| resolve_mount_spec(m, base))
+            .collect::<Result<Vec<_>>>()?;
     }
     Ok(config)
 }
@@ -403,6 +417,44 @@ memory = 2048
         let home = std::env::var("HOME").unwrap();
         let result = resolve_path("~/docs", Path::new("/base"));
         assert_eq!(result, PathBuf::from(format!("{home}/docs")));
+    }
+
+    #[test]
+    fn parse_mount_with_dst_relative_src() {
+        let toml = r#"mounts = ["data:/workspace"]"#;
+        let config = parse(toml, Path::new("/base")).unwrap();
+        assert_eq!(config.mounts.unwrap(), vec!["/base/data:/workspace"]);
+    }
+
+    #[test]
+    fn parse_mount_with_dst_absolute_src() {
+        let toml = r#"mounts = ["/abs/path:/workspace"]"#;
+        let config = parse(toml, Path::new("/base")).unwrap();
+        assert_eq!(config.mounts.unwrap(), vec!["/abs/path:/workspace"]);
+    }
+
+    #[test]
+    fn parse_mount_with_dst_tilde_src() {
+        let home = std::env::var("HOME").unwrap();
+        let toml = r#"mounts = ["~/docs:/workspace"]"#;
+        let config = parse(toml, Path::new("/base")).unwrap();
+        assert_eq!(
+            config.mounts.unwrap(),
+            vec![format!("{home}/docs:/workspace")]
+        );
+    }
+
+    #[test]
+    fn parse_mount_without_dst_still_resolves() {
+        let toml = r#"mounts = ["data"]"#;
+        let config = parse(toml, Path::new("/base")).unwrap();
+        assert_eq!(config.mounts.unwrap(), vec!["/base/data"]);
+    }
+
+    #[test]
+    fn parse_mount_invalid_dst_errors() {
+        let toml = r#"mounts = ["src:relative"]"#;
+        assert!(parse(toml, Path::new("/base")).is_err());
     }
 
     #[test]
@@ -860,6 +912,32 @@ mounts = ["/shared/mount", "/project/only"]
         assert!(resolved.mounts.contains(&"/shared/mount".to_string()));
         assert!(resolved.mounts.contains(&"/user/only".to_string()));
         assert!(resolved.mounts.contains(&"/project/only".to_string()));
+    }
+
+    #[test]
+    fn resolve_auto_mount_dedup_with_explicit_dst() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config("");
+        let (_proj_dir, proj_path) = write_temp_config(r#"target = ".#dev""#);
+        let project_root = proj_path
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
+
+        let cli_mount = format!("{project_root}:/workspace");
+        let resolved = resolve(None, &[cli_mount.clone()], None, None, None, &[], false).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(resolved.mounts, vec![cli_mount]);
     }
 
     #[test]

@@ -71,22 +71,24 @@ let
       HOST_HOME=$(jq -r '.host_home // empty' "$EPI_JSON")
       MOUNT_COUNT=$(jq -r '.mounts // [] | length' "$EPI_JSON")
       for i in $(seq 0 $((MOUNT_COUNT - 1))); do
-        MOUNT_PATH=$(jq -r ".mounts[$i]" "$EPI_JSON")
-        if [ -n "$USER_HOME" ] && [[ "$MOUNT_PATH" == "$USER_HOME"/* ]]; then
-          su - "$USERNAME" -c "mkdir -p '$MOUNT_PATH'"
+        HOST_PATH=$(jq -r ".mounts[$i].host" "$EPI_JSON")
+        GUEST_PATH=$(jq -r ".mounts[$i].guest" "$EPI_JSON")
+        if [ -n "$USER_HOME" ] && [[ "$GUEST_PATH" == "$USER_HOME"/* ]]; then
+          su - "$USERNAME" -c "mkdir -p '$GUEST_PATH'"
         else
-          mkdir -p "$MOUNT_PATH"
+          mkdir -p "$GUEST_PATH"
         fi
-        mount -t virtiofs "hostfs-$i" "$MOUNT_PATH"
+        mount -t virtiofs "hostfs-$i" "$GUEST_PATH"
 
-        # When the host home differs from the guest home (e.g. macOS
-        # /Users/<user> vs /home/<user>), bind the mount into the guest home so
-        # it is reachable at the natural path too.
-        if [ -n "$HOST_HOME" ] && [ -n "$USER_HOME" ] && [[ "$MOUNT_PATH" == "$HOST_HOME"/* ]]; then
-          BIND_TARGET="$USER_HOME''${MOUNT_PATH#"$HOST_HOME"}"
-          if [ "$BIND_TARGET" != "$MOUNT_PATH" ]; then
+        # When the destination wasn't explicitly overridden (guest == host)
+        # and the host home differs from the guest home (e.g. macOS
+        # /Users/<user> vs /home/<user>), bind the mount into the guest home
+        # so it is reachable at the natural path too.
+        if [ "$GUEST_PATH" = "$HOST_PATH" ] && [ -n "$HOST_HOME" ] && [ -n "$USER_HOME" ] && [[ "$HOST_PATH" == "$HOST_HOME"/* ]]; then
+          BIND_TARGET="$USER_HOME''${HOST_PATH#"$HOST_HOME"}"
+          if [ "$BIND_TARGET" != "$HOST_PATH" ]; then
             su - "$USERNAME" -c "mkdir -p '$BIND_TARGET'"
-            mount --bind "$MOUNT_PATH" "$BIND_TARGET"
+            mount --bind "$HOST_PATH" "$BIND_TARGET"
           fi
         fi
       done

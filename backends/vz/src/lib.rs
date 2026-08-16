@@ -523,11 +523,13 @@ pub(crate) mod tests {
             epi_core::backend::SharedDir {
                 tag: "hostfs-0".into(),
                 host_path: PathBuf::from("/Users/me/project"),
+                guest_path: PathBuf::from("/Users/me/project"),
                 read_only: false,
             },
             epi_core::backend::SharedDir {
                 tag: "hostfs-1".into(),
                 host_path: PathBuf::from("/Users/me/data"),
+                guest_path: PathBuf::from("/Users/me/data"),
                 read_only: false,
             },
         ];

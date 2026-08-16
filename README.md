@@ -31,7 +31,7 @@ epi rm myvm
 
 epi merges configuration from three layers (highest priority first):
 
-1. **CLI flags** — `--cpus`, `--memory`, `--mount`, `--port`, `--disk-size`
+1. **CLI flags** — `--cpus`, `--memory`, `--mount <src>[:<dst>]`, `--port`, `--disk-size`
 2. **Project config** — `.epi/config.toml` in the current directory
 3. **User config** — `~/.config/epi/config.toml`
 
@@ -60,6 +60,8 @@ epi detects a project when `.epi/config.toml` exists in the current directory. W
 - `default_name` from the project config becomes the default instance name, so you can run `epi launch` without specifying one
 
 Mount paths in config are resolved relative to the config file's directory, so `mounts = ["data"]` in `.epi/config.toml` mounts `<project>/data`. Tilde (`~/`) paths are expanded.
+
+By default a mount is placed in the guest at the same path as the host source. Append `:<dst>` (an absolute guest path) to mount somewhere else, e.g. `--mount ./data:/workspace` or `mounts = ["data:/workspace"]`. Overriding the destination also disables the automatic bind into the guest home for mounts under the host home directory (see the Changelog for that default behavior).
 
 ### Project initialization
 

@@ -53,7 +53,7 @@ enum Command {
         #[arg(long)]
         rebuild: bool,
 
-        /// Mount a host directory into the guest (repeatable)
+        /// Mount a host directory into the guest (repeatable, e.g. <src> or <src>:<dst>)
         #[arg(long)]
         mount: Vec<String>,
 
