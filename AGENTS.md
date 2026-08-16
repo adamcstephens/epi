@@ -1,5 +1,5 @@
 ## Agent workflow
-- **IMPORTANT**: before you do anything else, invoke the CLI `vein prompt orient` command and heed its output.
+- **IMPORTANT**: before you do anything else, invoke the CLI `veans prime` command and heed its output.
 - Always use red/green TDD when implementing
 
 ## Definition of done steps

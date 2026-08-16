@@ -1,0 +1,13 @@
+server: https://project.junco.dev
+project_id: 9
+project_identifier: EPI
+view_id: 36
+buckets:
+    todo: 27
+    in_progress: 28
+    in_review: 32
+    done: 29
+    scrapped: 33
+bot:
+    username: bot-stop
+    user_id: 5

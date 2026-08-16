@@ -1,19 +1,42 @@
 {
   "enabledPlugins": {},
-  "plansDirectory": "./.claude/plans",
-  "permissions": {
-    "allow": ["Bash(openspec:*)", "Bash(dune:*)"]
-  },
   "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "veans prime",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "veans prime",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "WorktreeCreate": [
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "bash .claude/hooks/worktree-create.sh"
+            "command": "bash .claude/hooks/worktree-create.sh",
+            "type": "command"
           }
         ]
       }
     ]
-  }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(openspec:*)",
+      "Bash(dune:*)"
+    ]
+  },
+  "plansDirectory": "./.claude/plans"
 }
