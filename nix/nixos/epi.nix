@@ -294,7 +294,11 @@ in
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
       disk = "${config.system.build.image}/${config.image.baseName}.raw";
       diskQcow2 = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
-      cmdline = "console=ttyS0 console=hvc0 root=LABEL=nixos rw init=${config.system.build.toplevel}/init";
+      # Derived from boot.kernelParams rather than hardcoded: the systemd
+      # initrd needs NixOS' own `root=fstab` sentinel, which tells
+      # systemd-fstab-generator to take the root mount from the initrd fstab
+      # instead of synthesizing a second, conflicting sysroot.mount.
+      cmdline = "console=hvc0 ${toString config.boot.kernelParams} init=${config.system.build.toplevel}/init";
       configuredUsers =
         let
           normalUsers = lib.filterAttrs (_: user: user.isNormalUser) config.users.users;
@@ -302,8 +306,13 @@ in
         builtins.attrNames normalUsers;
     };
 
-    system.extraDependencies =
-      (lib.attrValues cfg.hooks.post-launch) ++ (lib.attrValues cfg.hooks.pre-stop);
+    system.extraDependencies = [
+      # Fails the build if a kernel symbol the guest depends on did not
+      # survive Kconfig dependency resolution.
+      config.boot.kernelPackages.epiConfigCheck
+    ]
+    ++ (lib.attrValues cfg.hooks.post-launch)
+    ++ (lib.attrValues cfg.hooks.pre-stop);
 
     # qcow2 stores only allocated clusters, so unlike the fixed-size sparse
     # raw it stays small through NAR serialization (nix copy, binary caches).
@@ -331,18 +340,27 @@ in
       autoResize = true;
     };
 
+    boot.kernelPackages = import ./kernel.nix { inherit lib pkgs; };
+
     boot.loader.grub.enable = false;
     boot.growPartition = true;
 
-    boot.initrd.availableKernelModules = [
-      "virtio_pci"
-      "virtio_blk"
-      "virtio_net"
-      "virtio_console"
-      "virtio_balloon"
-      "virtiofs"
-      "ext4"
-    ];
+    # Every driver the guest needs is built into the kernel, so the initrd
+    # carries no modules and stage-1 has nothing to probe.
+    boot.initrd.includeDefaultModules = false;
+    boot.initrd.kernelModules = [ ];
+    boot.initrd.availableKernelModules = lib.mkForce [ ];
+    boot.initrd.systemd.enable = true;
+
+    # console=ttyS0 is deliberately absent: printk on a synchronous
+    # 115200-baud serial port blocks on every message. hvc0 carries the
+    # console, and cloud-hypervisor captures it to console.log.
+    boot.kernelParams = [ "quiet" ];
+
+    # NixOS loads "loop" and "atkbd" by default; neither exists in this
+    # kernel, and systemd-modules-load logs an error for each one.
+    boot.kernelModules = lib.mkForce [ ];
+    boot.consoleLogLevel = 3;
 
     # Use systemd-networkd instead of dhcpcd — faster DHCP
     networking.useDHCP = true;
@@ -377,7 +395,6 @@ in
         confdir /run/chrony.d
       '';
     };
-    boot.kernelModules = [ "ptp_kvm" ];
     systemd.services.chronyd = {
       serviceConfig.RuntimeDirectory = "chrony.d";
       preStart = ''
@@ -407,33 +424,6 @@ in
     # ignores SIGTERM blocks `multi-user.target` shutdown for the full
     # DefaultTimeoutStopSec (90s), which makes `epi stop` painfully slow.
     systemd.user.settings.Manager.DefaultTimeoutStopSec = "5s";
-
-    # Blacklist kernel modules not needed in a cloud-hypervisor VM
-    boot.blacklistedKernelModules = [
-      "cfg80211" # wireless
-      "rfkill" # wireless killswitch
-      "8021q" # VLANs
-      "edac_core" # ECC memory error detection
-      "intel_rapl_msr" # power management
-      "intel_rapl_common"
-      "ccp" # AMD crypto coprocessor
-      "mac_hid" # macOS HID emulation
-      "atkbd" # AT keyboard
-      "libps2" # PS/2
-      "serio" # serial I/O
-      "vivaldi_fmap" # chromebook keyboard
-      "efi_pstore" # EFI pstore
-      "vmw_vsock_vmci_transport" # VMware vsock
-      "vmw_vsock_virtio_transport_common"
-      "vsock_loopback"
-      "vsock"
-      "vmw_vmci" # VMware VMCI
-      "dmi_sysfs" # DMI/SMBIOS sysfs
-      "qemu_fw_cfg" # QEMU firmware config
-      "autofs4" # automounting
-      "dm_mod" # device mapper
-      "loop" # loop devices
-    ];
 
     systemd.services.epi-init = {
       description = "epi guest initialization";
