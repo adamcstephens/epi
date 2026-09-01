@@ -59,9 +59,11 @@
           };
 
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
+        flake.hjemModules.epi = ./nix/hjem/epi.nix;
+        flake.hjemModules.default = ./nix/hjem/epi.nix;
 
         perSystem =
-          { pkgs, self', ... }:
+          { pkgs, ... }:
           {
             devShells.default = pkgs.mkShell {
               packages = [
@@ -69,7 +71,7 @@
                 pkgs.just
 
                 pkgs.jq
-                pkgs.nixfmt
+                pkgs.nixfmt-rs
                 pkgs.openssh
                 pkgs.rsync
                 pkgs.xorriso
@@ -96,6 +98,10 @@
               };
 
               epi-unwrapped = pkgs.callPackage ./nix/package.nix { };
+            };
+
+            checks = lib.optionalAttrs pkgs.stdenv.isLinux {
+              hjem-module = pkgs.callPackage ./nix/hjem/test.nix { };
             };
           };
       }

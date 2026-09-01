@@ -51,6 +51,31 @@ project_mount = true
 
 All resolved values (cpus, memory, disk size, ports) are persisted in instance state at launch time. Subsequent `start` and `rebuild` commands use the stored values — they do not re-read config.
 
+### Hjem
+
+EPI provides a Hjem module for declaring user-systemd services. Import it through Hjem's `extraModules`, then configure instances for the matching Hjem user:
+
+```nix
+{
+  hjem.extraModules = [ inputs.epi.hjemModules.default ];
+
+  hjem.users.alice.services.epi = {
+    package = inputs.epi.packages.${pkgs.system}.default;
+    instances.dev = {
+      enable = true;
+      target = ".#dev";
+      settings = {
+        cpus = 4;
+        memory = 4096;
+        ports = [ ":8080" ];
+      };
+    };
+  };
+}
+```
+
+This creates `epi-dev.service` in Alice's user systemd configuration. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. The generated config disables automatic project mounting because it is not a project directory.
+
 ### Projects
 
 epi detects a project when `.epi/config.toml` exists in the current directory. When inside a project:

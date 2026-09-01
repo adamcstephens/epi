@@ -1,5 +1,7 @@
 # Changelog
 
+- Hjem module: Add `hjemModules.epi` for declaratively managing EPI instances as systemd user services. Each instance renders an EPI TOML configuration and launches from it, keeping VM configuration out of service command-line flags.
+
 ## [Unreleased]
 
 ### Added

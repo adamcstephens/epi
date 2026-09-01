@@ -3,7 +3,7 @@ default:
 
 format:
     cargo fmt
-    nixfmt **/*.nix
+    find ./ -name '*.nix' | xargs nixfmt
 
 lint:
     cargo clippy
