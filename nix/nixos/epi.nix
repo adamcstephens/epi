@@ -355,7 +355,26 @@ in
     # console=ttyS0 is deliberately absent: printk on a synchronous
     # 115200-baud serial port blocks on every message. hvc0 carries the
     # console, and cloud-hypervisor captures it to console.log.
-    boot.kernelParams = [ "quiet" ];
+    #
+    # SYSTEMD_DEFAULT_MOUNT_RATE_LIMIT_BURST reaches initrd PID 1 as an
+    # environment variable: the kernel hands init any NAME=VALUE argument it
+    # does not recognise. systemd rate-limits its /proc/self/mountinfo watch
+    # to 5 events per second, and the initrd's own API mounts exhaust that
+    # budget before sysroot.mount is queued. Every mount job is then held
+    # unrunnable until the window expires, stalling the initrd ~840ms with
+    # PID 1 completely idle.
+    boot.kernelParams = [
+      "quiet"
+      "SYSTEMD_DEFAULT_MOUNT_RATE_LIMIT_BURST=1000"
+    ];
+
+    # network-online.target gates epi-init-hooks, and systemd-networkd-wait-online
+    # does not consider a link configured until IPv6 link-local finishes duplicate
+    # address detection — ~2s after DHCPv4 has already returned a usable address.
+    # The guest has one virtio NIC on a point-to-point link, so no address it
+    # assigns can be a duplicate.
+    boot.kernel.sysctl."net.ipv6.conf.all.accept_dad" = 0;
+    boot.kernel.sysctl."net.ipv6.conf.default.accept_dad" = 0;
 
     # NixOS loads "loop" and "atkbd" by default; neither exists in this
     # kernel, and systemd-modules-load logs an error for each one.

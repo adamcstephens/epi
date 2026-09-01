@@ -22,6 +22,11 @@ pub const SSH_KEYSCAN_PROGRAM: &str = "/usr/bin/ssh-keyscan";
 #[cfg(not(target_os = "macos"))]
 pub const SSH_KEYSCAN_PROGRAM: &str = "ssh-keyscan";
 
+/// How often `wait_for_ssh` retries. Kept well under a second so the ready
+/// time epi reports tracks the guest's actual boot rather than rounding up to
+/// the next poll.
+const SSH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 pub fn user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
 }
@@ -187,13 +192,20 @@ pub fn wait_for_ssh(config: &Path, instance: &str, timeout_seconds: u64) -> Resu
             return Ok(());
         }
 
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(SSH_POLL_INTERVAL);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_poll_interval_is_finer_than_boot_time_differences() {
+        // A coarse interval quantises the ready time epi reports, hiding
+        // guest boot improvements smaller than one poll.
+        assert!(SSH_POLL_INTERVAL <= Duration::from_millis(250));
+    }
 
     #[test]
     fn ssh_programs_are_system_tools_on_macos() {
