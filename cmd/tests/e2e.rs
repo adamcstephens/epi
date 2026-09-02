@@ -85,6 +85,7 @@ fn default_resolved() -> config::Resolved {
         default_name: "default".to_string(),
         ports: vec![],
         ssh_extra_config: vec![],
+        project_dir: None,
         project_config: None,
     }
 }
@@ -477,6 +478,66 @@ fn e2e_mount_explicit_dst() {
         !out.success(),
         "marker should not be reachable at the host-derived path when dst is overridden"
     );
+}
+
+#[test]
+#[ignore]
+fn e2e_configured_project_dir_is_mounted() {
+    let name = unique_name("configured-project");
+    let _guard = InstanceGuard::new(&name);
+    let project_dir = TempDir::new().unwrap();
+    fs::write(project_dir.path().join("marker.txt"), "configured-project").unwrap();
+    let project_path = project_dir.path().canonicalize().unwrap();
+    let config_dir = TempDir::new().unwrap();
+    let config_path = config_dir.path().join("config.toml");
+    fs::write(
+        &config_path,
+        format!(
+            "target = {:?}\nproject_dir = {:?}\n",
+            e2e_target(),
+            project_path
+        ),
+    )
+    .unwrap();
+    let xdg_dir = TempDir::new().unwrap();
+    let xdg_path = xdg_dir.path().to_str().unwrap();
+    let config_path = config_path.to_str().unwrap();
+
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["launch", &name],
+        &[
+            ("XDG_CONFIG_HOME", xdg_path),
+            ("EPI_PROJECT_CONFIG_FILE", config_path),
+        ],
+    )
+    .expect("epi launch failed to spawn");
+    assert!(
+        out.success(),
+        "epi launch failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+
+    let project_path = project_path.to_str().unwrap();
+    let state = instance_store::load_state(&name).unwrap().unwrap();
+    assert_eq!(state.project_dir.as_deref(), Some(project_path));
+    let marker_path = format!("{project_path}/marker.txt");
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["exec", &name, "--", "cat", &marker_path],
+        &[("XDG_CONFIG_HOME", xdg_path)],
+    )
+    .expect("epi exec failed to spawn");
+    assert!(
+        out.success(),
+        "epi exec failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+    assert_eq!(out.stdout, "configured-project");
 }
 
 #[test]

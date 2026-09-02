@@ -32,7 +32,7 @@ pub fn cmd_launch(
     }
 
     let pre_existing = instance_store::find(instance)?.is_some();
-    let project_dir = config::project_dir()?;
+    let project_dir = resolved.project_dir.clone();
     let project_dir_ref = project_dir.clone();
     instance_store::save_state(
         instance,

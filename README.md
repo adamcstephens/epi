@@ -35,12 +35,13 @@ epi merges configuration from three layers (highest priority first):
 2. **Project config** — `.epi/config.toml` in the current directory
 3. **User config** — `~/.config/epi/config.toml`
 
-For scalar values (target, cpus, memory, disk_size, default_name), the highest-priority layer wins. For list values (mounts, ports), all layers are merged (union, deduplicated).
+For scalar values (target, cpus, memory, disk_size, default_name, project_dir), the highest-priority layer wins. For list values (mounts, ports), all layers are merged (union, deduplicated).
 
 ```toml
 # .epi/config.toml
 target = ".#myConfig"
 default_name = "dev"
+project_dir = "/home/user/src/my-project"
 cpus = 4
 memory = 2048
 disk_size = "80G"
@@ -49,7 +50,7 @@ ports = [":8080", "3000:3000"]
 project_mount = true
 ```
 
-All resolved values (cpus, memory, disk size, ports) are persisted in instance state at launch time. Subsequent `start` and `rebuild` commands use the stored values — they do not re-read config.
+`project_dir` identifies the host project independently of the configuration file. The project value overrides the user value. Relative values are resolved against the directory containing the file that declares them, `~` expands from `HOME`, and the resulting path must exist and be a directory. EPI persists the canonical resolved directory in instance state; subsequent `start` and `rebuild` commands use that state rather than re-reading configuration.
 
 ### Hjem
 
@@ -63,28 +64,29 @@ EPI provides a Hjem module for declaring user-systemd services. Import it throug
     package = inputs.epi.packages.${pkgs.system}.default;
     instances.dev = {
       enable = true;
-      target = ".#dev";
       settings = {
+        target = ".#dev";
         cpus = 4;
         memory = 4096;
         ports = [ ":8080" ];
+        project_dir = "/home/alice/src/my-project";
       };
     };
   };
 }
 ```
 
-This creates `epi-dev.service` in Alice's user systemd configuration. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. The generated config disables automatic project mounting because it is not a project directory.
+This creates `epi-dev.service` in Alice's user systemd configuration. `settings` is the complete EPI TOML configuration, including `target`. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. Hjem passes `settings.project_dir` directly to EPI; use an absolute path when the project is not relative to the generated configuration directory. The generated config defaults `default_name` to the instance name and disables automatic project mounting; override either through `settings`.
 
 ### Projects
 
-epi detects a project when `.epi/config.toml` exists in the current directory. When inside a project:
+epi detects a project when `.epi/config.toml` exists in the current directory. A configured `project_dir` takes precedence over that detected directory; when it is absent, a detected project configuration keeps its existing directory fallback. Without either configuration source, EPI has no project identity. When a project directory is resolved:
 
-- The project directory is automatically mounted into the guest (disable with `project_mount = false` or `--no-project-mount`)
+- The project directory is automatically mounted into the guest (disable with `project_mount = false` or `--no-project-mount`); an explicit mount of the same canonical host source, including one with a guest destination, prevents a duplicate mount
 - The project directory path is recorded in instance state and shown in `info` and `list` output
 - `default_name` from the project config becomes the default instance name, so you can run `epi launch` without specifying one
 
-Mount paths in config are resolved relative to the config file's directory, so `mounts = ["data"]` in `.epi/config.toml` mounts `<project>/data`. Tilde (`~/`) paths are expanded.
+Mount paths in config are resolved relative to the project root for `.epi/config.toml` and relative to the file directory for an `EPI_PROJECT_CONFIG_FILE` override, so `mounts = ["data"]` in `.epi/config.toml` mounts `<project>/data`. Tilde (`~/`) paths are expanded.
 
 By default a mount is placed in the guest at the same path as the host source. Append `:<dst>` (an absolute guest path) to mount somewhere else, e.g. `--mount ./data:/workspace` or `mounts = ["data:/workspace"]`. Overriding the destination also disables the automatic bind into the guest home for mounts under the host home directory (see the Changelog for that default behavior).
 

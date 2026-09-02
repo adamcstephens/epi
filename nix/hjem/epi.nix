@@ -16,7 +16,6 @@ let
   inherit (lib.types)
     attrsOf
     package
-    str
     submodule
     ;
 
@@ -26,12 +25,13 @@ let
 
   instanceConfig =
     name: instance:
-    instance.settings
-    // {
-      target = instance.target;
+    {
       default_name = name;
+    }
+    // lib.optionalAttrs (!(instance.settings ? project_dir)) {
       project_mount = false;
-    };
+    }
+    // instance.settings;
 
   configFile = name: "epi/instances/${name}.toml";
   configPath = name: "${config.xdg.config.directory}/${configFile name}";
@@ -83,18 +83,13 @@ in
                 default = true;
               };
 
-              target = mkOption {
-                type = str;
-                description = "Flake target for this instance.";
-              };
-
               settings = mkOption {
                 type = lib.types.submodule {
                   freeformType = toml.type;
                 };
 
                 default = { };
-                description = "Additional EPI project configuration written as TOML.";
+                description = "EPI project configuration written as TOML.";
               };
             };
           }

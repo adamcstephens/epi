@@ -42,11 +42,12 @@ let
       {
         services.epi.instances.dev = {
           enable = true;
-          target = ".#dev";
           settings = {
+            target = ".#dev";
             cpus = 4;
             memory = 4096;
             ports = [ ":8080" ];
+            project_dir = "/home/test/projects/dev";
           };
         };
         services.epi.package = fakeEpi;
@@ -72,6 +73,9 @@ pkgs.runCommand "epi-hjem-module-test" { } ''
   grep -qx 'target = ".#dev"' ${evaluated.config.xdg.config.files."epi/instances/dev.toml".source}
   grep -qx 'default_name = "dev"' ${evaluated.config.xdg.config.files."epi/instances/dev.toml".source}
   grep -qx 'project_mount = false' ${
+    evaluated.config.xdg.config.files."epi/instances/dev.toml".source
+  }
+  grep -qx 'project_dir = "/home/test/projects/dev"' ${
     evaluated.config.xdg.config.files."epi/instances/dev.toml".source
   }
 

@@ -14,6 +14,7 @@ pub struct Config {
     pub memory: Option<u32>,
     pub default_name: Option<String>,
     pub ports: Option<Vec<String>>,
+    pub project_dir: Option<String>,
     pub project_mount: Option<bool>,
     pub ssh_extra_config: Option<Vec<String>>,
 }
@@ -28,8 +29,15 @@ pub struct Resolved {
     pub default_name: String,
     pub ports: Vec<String>,
     pub ssh_extra_config: Vec<String>,
+    pub project_dir: Option<String>,
     /// Path to the project config file, if one was detected and used.
     pub project_config: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+struct LoadedConfig {
+    config: Config,
+    path: PathBuf,
 }
 
 fn resolve_path(path: &str, base: &Path) -> PathBuf {
@@ -60,7 +68,7 @@ fn resolve_mount_spec(spec: &str, base: &Path) -> Result<String> {
     })
 }
 
-fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<Config>> {
+fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<LoadedConfig>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -69,21 +77,23 @@ fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<Config>
 
     let base = base_override.unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")));
 
-    // Resolve mount paths relative to base directory
-    if let Some(ref mut mounts) = config.mounts {
+    if let Some(mounts) = &mut config.mounts {
         *mounts = mounts
             .iter()
-            .map(|m| resolve_mount_spec(m, base))
+            .map(|mount| resolve_mount_spec(mount, base))
             .collect::<Result<Vec<_>>>()?;
     }
 
-    Ok(Some(config))
+    Ok(Some(LoadedConfig {
+        config,
+        path: path.to_path_buf(),
+    }))
 }
 
 fn project_config_path() -> (PathBuf, Option<PathBuf>) {
-    if let Ok(p) = std::env::var("EPI_PROJECT_CONFIG_FILE") {
-        let path = PathBuf::from(&p);
-        let base = path.parent().map(|d| d.to_path_buf());
+    if let Ok(path) = std::env::var("EPI_PROJECT_CONFIG_FILE") {
+        let path = PathBuf::from(path);
+        let base = path.parent().map(Path::to_path_buf);
         (path, base)
     } else {
         (PathBuf::from(".epi/config.toml"), Some(PathBuf::from(".")))
@@ -92,34 +102,67 @@ fn project_config_path() -> (PathBuf, Option<PathBuf>) {
 
 pub fn load_project() -> Result<Option<Config>> {
     let (path, base) = project_config_path();
-    load_from(&path, base.as_deref())
+    Ok(load_from(&path, base.as_deref())?.map(|loaded| loaded.config))
 }
 
-/// Returns the canonicalized project directory if .epi/config.toml exists.
-pub fn project_dir() -> Result<Option<String>> {
-    let (path, base) = project_config_path();
-    if path.exists() {
-        let dir = base.as_deref().unwrap_or(Path::new(".")).canonicalize()?;
-        Ok(Some(dir.to_string_lossy().to_string()))
+fn user_config_path() -> Option<(PathBuf, bool)> {
+    if let Ok(path) = std::env::var("EPI_CONFIG_FILE") {
+        Some((PathBuf::from(path), true))
+    } else if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        Some((PathBuf::from(xdg).join("epi/config.toml"), false))
+    } else if let Ok(home) = std::env::var("HOME") {
+        Some((PathBuf::from(home).join(".config/epi/config.toml"), false))
     } else {
-        Ok(None)
+        None
     }
 }
 
-pub fn load_user() -> Result<Option<Config>> {
-    let (path, explicit) = if let Ok(p) = std::env::var("EPI_CONFIG_FILE") {
-        (PathBuf::from(p), true)
-    } else if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        (PathBuf::from(xdg).join("epi/config.toml"), false)
-    } else if let Ok(home) = std::env::var("HOME") {
-        (PathBuf::from(home).join(".config/epi/config.toml"), false)
-    } else {
+fn load_user_with_path() -> Result<Option<LoadedConfig>> {
+    let Some((path, explicit)) = user_config_path() else {
         return Ok(None);
     };
     if explicit && !path.exists() {
         anyhow::bail!("config file not found: {}", path.display());
     }
     load_from(&path, None)
+}
+
+pub fn load_user() -> Result<Option<Config>> {
+    Ok(load_user_with_path()?.map(|loaded| loaded.config))
+}
+
+fn canonical_project_dir(value: &str, config_path: &Path) -> Result<String> {
+    let base = config_path.parent().unwrap_or(Path::new("."));
+    let path = resolve_path(value, base);
+    if !path.is_dir() {
+        anyhow::bail!("project_dir is not a directory: {}", path.display());
+    }
+    Ok(path.canonicalize()?.to_string_lossy().to_string())
+}
+
+fn resolve_project_dir(
+    user: Option<&LoadedConfig>,
+    project: Option<&LoadedConfig>,
+    project_base: Option<&Path>,
+) -> Result<Option<String>> {
+    if let Some(loaded) = project
+        && let Some(value) = loaded.config.project_dir.as_deref()
+    {
+        return canonical_project_dir(value, &loaded.path).map(Some);
+    }
+    if let Some(loaded) = user
+        && let Some(value) = loaded.config.project_dir.as_deref()
+    {
+        return canonical_project_dir(value, &loaded.path).map(Some);
+    }
+    if project.is_some() {
+        let path = project_base.unwrap_or(Path::new("."));
+        if !path.is_dir() {
+            anyhow::bail!("project directory is not a directory: {}", path.display());
+        }
+        return Ok(Some(path.canonicalize()?.to_string_lossy().to_string()));
+    }
+    Ok(None)
 }
 
 fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
@@ -133,6 +176,7 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
         memory: project.memory.or(user.memory),
         default_name: project.default_name.or(user.default_name),
         ports: merge_port_lists(user.ports, project.ports),
+        project_dir: project.project_dir.or(user.project_dir),
         project_mount: project.project_mount.or(user.project_mount),
         ssh_extra_config: merge_string_lists(user.ssh_extra_config, project.ssh_extra_config),
     }
@@ -205,15 +249,18 @@ pub fn resolve(
     cli_ports: &[String],
     cli_no_project_mount: bool,
 ) -> Result<Resolved> {
-    let user = load_user()?;
-    let (config_path, _) = project_config_path();
-    let project = load_project()?;
-    let project_config = if project.is_some() {
-        config_path.canonicalize().ok()
-    } else {
-        None
-    };
-    let config = merge_configs(user, project);
+    let user = load_user_with_path()?;
+    let (config_path, project_base) = project_config_path();
+    let project = load_from(&config_path, project_base.as_deref())?;
+    let project_config = project
+        .as_ref()
+        .and_then(|_| config_path.canonicalize().ok());
+    let project_dir =
+        resolve_project_dir(user.as_ref(), project.as_ref(), project_base.as_deref())?;
+    let config = merge_configs(
+        user.map(|loaded| loaded.config),
+        project.map(|loaded| loaded.config),
+    );
 
     let target = cli_target
         .map(|s| s.to_string())
@@ -239,14 +286,14 @@ pub fn resolve(
     } else {
         config.project_mount.unwrap_or(true)
     };
-    if auto_mount && let Some(ref dir) = project_dir()? {
-        let already_mounted = mounts.iter().any(|m| {
-            let src = instance_store::parse_mount_spec(m)
+    if auto_mount && let Some(dir) = &project_dir {
+        let already_mounted = mounts.iter().any(|mount| {
+            let src = instance_store::parse_mount_spec(mount)
                 .map(|(src, _)| src)
-                .unwrap_or_else(|_| m.clone());
+                .unwrap_or_else(|_| mount.clone());
             Path::new(&src)
                 .canonicalize()
-                .map(|p| p.to_string_lossy().to_string())
+                .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or(src)
                 == *dir
         });
@@ -284,6 +331,7 @@ pub fn resolve(
         default_name,
         ports,
         ssh_extra_config,
+        project_dir,
         project_config,
     })
 }
@@ -300,13 +348,19 @@ pub fn resolve_default_name() -> Result<String> {
 /// Only includes fields that are Some.
 pub fn generate_toml(config: &Config) -> String {
     let mut lines = Vec::new();
-    if let Some(ref target) = config.target {
+    if let Some(target) = &config.target {
         lines.push(format!("target = {}", toml::Value::String(target.clone())));
     }
-    if let Some(ref default_name) = config.default_name {
+    if let Some(default_name) = &config.default_name {
         lines.push(format!(
             "default_name = {}",
             toml::Value::String(default_name.clone())
+        ));
+    }
+    if let Some(project_dir) = &config.project_dir {
+        lines.push(format!(
+            "project_dir = {}",
+            toml::Value::String(project_dir.clone())
         ));
     }
     if let Some(cpus) = config.cpus {
@@ -315,7 +369,7 @@ pub fn generate_toml(config: &Config) -> String {
     if let Some(memory) = config.memory {
         lines.push(format!("memory = {memory}"));
     }
-    if let Some(ref ports) = config.ports {
+    if let Some(ports) = &config.ports {
         let items: Vec<String> = ports
             .iter()
             .map(|p| toml::Value::String(p.clone()).to_string())
@@ -365,6 +419,12 @@ disk_size = "50G"
         assert_eq!(config.target.unwrap(), ".#dev");
         assert!(config.mounts.is_none());
         assert!(config.disk_size.is_none());
+    }
+
+    #[test]
+    fn parse_project_dir() {
+        let config = parse(r#"project_dir = "/home/user/project""#, Path::new("/")).unwrap();
+        assert_eq!(config.project_dir.as_deref(), Some("/home/user/project"));
     }
 
     #[test]
@@ -580,7 +640,6 @@ memory = 2048
 
     #[test]
     fn resolve_default_name_from_config() {
-        // When config has default_name, resolve should use it
         let config = merge_configs(
             Some(Config {
                 default_name: Some("dev".into()),
@@ -596,6 +655,7 @@ memory = 2048
         let config = Config {
             target: Some(".#dev".into()),
             default_name: Some("myvm".into()),
+            project_dir: Some("/home/user/project".into()),
             cpus: Some(4),
             memory: Some(2048),
             ..Config::default()
@@ -603,13 +663,14 @@ memory = 2048
         let toml_str = generate_toml(&config);
         assert!(toml_str.contains("target = \".#dev\""));
         assert!(toml_str.contains("default_name = \"myvm\""));
+        assert!(toml_str.contains("project_dir = \"/home/user/project\""));
         assert!(toml_str.contains("cpus = 4"));
         assert!(toml_str.contains("memory = 2048"));
 
-        // Round-trip: parse the generated TOML
         let parsed = parse(&toml_str, Path::new("/")).unwrap();
         assert_eq!(parsed.target.unwrap(), ".#dev");
         assert_eq!(parsed.default_name.unwrap(), "myvm");
+        assert_eq!(parsed.project_dir.as_deref(), Some("/home/user/project"));
         assert_eq!(parsed.cpus.unwrap(), 4);
         assert_eq!(parsed.memory.unwrap(), 2048);
     }
@@ -919,10 +980,11 @@ mounts = ["/shared/mount", "/project/only"]
         let _lock = RESOLVE_LOCK.lock().unwrap();
 
         let (_user_dir, user_path) = write_temp_config("");
-        let (_proj_dir, proj_path) = write_temp_config(r#"target = ".#dev""#);
-        let project_root = proj_path
-            .parent()
-            .unwrap()
+        let (project_dir, proj_path) =
+            write_temp_config("target = \".#dev\"\nproject_dir = \"project\"");
+        let project_root = project_dir.path().join("project");
+        fs::create_dir(&project_root).unwrap();
+        let project_root = project_root
             .canonicalize()
             .unwrap()
             .to_string_lossy()
@@ -938,6 +1000,125 @@ mounts = ["/shared/mount", "/project/only"]
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
         assert_eq!(resolved.mounts, vec![cli_mount]);
+    }
+
+    #[test]
+    fn resolve_project_dir_uses_project_config_over_user_config() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(
+            r#"
+target = ".#dev"
+project_dir = "/does/not/exist"
+"#,
+        );
+
+        let (project_dir, project_path) = write_temp_config(r#"project_dir = "project""#);
+        let configured_project_dir = project_dir.path().join("project");
+        fs::create_dir(&configured_project_dir).unwrap();
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &project_path) };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(
+            resolved.project_dir.as_deref(),
+            Some(
+                configured_project_dir
+                    .canonicalize()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_project_dir_from_user_config_is_relative_to_declaring_file() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (user_dir, user_path) =
+            write_temp_config("target = \".#dev\"\nproject_dir = \"project\"");
+        let configured_project_dir = user_dir.path().join("project");
+        fs::create_dir(&configured_project_dir).unwrap();
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert_eq!(
+            resolved.project_dir.as_deref(),
+            Some(
+                configured_project_dir
+                    .canonicalize()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_project_dir_expands_home() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let home = tempfile::TempDir::new().unwrap();
+        let configured_project_dir = home.path().join("project");
+        fs::create_dir(&configured_project_dir).unwrap();
+        let (_user_dir, user_path) =
+            write_temp_config("target = \".#dev\"\nproject_dir = \"~/project\"");
+        let previous_home = std::env::var_os("HOME");
+
+        unsafe { std::env::set_var("HOME", home.path()) };
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+        if let Some(previous_home) = previous_home {
+            unsafe { std::env::set_var("HOME", previous_home) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
+
+        assert_eq!(
+            resolved.project_dir.as_deref(),
+            Some(
+                configured_project_dir
+                    .canonicalize()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_project_dir_rejects_non_directory() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) =
+            write_temp_config("target = \".#dev\"\nproject_dir = \"config.toml\"");
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+
+        let result = resolve(None, &[], None, None, None, &[], true);
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+
+        assert!(result.unwrap_err().to_string().contains("not a directory"));
     }
 
     #[test]
@@ -1018,21 +1199,24 @@ disk_size = "30G"
     }
 
     #[test]
-    fn project_dir_returns_project_root() {
-        // In the default case (no EPI_PROJECT_CONFIG_FILE env var),
-        // project_dir() should return the project root, not .epi/.
-        // .epi/config.toml exists in the project root where tests run.
+    fn resolve_falls_back_to_project_config_directory() {
         let _lock = RESOLVE_LOCK.lock().unwrap();
+
+        let (_user_dir, user_path) = write_temp_config(r#"target = ".#dev""#);
+        let (project_dir, project_path) = write_temp_config("");
+
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &project_path) };
+
+        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
-        let result = project_dir().unwrap();
-        if let Some(dir) = result {
-            let path = PathBuf::from(&dir);
-            assert!(
-                !dir.ends_with(".epi"),
-                "project_dir() should return project root, got .epi/ subdir: {path:?}"
-            );
-        }
+        assert_eq!(
+            resolved.project_dir.as_deref(),
+            Some(project_dir.path().canonicalize().unwrap().to_str().unwrap())
+        );
     }
 
     #[test]
@@ -1152,6 +1336,7 @@ ports = [":443"]
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
         assert!(resolved.project_config.is_none());
+        assert!(resolved.project_dir.is_none());
     }
 
     #[test]
