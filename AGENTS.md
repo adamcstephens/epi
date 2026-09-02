@@ -1,18 +1,5 @@
 ## Agent workflow
-- **IMPORTANT**: before you do anything else, invoke the CLI `veans prime` command and heed its output.
 - Always use red/green TDD when implementing
-
-## Definition of done steps
-- lints pass
-- tests pass
-- if user-facing then changelog updated
-- code committed with all ticket changes included
-  - update date-based package version
-  - Prefer no or very short commit body
-  - Ticket ID in the body (when relevant)
-  - Assisted-By line always included
-- wait for user confirmation
-- ticket marked done
 
 ## Code style
 - Avoid abstractions
