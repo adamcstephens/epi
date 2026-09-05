@@ -26,7 +26,7 @@ rand = "0.10"
 indicatif = "0.18"
 console = "0.16"
 fast-strip-ansi = "0.13.1"
-comfy-table = "7.2"
+comfy-table = "8.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 epi-vmm-linux = { path = "../backends/ch" }

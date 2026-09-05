@@ -300,7 +300,7 @@ pub fn render_list(rows: &[ListRow]) -> String {
     let has_projects = rows.iter().any(|r| r.project.is_some());
 
     let mut table = Table::new();
-    table.load_preset(NOTHING);
+    table.load_style(NOTHING);
 
     if has_projects {
         table.set_header(vec![
@@ -348,7 +348,7 @@ pub fn render_info(view: &InfoView) -> String {
     use comfy_table::{Table, presets::NOTHING};
 
     let mut table = Table::new();
-    table.load_preset(NOTHING);
+    table.load_style(NOTHING);
 
     for (i, section) in view.sections.iter().enumerate() {
         if i > 0 {
