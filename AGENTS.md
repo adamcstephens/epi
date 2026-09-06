@@ -1,6 +1,16 @@
 ## Agent workflow
 - Always use red/green TDD when implementing
 
+## Definition of done steps
+- lints pass
+- tests pass
+- if user-facing then changelog updated
+- code committed with all ticket changes included
+  - update date-based package version
+  - Prefer no or very short commit body
+  - Ticket ID in the body (when relevant)
+  - Assisted-By line always included
+
 ## Code style
 - Avoid abstractions
 - Avoid wrapping single expressions in standalone functions

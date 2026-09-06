@@ -1,6 +1,7 @@
 { lib, pkgs }:
 let
   on = lib.mkForce lib.kernel.yes;
+  module = lib.mkForce lib.kernel.module;
   off = lib.mkForce lib.kernel.no;
 
   # Symbols the guest cannot boot or run without. Kconfig `select` can quietly
@@ -30,6 +31,9 @@ let
       "NAMESPACES"
       "SECCOMP"
       "BPF_SYSCALL"
+    ];
+    m = [
+      "TUN"
     ];
     n = [
       "DRM"
@@ -155,6 +159,7 @@ let
         TLS = off;
         VLAN_8021Q = off;
         WIRELESS = off;
+        TUN = module;
         RFKILL = off;
 
         IOSCHED_BFQ = off;
@@ -184,6 +189,10 @@ let
       grep -qx 'CONFIG_${sym}=y' ${kernelPackages.kernel.configfile} \
         || { echo "expected CONFIG_${sym}=y"; fail=1; }
     '') required.y}
+    ${lib.concatMapStringsSep "\n" (sym: ''
+      grep -qx 'CONFIG_${sym}=m' ${kernelPackages.kernel.configfile} \
+        || { echo "expected CONFIG_${sym}=m"; fail=1; }
+    '') required.m}
     ${lib.concatMapStringsSep "\n" (sym: ''
       grep -qE '^CONFIG_${sym}=[ym]' ${kernelPackages.kernel.configfile} \
         && { echo "expected CONFIG_${sym} unset"; fail=1; }

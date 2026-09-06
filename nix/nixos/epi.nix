@@ -345,8 +345,8 @@ in
     boot.loader.grub.enable = false;
     boot.growPartition = true;
 
-    # Every driver the guest needs is built into the kernel, so the initrd
-    # carries no modules and stage-1 has nothing to probe.
+    # TUN is loaded in stage 2 so its device node is registered after devtmpfs
+    # is mounted; every other driver the guest needs is built into the kernel.
     boot.initrd.includeDefaultModules = false;
     boot.initrd.kernelModules = [ ];
     boot.initrd.availableKernelModules = lib.mkForce [ ];
@@ -377,8 +377,8 @@ in
     boot.kernel.sysctl."net.ipv6.conf.default.accept_dad" = 0;
 
     # NixOS loads "loop" and "atkbd" by default; neither exists in this
-    # kernel, and systemd-modules-load logs an error for each one.
-    boot.kernelModules = lib.mkForce [ ];
+    # kernel. TUN loads after devtmpfs mounts so it exposes /dev/net/tun.
+    boot.kernelModules = lib.mkForce [ "tun" ];
     boot.consoleLogLevel = 3;
 
     # Use systemd-networkd instead of dhcpcd — faster DHCP

@@ -1005,6 +1005,23 @@ fn e2e_nested_virtualization() {
 }
 
 #[test]
+#[ignore]
+fn e2e_tun_device() {
+    let name = unique_name("tun");
+    let _guard = InstanceGuard::new(&name);
+
+    let runtime = provision_and_wait(&name);
+
+    let out = ssh_exec(&runtime, "test -c /dev/net/tun");
+    assert!(
+        out.success(),
+        "/dev/net/tun should be present in the guest (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+}
+
+#[test]
 #[ignore] // cloud-hypervisor crashes with boot>1 + vhost-user passt: https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7766
 fn e2e_cpus_override() {
     let name = unique_name("cpuover");
