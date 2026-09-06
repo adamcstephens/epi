@@ -789,6 +789,7 @@ pub(crate) mod tests {
             memory_mib: 1024,
             port_specs: vec![],
             ssh_extra_config: vec![],
+            hooks: Default::default(),
             descriptor: None,
         };
         instance_store::save_state(name, &state).unwrap();

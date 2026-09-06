@@ -71,12 +71,20 @@ EPI provides a Hjem module for declaring user-systemd services. Import it throug
         ports = [ ":8080" ];
         project_dir = "/home/alice/src/my-project";
       };
+      hooks.post-launch."10-ready" = pkgs.writeShellScript "epi-ready" ''
+        "$EPI_BIN" exec "$EPI_INSTANCE" -- touch /tmp/host-hook-ready
+      '';
+      hooks.pre-stop."10-sync" = pkgs.writeShellScript "epi-sync" ''
+        "$EPI_BIN" exec "$EPI_INSTANCE" -- sync
+      '';
     };
   };
 }
 ```
 
-This creates `epi-dev.service` in Alice's user systemd configuration. `settings` is the complete EPI TOML configuration, including `target`. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. Hjem passes `settings.project_dir` directly to EPI; use an absolute path when the project is not relative to the generated configuration directory. The generated config defaults `default_name` to the instance name and disables automatic project mounting; override either through `settings`.
+This creates `epi-dev.service` in Alice's user systemd configuration. `settings` is the complete EPI TOML configuration, including `target`. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. Hjem passes `settings.project_dir` directly to EPI; use an absolute path when the project is not relative to the generated configuration directory. The generated config defaults `default_name` to the instance name and disables automatic project mounting when `project_dir` is absent; override either through `settings`.
+
+`hooks.post-launch` and `hooks.pre-stop` are named maps of executable host script paths, also available through `settings.hooks`. Definitions merge using normal Nix module semantics. EPI saves the canonical paths at launch and GC-roots Nix store scripts for the lifetime of the instance, so later `start`, `stop`, and `upgrade` operations do not need the original Hjem configuration. `guest-init` is not supported in these settings.
 
 ### Projects
 
@@ -145,17 +153,28 @@ Completions include dynamic instance name tab-completion.
 
 ## Hooks
 
-epi supports hook scripts at three points in the instance lifecycle. Hooks are discovered from three layers, executed in this order:
+epi supports hook scripts at three points in the instance lifecycle. Host-side `post-launch` and `pre-stop` hooks execute in this order:
 
 1. **User hooks** — `~/.config/epi/hooks/<hook>.d/`
 2. **Project hooks** — `.epi/hooks/<hook>.d/`
-3. **Nix hooks** — declared in the nixosConfiguration via `epi.hooks.<hook>`
+3. **Configured host hooks** — named paths in user/project TOML under `hooks.post-launch` and `hooks.pre-stop`
+4. **Nix hooks** — declared in the nixosConfiguration via `epi.hooks.<hook>`
 
-Within each layer, scripts are sorted by filename. Only executable files are run; non-executable files produce a warning. Each layer also supports instance-specific subdirectories (`<hook>.d/<instance-name>/`) whose scripts run after the layer's top-level scripts.
+Filesystem hooks are sorted by filename; each filesystem layer also supports instance-specific subdirectories (`<hook>.d/<instance-name>/`) whose scripts run after the layer's top-level scripts. Non-executable filesystem hooks produce a warning and are skipped. Configured and Nix hooks run in lexical key order. Configured scripts must be executable; execution errors fail the command.
+
+```toml
+[hooks.post-launch]
+"10-ready" = "scripts/ready"
+
+[hooks.pre-stop]
+"10-sync" = "scripts/sync"
+```
+
+Configured hook maps merge per hook point, with project entries overriding user entries of the same name. Relative paths use each configuration file's directory, except the default `.epi/config.toml`, which uses the project root; `~/` expands to the host home. At launch, paths are canonicalized (including symlinks) and saved in instance state. Later lifecycle operations use those saved paths even if configuration files change or disappear. Nix store paths remain GC-rooted while the instance exists, including while stopped, and are released by `rm`. Local scripts must remain available at their canonical paths.
 
 ### post-launch
 
-Runs on the **host** after the VM is reachable via SSH. Useful for provisioning the guest from the outside (e.g. copying dotfiles, running commands over SSH).
+Runs on the **host** after the VM is reachable via SSH on `launch`, `start`, `rebuild`, and `upgrade --mode boot`. `--no-provision` skips these hooks on launch/start. Useful for provisioning the guest from the outside (e.g. copying dotfiles, running commands over SSH).
 
 Scripts receive the following environment variables:
 
@@ -190,4 +209,4 @@ File-based hooks (from user and project layers) are embedded in the seed ISO at 
 
 Runs on the **host** before the VM is stopped. Useful for cleanup tasks like syncing data or saving state.
 
-Receives the same environment variables as post-launch hooks. If any hook exits non-zero, execution stops and the error is reported (but the VM is still stopped).
+Receives the same environment variables as post-launch hooks. Runs on a normal `stop` and before an `upgrade --mode boot` restart; `stop --force` skips it. If any hook exits non-zero, execution stops and the error is reported without stopping the VM.

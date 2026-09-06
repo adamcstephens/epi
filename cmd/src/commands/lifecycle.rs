@@ -46,6 +46,7 @@ pub fn cmd_launch(
             memory_mib: resolved.memory,
             port_specs: resolved.ports.clone(),
             ssh_extra_config: resolved.ssh_extra_config.clone(),
+            hooks: resolved.hooks.clone(),
             descriptor: None,
         },
     )?;
@@ -61,7 +62,7 @@ pub fn cmd_launch(
         port_specs: &resolved.ports,
     };
 
-    let (runtime, descriptor) = match prepare_and_provision(&params) {
+    let (runtime, descriptor) = match prepare_and_provision(&params, &resolved.hooks) {
         Ok(r) => r,
         Err(e) => {
             if pre_existing {
@@ -106,7 +107,6 @@ pub fn cmd_launch(
         let wait_handle = if ssh_port.is_some() && !no_provision {
             let inst = instance.to_string();
             let key = ssh_key_path.clone();
-            let tgt = resolved.target.clone();
             let pdir = project_dir_ref.clone();
             let extra_ssh = resolved.ssh_extra_config.clone();
             let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
@@ -125,7 +125,7 @@ pub fn cmd_launch(
                     &extra_ssh,
                 )?;
                 eprintln!("Instance {inst} is ready");
-                run_post_launch_hooks(&inst, &tgt, ssh_sock, &key, pdir)?;
+                run_post_launch_hooks(&inst, ssh_sock, &key, pdir)?;
                 Ok(())
             }))
         } else {
@@ -151,13 +151,7 @@ pub fn cmd_launch(
             &resolved.ssh_extra_config,
         )?;
 
-        run_post_launch_hooks(
-            instance,
-            &resolved.target,
-            ssh_sock,
-            &ssh_key_path,
-            project_dir_ref,
-        )?;
+        run_post_launch_hooks(instance, ssh_sock, &ssh_key_path, project_dir_ref)?;
     }
 
     Ok(())
@@ -165,6 +159,7 @@ pub fn cmd_launch(
 
 fn prepare_and_provision(
     params: &vm_launch::ProvisionParams,
+    configured_hooks: &instance_store::HostHooks,
 ) -> Result<(epi::backend::RunningInstance, target::Descriptor)> {
     let group = ui::Group::start("Preparing");
 
@@ -215,7 +210,7 @@ fn prepare_and_provision(
     target::ensure_hook_paths(params.target_str, &desc)?;
 
     // Create GC roots to prevent nix-collect-garbage from sweeping store paths
-    gcroots::create(params.instance_name, &desc)?;
+    gcroots::create(params.instance_name, &desc, configured_hooks)?;
 
     group.finish("Prepared");
 
@@ -307,16 +302,21 @@ fn launch_with_descriptor(
 
 fn run_pre_stop_hooks(
     instance: &str,
-    target_str: &str,
     ssh: SocketAddr,
     ssh_key_path: &str,
     project_dir: Option<String>,
 ) -> Result<()> {
-    let desc_hooks = target::resolve_descriptor_cached(target_str, false)
-        .map(|c| c.descriptor().hooks.pre_stop_scripts())
-        .unwrap_or_default();
-
-    let hook_scripts = hooks::discover(instance, &desc_hooks, "pre-stop")?;
+    let state = instance_store::load_state(instance)?
+        .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
+    let descriptor = state.descriptor.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("instance {instance} has no stored descriptor — re-launch required")
+    })?;
+    let hook_scripts = hooks::discover(
+        instance,
+        &descriptor.hooks.pre_stop_scripts(),
+        &state.hooks.pre_stop,
+        "pre-stop",
+    )?;
     if !hook_scripts.is_empty() {
         let env = hooks::HookEnv {
             instance_name: instance.to_string(),
@@ -362,16 +362,21 @@ fn wait_and_trust_ssh(
 
 fn run_post_launch_hooks(
     instance: &str,
-    target_str: &str,
     ssh: SocketAddr,
     ssh_key_path: &str,
     project_dir: Option<String>,
 ) -> Result<()> {
-    let desc_hooks = target::resolve_descriptor_cached(target_str, false)
-        .map(|c| c.descriptor().hooks.post_launch_scripts())
-        .unwrap_or_default();
-
-    let hook_scripts = hooks::discover(instance, &desc_hooks, "post-launch")?;
+    let state = instance_store::load_state(instance)?
+        .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
+    let descriptor = state.descriptor.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("instance {instance} has no stored descriptor — re-launch required")
+    })?;
+    let hook_scripts = hooks::discover(
+        instance,
+        &descriptor.hooks.post_launch_scripts(),
+        &state.hooks.post_launch,
+        "post-launch",
+    )?;
     if !hook_scripts.is_empty() {
         let env = hooks::HookEnv {
             instance_name: instance.to_string(),
@@ -416,7 +421,7 @@ pub fn cmd_start(
     target::ensure_hook_paths(&state.target, &desc)?;
 
     // Create GC roots
-    gcroots::create(instance, &desc)?;
+    gcroots::create(instance, &desc, &state.hooks)?;
 
     let (ssh_sock, ssh_key_path) = launch_with_descriptor(instance, &state, &desc)?;
 
@@ -428,6 +433,7 @@ pub fn cmd_start(
             wait_timeout,
             &state.ssh_extra_config,
         )?;
+        run_post_launch_hooks(instance, ssh_sock, &ssh_key_path, state.project_dir.clone())?;
     }
 
     if attach_console {
@@ -457,13 +463,7 @@ pub fn cmd_stop(instance: &str, force: bool) -> Result<()> {
             && let Some(ref rt) = st.runtime
             && rt.ssh.port() != 0
         {
-            run_pre_stop_hooks(
-                instance,
-                &st.target,
-                rt.ssh,
-                &rt.ssh_key_path,
-                st.project_dir.clone(),
-            )?;
+            run_pre_stop_hooks(instance, rt.ssh, &rt.ssh_key_path, st.project_dir.clone())?;
         }
     }
 
@@ -601,20 +601,14 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
             }
             // Update gcroots first, then state — if gcroots fails we don't
             // commit a descriptor whose paths aren't rooted.
-            gcroots::create(instance, &new_desc)?;
+            gcroots::create(instance, &new_desc, &state.hooks)?;
             instance_store::update_descriptor(instance, new_desc)?;
         }
         UpgradeMode::Boot => {
             // Boot mode rewrites kernel/initrd/cmdline in the descriptor and
             // restarts the VM — there's no bootloader inside the guest, so
             // running `switch-to-configuration boot` would have nothing to do.
-            run_pre_stop_hooks(
-                instance,
-                &state.target,
-                ssh_sock,
-                &ssh_key_path,
-                state.project_dir.clone(),
-            )?;
+            run_pre_stop_hooks(instance, ssh_sock, &ssh_key_path, state.project_dir.clone())?;
 
             // Stop VM
             let step = ui::Step::start(&format!("Stopping {instance} for reboot"));
@@ -622,8 +616,8 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
             step.finish(&format!("Stopped {instance}"));
 
             // Update descriptor and GC roots before restart
+            gcroots::create(instance, &new_desc, &state.hooks)?;
             instance_store::update_descriptor(instance, new_desc.clone())?;
-            gcroots::create(instance, &new_desc)?;
 
             let (new_ssh_sock, new_ssh_key_path) =
                 launch_with_descriptor(instance, &state, &new_desc)?;
@@ -644,7 +638,6 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
 
                 run_post_launch_hooks(
                     instance,
-                    &state.target,
                     new_ssh_sock,
                     &new_ssh_key_path,
                     state.project_dir.clone(),
@@ -684,7 +677,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         memory_mib: state.memory_mib,
         port_specs: &state.port_specs,
     };
-    let (runtime, descriptor) = prepare_and_provision(&params)?;
+    let (runtime, descriptor) = prepare_and_provision(&params, &state.hooks)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_sock = runtime.ssh;
@@ -713,13 +706,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
             &state.ssh_extra_config,
         )?;
 
-        run_post_launch_hooks(
-            instance,
-            &state.target,
-            ssh_sock,
-            &ssh_key_path,
-            state.project_dir.clone(),
-        )?;
+        run_post_launch_hooks(instance, ssh_sock, &ssh_key_path, state.project_dir.clone())?;
     }
 
     Ok(())

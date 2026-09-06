@@ -5,12 +5,14 @@
 ## [Unreleased]
 
 ### Added
+- Host lifecycle hooks: Configure named `hooks.post-launch` and `hooks.pre-stop` script paths in TOML or Hjem instance options. Canonical paths are saved at launch, retained across start/stop/upgrade, and GC-rooted when they reference the Nix store. Project entries override same-name user entries; configured scripts run after filesystem hooks and before NixOS hooks.
 - `project_dir`: Configure a canonical host project directory independently of configuration-file location. Project configuration overrides user configuration; the resolved directory is persisted in instance state, supplied to lifecycle hooks, and automatically mounted unless disabled. Hjem instances pass it through as `settings.project_dir`.
 - `--mount`/`mounts`: Support an optional `:<dst>` destination override (`--mount <src>[:<dst>]`), mirroring `--port HOST:GUEST`. By default a mount still lands in the guest at the same path as the host source; an explicit `dst` places it elsewhere instead, and suppresses the automatic bind into the guest home that normally applies to mounts under the host home directory
 - macOS (VZ) backend: Enable nested virtualization for Linux guests, so the guest exposes `/dev/kvm` and can run nested VMs (requires Apple Silicon M3+ and macOS 15+)
 - `ssh`/`exec`/`cp`: When the instance exists but is stopped, prompt to start it before connecting. Pass `--start` to start it without prompting (e.g. in scripts); with no TTY and no `--start`, the command errors and points at `epi start`
 
 ### Fixed
+- `start`: Run post-launch hooks after SSH readiness, using the stored descriptor and configured host hook paths without re-evaluating the target or Hjem configuration.
 - `rm`: Reap stale helper units before removing state. Previously, if the VM died on its own (e.g. OOM-killed), `epi rm` saw the VM unit as stopped, skipped teardown, and deleted the instance state — orphaning the `passt`/`virtiofsd` units (which kept holding their forwarded ports) with no state left to reap them. `rm` now runs the same stale-runtime reaping as `list`/`stop` before removing state
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 

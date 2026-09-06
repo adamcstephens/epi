@@ -11,7 +11,7 @@
 //! ch-specific internals (systemd units, passt, api.sock) are gated to Linux;
 //! the rest drive whichever backend the platform provides via `runtime.ssh`.
 
-use epi::{config, hooks, instance_store, process, ssh, target, vm_launch};
+use epi::{config, instance_store, process, ssh, target, vm_launch};
 use std::fs;
 use std::sync::LazyLock;
 use tempfile::TempDir;
@@ -85,6 +85,7 @@ fn default_resolved() -> config::Resolved {
         default_name: "default".to_string(),
         ports: vec![],
         ssh_extra_config: vec![],
+        hooks: instance_store::HostHooks::default(),
         project_dir: None,
         project_config: None,
     }
@@ -110,6 +111,7 @@ fn provision_and_wait_with(
             memory_mib: resolved.memory,
             port_specs: resolved.ports.clone(),
             ssh_extra_config: resolved.ssh_extra_config.clone(),
+            hooks: resolved.hooks.clone(),
             descriptor: None,
         },
     )
@@ -127,7 +129,8 @@ fn provision_and_wait_with(
     })
     .expect("provision failed");
 
-    instance_store::set_provisioned(name, runtime.clone(), None).expect("set_provisioned failed");
+    instance_store::set_provisioned(name, runtime.clone(), Some(DESCRIPTOR.1.clone()))
+        .expect("set_provisioned failed");
 
     ssh::generate_config(
         &ssh::config_path(name),
@@ -390,6 +393,7 @@ fn e2e_mount() {
             memory_mib: 0,
             port_specs: vec![],
             ssh_extra_config: vec![],
+            hooks: instance_store::HostHooks::default(),
             descriptor: None,
         },
     )
@@ -543,57 +547,129 @@ fn e2e_configured_project_dir_is_mounted() {
 #[test]
 #[ignore]
 fn e2e_hooks() {
+    use std::os::unix::fs::PermissionsExt;
+
     let name = unique_name("hooks");
     let _guard = InstanceGuard::new(&name);
-    let (_, desc) = &*DESCRIPTOR;
-
-    // Set up a project-level post-launch hook
-    let hooks_dir = TempDir::new().unwrap();
-    let hook_dir = hooks_dir.path().join("post-launch.d").join(&name);
-    fs::create_dir_all(&hook_dir).unwrap();
-
-    let log_file = hooks_dir.path().join("hook.log");
-    let log_path_str = log_file.to_string_lossy();
-    let hook_script = hook_dir.join("01-test.sh");
-    fs::write(
-        &hook_script,
-        format!("#!/bin/sh\necho \"hook ran for $EPI_INSTANCE\" > {log_path_str}\n"),
+    let dir = TempDir::new().unwrap();
+    let scripts = dir.path().join(&name);
+    fs::create_dir(&scripts).unwrap();
+    for point in ["post-launch", "pre-stop"] {
+        let hook_dir = scripts.join(format!("{name}-{point}"));
+        fs::create_dir(&hook_dir).unwrap();
+        let path = hook_dir.join("run");
+        fs::write(
+            &path,
+            format!(
+                "#!/usr/bin/env bash\nprintf '%s\\n' '{point}' >> \"$EPI_STATE_DIR/$EPI_INSTANCE/configured-hooks.log\"\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let added = process::run(
+        "nix-store",
+        &[
+            "--add",
+            scripts
+                .join(format!("{name}-post-launch"))
+                .to_str()
+                .unwrap(),
+            scripts.join(format!("{name}-pre-stop")).to_str().unwrap(),
+        ],
     )
     .unwrap();
-
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&hook_script, fs::Permissions::from_mode(0o755)).unwrap();
-
-    // Point hook discovery at our temp dir
-    unsafe { std::env::set_var("EPI_PROJECT_HOOKS_DIR", hooks_dir.path()) };
-
-    let runtime = provision_and_wait(&name);
-
-    // Run post-launch hooks manually
-    let hook_scripts =
-        hooks::discover(&name, &desc.hooks.post_launch_scripts(), "post-launch").unwrap();
-
-    let ssh_port = runtime.ssh.port();
-    let env = hooks::HookEnv {
-        instance_name: name.clone(),
-        ssh_host: "127.0.0.1".to_string(),
-        ssh_port,
-        ssh_key_path: runtime.ssh_key_path.clone(),
-        ssh_user: "root".to_string(),
-        state_dir: instance_store::state_dir().to_string_lossy().to_string(),
-        project_dir: None,
+    assert!(added.success(), "{}", added.stderr);
+    let store_paths: Vec<&str> = added.stdout.lines().collect();
+    let post_launch_link = dir.path().join("post-launch");
+    std::os::unix::fs::symlink(format!("{}/run", store_paths[0]), &post_launch_link).unwrap();
+    let config_path = dir.path().join("config.toml");
+    fs::write(
+        &config_path,
+        format!(
+            "target = {:?}\nproject_mount = false\n[hooks.post-launch]\nsetup = {:?}\n[hooks.pre-stop]\ncleanup = {:?}\n",
+            e2e_target(),
+            "post-launch",
+            format!("{}/run", store_paths[1]),
+        ),
+    )
+    .unwrap();
+    let xdg = dir.path().join("xdg");
+    let project_hooks = dir.path().join("project-hooks");
+    for (layer, base) in [
+        ("user", xdg.join("epi/hooks")),
+        ("project", project_hooks.clone()),
+    ] {
+        let hook_dir = base.join("post-launch.d");
+        fs::create_dir_all(&hook_dir).unwrap();
+        let script = hook_dir.join("record");
+        fs::write(
+            &script,
+            format!(
+                "#!/usr/bin/env bash\nprintf '%s\\n' '{layer}' >> \"$EPI_STATE_DIR/$EPI_INSTANCE/configured-hooks.log\"\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let env = [
+        ("XDG_CONFIG_HOME", xdg.to_str().unwrap()),
+        ("EPI_PROJECT_CONFIG_FILE", config_path.to_str().unwrap()),
+        ("EPI_PROJECT_HOOKS_DIR", project_hooks.to_str().unwrap()),
+    ];
+    let run = |args: &[&str]| {
+        let out = process::run_with_env(env!("CARGO_BIN_EXE_epi"), args, &env).unwrap();
+        assert!(
+            out.success(),
+            "epi {args:?} failed: {}\n{}",
+            out.stderr,
+            out.stdout
+        );
     };
-    hooks::execute(&env, &hook_scripts).expect("hook execution failed");
-
-    // Verify hook ran
-    assert!(log_file.exists(), "hook log should exist");
-    let content = fs::read_to_string(&log_file).unwrap();
-    assert!(
-        content.contains(&format!("hook ran for {name}")),
-        "hook log should contain instance name, got: {content}"
+    let log = instance_store::instance_path(&name, "configured-hooks.log");
+    run(&["launch", &name]);
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "user\nproject\npost-launch\n"
     );
+    assert!(instance_store::instance_path(&name, "nix-post-launch-ran").exists());
+    fs::remove_file(&config_path).unwrap();
+    fs::remove_file(&post_launch_link).unwrap();
 
-    unsafe { std::env::remove_var("EPI_PROJECT_HOOKS_DIR") };
+    run(&["stop", &name]);
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "user\nproject\npost-launch\npre-stop\n"
+    );
+    assert!(instance_store::instance_path(&name, "nix-pre-stop-ran").exists());
+    run(&["start", &name]);
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "user\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\n"
+    );
+    run(&["upgrade", &name, "--mode", "boot"]);
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "user\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\n"
+    );
+    run(&["stop", &name]);
+    for store_path in &store_paths {
+        let deletion = process::run("nix-store", &["--delete", store_path]).unwrap();
+        assert!(!deletion.success(), "persisted hooks must remain GC rooted");
+        assert!(std::path::Path::new(store_path).exists());
+    }
+    run(&["start", &name, "--no-provision"]);
+    run(&["stop", &name, "--force"]);
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "user\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\npre-stop\n"
+    );
+    run(&["rm", &name]);
+    for store_path in &store_paths {
+        let deletion = process::run("nix-store", &["--delete", store_path]).unwrap();
+        assert!(deletion.success(), "{}", deletion.stderr);
+        assert!(!std::path::Path::new(store_path).exists());
+    }
 }
 
 #[test]
@@ -1322,6 +1398,7 @@ fn save_stopped_state(name: &str) {
             memory_mib: 1024,
             port_specs: vec![],
             ssh_extra_config: vec![],
+            hooks: instance_store::HostHooks::default(),
             descriptor: None,
         },
     )

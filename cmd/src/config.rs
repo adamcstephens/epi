@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::instance_store;
+use crate::instance_store::HostHooks;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
@@ -17,6 +18,8 @@ pub struct Config {
     pub project_dir: Option<String>,
     pub project_mount: Option<bool>,
     pub ssh_extra_config: Option<Vec<String>>,
+    #[serde(default)]
+    pub hooks: HostHooks,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +32,7 @@ pub struct Resolved {
     pub default_name: String,
     pub ports: Vec<String>,
     pub ssh_extra_config: Vec<String>,
+    pub hooks: HostHooks,
     pub project_dir: Option<String>,
     /// Path to the project config file, if one was detected and used.
     pub project_config: Option<PathBuf>,
@@ -73,16 +77,9 @@ fn load_from(path: &Path, base_override: Option<&Path>) -> Result<Option<LoadedC
         return Ok(None);
     }
     let content = fs::read_to_string(path)?;
-    let mut config: Config = toml::from_str(&content)?;
-
     let base = base_override.unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")));
 
-    if let Some(mounts) = &mut config.mounts {
-        *mounts = mounts
-            .iter()
-            .map(|mount| resolve_mount_spec(mount, base))
-            .collect::<Result<Vec<_>>>()?;
-    }
+    let config = parse(&content, base)?;
 
     Ok(Some(LoadedConfig {
         config,
@@ -166,8 +163,10 @@ fn resolve_project_dir(
 }
 
 fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
-    let user = user.unwrap_or_default();
+    let mut user = user.unwrap_or_default();
     let project = project.unwrap_or_default();
+    user.hooks.post_launch.extend(project.hooks.post_launch);
+    user.hooks.pre_stop.extend(project.hooks.pre_stop);
     Config {
         target: project.target.or(user.target),
         mounts: merge_mount_lists(user.mounts, project.mounts),
@@ -179,6 +178,7 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
         project_dir: project.project_dir.or(user.project_dir),
         project_mount: project.project_mount.or(user.project_mount),
         ssh_extra_config: merge_string_lists(user.ssh_extra_config, project.ssh_extra_config),
+        hooks: user.hooks,
     }
 }
 
@@ -321,6 +321,18 @@ pub fn resolve(
     }
 
     let ssh_extra_config = config.ssh_extra_config.unwrap_or_default();
+    let mut hooks = config.hooks;
+    for (point, paths) in [
+        ("post-launch", &mut hooks.post_launch),
+        ("pre-stop", &mut hooks.pre_stop),
+    ] {
+        for (name, path) in paths {
+            *path = fs::canonicalize(&*path)
+                .with_context(|| format!("resolving {point} hook {name:?} at {path}"))?
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
 
     Ok(Resolved {
         target,
@@ -331,6 +343,7 @@ pub fn resolve(
         default_name,
         ports,
         ssh_extra_config,
+        hooks,
         project_dir,
         project_config,
     })
@@ -345,7 +358,6 @@ pub fn resolve_default_name() -> Result<String> {
 }
 
 /// Generate a TOML config string from a Config struct.
-/// Only includes fields that are Some.
 pub fn generate_toml(config: &Config) -> String {
     let mut lines = Vec::new();
     if let Some(target) = &config.target {
@@ -376,14 +388,31 @@ pub fn generate_toml(config: &Config) -> String {
             .collect();
         lines.push(format!("ports = [{}]", items.join(", ")));
     }
+    for (point, hooks) in [
+        ("post-launch", &config.hooks.post_launch),
+        ("pre-stop", &config.hooks.pre_stop),
+    ] {
+        if hooks.is_empty() {
+            continue;
+        }
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format!("[hooks.{point}]"));
+        for (name, path) in hooks {
+            lines.push(format!(
+                "{} = {}",
+                toml::Value::String(name.clone()),
+                toml::Value::String(path.clone())
+            ));
+        }
+    }
     if !lines.is_empty() {
         lines.push(String::new()); // trailing newline
     }
     lines.join("\n")
 }
 
-/// Parse a config from a TOML string with a base path for relative mount resolution.
-/// Exposed for testing.
 pub fn parse(content: &str, base: &Path) -> Result<Config> {
     let mut config: Config = toml::from_str(content)?;
     if let Some(ref mut mounts) = config.mounts {
@@ -392,12 +421,110 @@ pub fn parse(content: &str, base: &Path) -> Result<Config> {
             .map(|m| resolve_mount_spec(m, base))
             .collect::<Result<Vec<_>>>()?;
     }
+    if !config.hooks.post_launch.is_empty() || !config.hooks.pre_stop.is_empty() {
+        let absolute_base;
+        let base = if base.is_absolute() {
+            base
+        } else {
+            absolute_base = std::env::current_dir()?.join(base);
+            &absolute_base
+        };
+        for path in config
+            .hooks
+            .post_launch
+            .values_mut()
+            .chain(config.hooks.pre_stop.values_mut())
+        {
+            *path = resolve_path(path, base).to_string_lossy().into_owned();
+        }
+    }
     Ok(config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_hooks_parse_and_generate_roundtrip() {
+        let content = r#"
+[hooks.post-launch]
+"notify.ready" = "scripts/notify"
+absolute = "/nix/store/ready/bin/ready"
+[hooks.pre-stop]
+flush = "scripts/flush"
+"#;
+        let config = parse(content, Path::new(".")).unwrap();
+        let generated: toml::Value = toml::from_str(&generate_toml(&config)).unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            generated["hooks"]["post-launch"]["notify.ready"].as_str(),
+            Some(cwd.join("./scripts/notify").to_str().unwrap())
+        );
+        assert_eq!(
+            generated["hooks"]["post-launch"]["absolute"].as_str(),
+            Some("/nix/store/ready/bin/ready")
+        );
+        assert_eq!(
+            generated["hooks"]["pre-stop"]["flush"].as_str(),
+            Some(cwd.join("./scripts/flush").to_str().unwrap())
+        );
+        let reparsed = parse(&generate_toml(&config), Path::new("/elsewhere")).unwrap();
+        let regenerated: toml::Value = toml::from_str(&generate_toml(&reparsed)).unwrap();
+        assert_eq!(generated["hooks"], regenerated["hooks"]);
+    }
+
+    #[test]
+    fn configured_hooks_merge_per_point_after_source_resolution() {
+        let (user_dir, user_path) = write_temp_config(
+            r#"
+[hooks.post-launch]
+shared = "user-ready"
+user = "user-only"
+[hooks.pre-stop]
+shared = "user-stop"
+"#,
+        );
+        let (project_dir, project_path) = write_temp_config(
+            r#"
+[hooks.post-launch]
+shared = "project-ready"
+[hooks.pre-stop]
+project = "project-stop"
+"#,
+        );
+        let user = load_from(&user_path, None).unwrap().unwrap().config;
+        let project = load_from(&project_path, None).unwrap().unwrap().config;
+        let merged = merge_configs(Some(user), Some(project));
+        let generated: toml::Value = toml::from_str(&generate_toml(&merged)).unwrap();
+        assert_eq!(
+            generated["hooks"]["post-launch"]["shared"].as_str(),
+            Some(project_dir.path().join("project-ready").to_str().unwrap())
+        );
+        assert_eq!(
+            generated["hooks"]["post-launch"]["user"].as_str(),
+            Some(user_dir.path().join("user-only").to_str().unwrap())
+        );
+        assert_eq!(
+            generated["hooks"]["pre-stop"]["shared"].as_str(),
+            Some(user_dir.path().join("user-stop").to_str().unwrap())
+        );
+        assert_eq!(
+            generated["hooks"]["pre-stop"]["project"].as_str(),
+            Some(project_dir.path().join("project-stop").to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn configured_hooks_reject_guest_init() {
+        assert!(
+            parse(
+                "[hooks.guest-init]\nsetup = \"/nix/store/setup/bin/setup\"",
+                Path::new("/")
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn parse_full_config() {

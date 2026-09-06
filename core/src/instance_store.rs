@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -58,6 +59,15 @@ fn default_disk_size() -> String {
     "40G".into()
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HostHooks {
+    #[serde(rename = "post-launch")]
+    pub post_launch: BTreeMap<String, String>,
+    #[serde(rename = "pre-stop")]
+    pub pre_stop: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceState {
     pub target: String,
@@ -77,6 +87,8 @@ pub struct InstanceState {
     pub port_specs: Vec<String>,
     #[serde(default)]
     pub ssh_extra_config: Vec<String>,
+    #[serde(default)]
+    pub hooks: HostHooks,
     #[serde(default)]
     pub descriptor: Option<target::Descriptor>,
 }
@@ -334,6 +346,24 @@ mod tests {
     }
 
     #[test]
+    fn configured_hooks_persist_in_instance_state() {
+        let dir = TempDir::new().unwrap();
+        let hooks = json!({
+            "post-launch": {"ready": "/nix/store/ready/bin/ready"},
+            "pre-stop": {"flush": "/nix/store/flush/bin/flush"}
+        });
+        let state: InstanceState = serde_json::from_value(json!({
+            "target": ".#dev",
+            "hooks": hooks
+        }))
+        .unwrap();
+        write_state(dir.path(), "vm1", &state);
+        let restored = read_state(dir.path(), "vm1").unwrap();
+        let serialized = serde_json::to_value(restored).unwrap();
+        assert_eq!(serialized["hooks"], hooks);
+    }
+
+    #[test]
     fn state_json_roundtrip() {
         let state = InstanceState {
             target: ".#test".into(),
@@ -346,6 +376,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -367,6 +398,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -387,6 +419,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -407,6 +440,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         write_state(dir.path(), "myvm", &state);
 
@@ -436,6 +470,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -469,6 +504,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -496,6 +532,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         write_state(dir.path(), "vm1", &state);
 
@@ -549,6 +586,7 @@ mod tests {
                     port_specs: vec![],
                     ssh_extra_config: vec![],
                     descriptor: None,
+                    hooks: HostHooks::default(),
                 },
             );
         };
@@ -589,6 +627,7 @@ mod tests {
                 port_specs: vec![],
                 ssh_extra_config: vec![],
                 descriptor: None,
+                hooks: HostHooks::default(),
             },
         );
         assert!(dir.path().join("vm1").exists());
@@ -620,6 +659,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -715,6 +755,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -736,6 +777,7 @@ mod tests {
             port_specs: vec!["8080:80".into(), ":443".into()],
             ssh_extra_config: vec![],
             descriptor: None,
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -918,6 +960,7 @@ mod tests {
             port_specs: vec![],
             ssh_extra_config: vec![],
             descriptor: Some(desc),
+            hooks: HostHooks::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
@@ -953,6 +996,7 @@ mod tests {
                     port_specs: vec![],
                     ssh_extra_config: vec![],
                     descriptor: None,
+                    hooks: HostHooks::default(),
                 },
             );
         };

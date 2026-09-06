@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -79,6 +80,7 @@ pub fn discover_guest(instance_name: &str) -> Result<Vec<PathBuf>> {
 pub fn discover(
     instance_name: &str,
     nix_hooks: &[String],
+    configured_hooks: &BTreeMap<String, String>,
     hook_point: &str,
 ) -> Result<Vec<PathBuf>> {
     let mut hooks = vec![];
@@ -88,6 +90,7 @@ pub fn discover(
         hooks.extend(discover_scripts(&top)?);
         hooks.extend(discover_scripts(&top.join(instance_name))?);
     }
+    hooks.extend(configured_hooks.values().map(PathBuf::from));
 
     // Nix-provided hooks
     for path in nix_hooks {

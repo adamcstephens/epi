@@ -13,7 +13,10 @@ fn gcroots_dir(instance: &str) -> PathBuf {
 
 /// Collect all nix store paths from a descriptor that need GC roots.
 /// Returns (label, store_path) pairs.
-fn store_paths_to_root(desc: &Descriptor) -> Vec<(String, &str)> {
+fn store_paths_to_root<'a>(
+    desc: &'a Descriptor,
+    configured: &'a instance_store::HostHooks,
+) -> Vec<(String, &'a str)> {
     let mut paths = Vec::new();
 
     paths.push(("kernel".to_string(), desc.kernel.as_str()));
@@ -38,6 +41,16 @@ fn store_paths_to_root(desc: &Descriptor) -> Vec<(String, &str)> {
             paths.push((format!("hook-guest-init-{name}"), script.as_str()));
         }
     }
+    for (point, scripts) in [
+        ("post-launch", &configured.post_launch),
+        ("pre-stop", &configured.pre_stop),
+    ] {
+        for (index, script) in scripts.values().enumerate() {
+            if target::is_nix_store_path(script) {
+                paths.push((format!("configured-{point}-{index}"), script.as_str()));
+            }
+        }
+    }
 
     paths
 }
@@ -46,11 +59,15 @@ fn store_paths_to_root(desc: &Descriptor) -> Vec<(String, &str)> {
 ///
 /// Each root is a symlink in `.epi/state/<instance>/gcroots/<label>` registered
 /// via `nix-store --add-root --realise`.
-pub fn create(instance: &str, desc: &Descriptor) -> Result<()> {
+pub fn create(
+    instance: &str,
+    desc: &Descriptor,
+    configured: &instance_store::HostHooks,
+) -> Result<()> {
     let dir = gcroots_dir(instance);
     fs::create_dir_all(&dir).with_context(|| format!("creating gcroots dir: {}", dir.display()))?;
 
-    let paths = store_paths_to_root(desc);
+    let paths = store_paths_to_root(desc, configured);
     for (label, store_path) in &paths {
         let link = dir.join(label);
         let link_str = link.to_string_lossy();
@@ -87,7 +104,8 @@ mod tests {
             hooks: HooksDescriptor::default(),
         };
 
-        let paths = store_paths_to_root(&desc);
+        let configured = instance_store::HostHooks::default();
+        let paths = store_paths_to_root(&desc, &configured);
         assert_eq!(paths.len(), 2);
         assert_eq!(
             paths[0],
@@ -112,7 +130,8 @@ mod tests {
             hooks: HooksDescriptor::default(),
         };
 
-        let paths = store_paths_to_root(&desc);
+        let configured = instance_store::HostHooks::default();
+        let paths = store_paths_to_root(&desc, &configured);
         assert_eq!(
             paths[1],
             ("disk".to_string(), "/nix/store/ghi-qcow2/image.qcow2")
@@ -131,7 +150,8 @@ mod tests {
             hooks: HooksDescriptor::default(),
         };
 
-        let paths = store_paths_to_root(&desc);
+        let configured = instance_store::HostHooks::default();
+        let paths = store_paths_to_root(&desc, &configured);
         assert_eq!(paths.len(), 3);
         assert_eq!(paths[2].0, "initrd");
         assert_eq!(paths[2].1, "/nix/store/ghi-initrd/initrd");
@@ -160,7 +180,8 @@ mod tests {
             },
         };
 
-        let paths = store_paths_to_root(&desc);
+        let configured = instance_store::HostHooks::default();
+        let paths = store_paths_to_root(&desc, &configured);
         // kernel + disk + 1 post_launch store path + 1 guest_init store path = 4
         assert_eq!(paths.len(), 4);
         assert_eq!(paths[2].0, "hook-post-launch-00-setup");
@@ -186,7 +207,8 @@ mod tests {
             },
         };
 
-        let paths = store_paths_to_root(&desc);
+        let configured = instance_store::HostHooks::default();
+        let paths = store_paths_to_root(&desc, &configured);
         assert_eq!(paths.len(), 2); // only kernel + disk
     }
 }

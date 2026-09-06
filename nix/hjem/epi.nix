@@ -22,6 +22,26 @@ let
   cfg = config.services.epi;
   enabledInstances = filterAttrs (_: instance: instance.enable) cfg.instances;
   toml = pkgs.formats.toml { };
+  hostHooks = submodule {
+    options = {
+      post-launch = mkOption {
+        type = attrsOf lib.types.path;
+        default = { };
+        description = ''
+          Named executable scripts run on the host after the instance starts,
+          in lexical name order. Paths are saved with the instance at launch.
+        '';
+      };
+      pre-stop = mkOption {
+        type = attrsOf lib.types.path;
+        default = { };
+        description = ''
+          Named executable scripts run on the host before the instance stops,
+          in lexical name order. Paths are saved with the instance at launch.
+        '';
+      };
+    };
+  };
 
   instanceConfig =
     name: instance:
@@ -76,6 +96,8 @@ in
         submodule (
           { ... }:
           {
+            imports = [ (lib.mkAliasOptionModule [ "hooks" ] [ "settings" "hooks" ]) ];
+
             options = {
               enable = lib.mkOption {
                 type = lib.types.bool;
@@ -83,9 +105,22 @@ in
                 default = true;
               };
 
+              hooks = mkOption {
+                type = hostHooks;
+              };
+
               settings = mkOption {
                 type = lib.types.submodule {
                   freeformType = toml.type;
+                  options.hooks = mkOption {
+                    type = hostHooks;
+                    default = { };
+                    description = ''
+                      Host lifecycle hooks saved with the instance at launch.
+                      Named entries merge with the hooks option; conflicting
+                      definitions of the same name require an explicit override.
+                    '';
+                  };
                 };
 
                 default = { };
