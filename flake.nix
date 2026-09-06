@@ -32,6 +32,10 @@
                   epi.hooks.post-launch."00-marker.sh" = pkgs.writeShellScript "post-launch-marker" ''
                     touch "$EPI_STATE_DIR/$EPI_INSTANCE/nix-post-launch-ran"
                   '';
+                  epi.hooks.post-start."00-marker.sh" = pkgs.writeShellScript "post-start-marker" ''
+                    printf '%s\n' post-start >> "$EPI_STATE_DIR/$EPI_INSTANCE/nix-post-start-ran"
+                    printf '%s\n' nix-post-start >> "$EPI_STATE_DIR/$EPI_INSTANCE/configured-hooks.log"
+                  '';
                   epi.hooks.pre-stop."00-marker.sh" = pkgs.writeShellScript "pre-stop-marker" ''
                     touch "$EPI_STATE_DIR/$EPI_INSTANCE/nix-pre-stop-ran"
                   '';

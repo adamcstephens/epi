@@ -84,7 +84,7 @@ EPI provides a Hjem module for declaring user-systemd services. Import it throug
 
 This creates `epi-dev.service` in Alice's user systemd configuration. `settings` is the complete EPI TOML configuration, including `target`. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. Hjem passes `settings.project_dir` directly to EPI; use an absolute path when the project is not relative to the generated configuration directory. The generated config defaults `default_name` to the instance name and disables automatic project mounting when `project_dir` is absent; override either through `settings`.
 
-`hooks.post-launch` and `hooks.pre-stop` are named maps of executable host script paths, also available through `settings.hooks`. Definitions merge using normal Nix module semantics. EPI saves the canonical paths at launch and GC-roots Nix store scripts for the lifetime of the instance, so later `start`, `stop`, and `upgrade` operations do not need the original Hjem configuration. `guest-init` is not supported in these settings.
+`hooks.post-launch`, `hooks.post-start`, and `hooks.pre-stop` are named maps of executable host script paths, also available through `settings.hooks`. Definitions merge using normal Nix module semantics. EPI saves the canonical paths at launch and GC-roots Nix store scripts for the lifetime of the instance, so later `start`, `stop`, and `upgrade` operations do not need the original Hjem configuration. `guest-init` is not supported in these settings.
 
 ### Projects
 
@@ -153,11 +153,11 @@ Completions include dynamic instance name tab-completion.
 
 ## Hooks
 
-epi supports hook scripts at three points in the instance lifecycle. Host-side `post-launch` and `pre-stop` hooks execute in this order:
+epi supports hook scripts at four points in the instance lifecycle. Each host-side hook point (`post-launch`, `post-start`, and `pre-stop`) executes in this order:
 
 1. **User hooks** — `~/.config/epi/hooks/<hook>.d/`
 2. **Project hooks** — `.epi/hooks/<hook>.d/`
-3. **Configured host hooks** — named paths in user/project TOML under `hooks.post-launch` and `hooks.pre-stop`
+3. **Configured host hooks** — named paths in user/project TOML under `hooks.post-launch`, `hooks.post-start`, and `hooks.pre-stop`
 4. **Nix hooks** — declared in the nixosConfiguration via `epi.hooks.<hook>`
 
 Filesystem hooks are sorted by filename; each filesystem layer also supports instance-specific subdirectories (`<hook>.d/<instance-name>/`) whose scripts run after the layer's top-level scripts. Non-executable filesystem hooks produce a warning and are skipped. Configured and Nix hooks run in lexical key order. Configured scripts must be executable; execution errors fail the command.
@@ -165,6 +165,9 @@ Filesystem hooks are sorted by filename; each filesystem layer also supports ins
 ```toml
 [hooks.post-launch]
 "10-ready" = "scripts/ready"
+
+[hooks.post-start]
+"10-ready" = "scripts/on-start"
 
 [hooks.pre-stop]
 "10-sync" = "scripts/sync"
@@ -174,7 +177,7 @@ Configured hook maps merge per hook point, with project entries overriding user 
 
 ### post-launch
 
-Runs on the **host** after the VM is reachable via SSH on `launch`, `start`, `rebuild`, and `upgrade --mode boot`. `--no-provision` skips these hooks on launch/start. Useful for provisioning the guest from the outside (e.g. copying dotfiles, running commands over SSH).
+Runs on the **host** after the VM is reachable via SSH on `launch`, `rebuild`, and `upgrade --mode boot`, but not on ordinary `start`. `--no-provision` skips these hooks on launch. Useful for provisioning the guest from the outside (e.g. copying dotfiles, running commands over SSH).
 
 Scripts receive the following environment variables:
 
@@ -198,6 +201,14 @@ Since hooks run on the host (not inside the VM), use `$EPI_BIN exec` to run comm
 jq '{oauthAccount,userID,theme,firstStartTime,installMethod,hasCompletedOnboarding}' ~/.claude.json \
   | "$EPI_BIN" exec "$EPI_INSTANCE" -- "cat > .claude.json"
 ```
+
+### post-start
+
+Runs on the **host** after `post-launch` completes on `launch`, and after SSH readiness and host key trust on each later `start`. It receives the same environment variables and uses the same hook-layer ordering as `post-launch`. Useful for work needed whenever the instance is started, without repeating provisioning.
+
+`launch --no-provision` and `start --no-provision` skip SSH readiness, host key trust, and both post hook points. Starting an already-running instance runs neither hook point. `rebuild` and `upgrade --mode boot` run `post-launch`, not `post-start`.
+
+If a `post-launch` hook fails, `post-start` does not run. If a `post-start` hook fails, remaining hooks are skipped and the command reports the error. In both cases, the VM remains running; hooks are not rolled back.
 
 ### guest-init
 

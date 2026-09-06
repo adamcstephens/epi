@@ -24,6 +24,14 @@ let
       printf '%s\n' ready
     '';
   };
+  postStartHook = pkgs.writeTextFile {
+    name = "epi-post-start";
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      exit 0
+    '';
+  };
   preStopHook = pkgs.writeTextFile {
     name = "epi-pre-stop";
     executable = true;
@@ -70,6 +78,7 @@ let
           services.epi.instances.dev = {
             enable = true;
             hooks.post-launch.ready = launchHook;
+            hooks.post-start.ready = postStartHook;
             hooks.pre-stop.cleanup = preStopHook;
             settings = {
               target = ".#dev";
@@ -78,12 +87,14 @@ let
               ports = [ ":8080" ];
               project_dir = "/home/test/projects/dev";
               hooks.post-launch.from-settings = postLaunchHook;
+              hooks.post-start.from-settings = postStartHook;
             };
           };
           services.epi.package = fakeEpi;
         }
         {
           services.epi.instances.dev.hooks.pre-stop.another = preStopHook;
+          services.epi.instances.dev.hooks.post-start.another = postStartHook;
         }
       ];
     };
@@ -128,6 +139,11 @@ pkgs.runCommand "epi-hjem-module-test" { nativeBuildInputs = [ pkgs.python3 ]; }
       "post-launch": {
           "ready": "${postLaunchHook}",
           "from-settings": "${postLaunchHook}",
+      },
+      "post-start": {
+          "ready": "${postStartHook}",
+          "from-settings": "${postStartHook}",
+          "another": "${postStartHook}",
       },
       "pre-stop": {
           "cleanup": "${preStopHook}",

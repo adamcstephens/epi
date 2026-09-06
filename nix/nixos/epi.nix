@@ -280,6 +280,12 @@ in
         description = "Post-launch hook scripts declared in NixOS config. Keys are script names (used for lexical ordering), values are paths to executable scripts.";
       };
 
+      post-start = lib.mkOption {
+        type = lib.types.attrsOf lib.types.path;
+        default = { };
+        description = "Post-start hook scripts run on the host after SSH readiness on launch and start. Keys are script names (used for lexical ordering), values are paths to executable scripts.";
+      };
+
       pre-stop = lib.mkOption {
         type = lib.types.attrsOf lib.types.path;
         default = { };
@@ -312,6 +318,7 @@ in
       config.boot.kernelPackages.epiConfigCheck
     ]
     ++ (lib.attrValues cfg.hooks.post-launch)
+    ++ (lib.attrValues cfg.hooks.post-start)
     ++ (lib.attrValues cfg.hooks.pre-stop);
 
     # qcow2 stores only allocated clusters, so unlike the fixed-size sparse

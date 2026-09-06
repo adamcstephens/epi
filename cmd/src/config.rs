@@ -166,6 +166,7 @@ fn merge_configs(user: Option<Config>, project: Option<Config>) -> Config {
     let mut user = user.unwrap_or_default();
     let project = project.unwrap_or_default();
     user.hooks.post_launch.extend(project.hooks.post_launch);
+    user.hooks.post_start.extend(project.hooks.post_start);
     user.hooks.pre_stop.extend(project.hooks.pre_stop);
     Config {
         target: project.target.or(user.target),
@@ -324,6 +325,7 @@ pub fn resolve(
     let mut hooks = config.hooks;
     for (point, paths) in [
         ("post-launch", &mut hooks.post_launch),
+        ("post-start", &mut hooks.post_start),
         ("pre-stop", &mut hooks.pre_stop),
     ] {
         for (name, path) in paths {
@@ -390,6 +392,7 @@ pub fn generate_toml(config: &Config) -> String {
     }
     for (point, hooks) in [
         ("post-launch", &config.hooks.post_launch),
+        ("post-start", &config.hooks.post_start),
         ("pre-stop", &config.hooks.pre_stop),
     ] {
         if hooks.is_empty() {
@@ -421,7 +424,10 @@ pub fn parse(content: &str, base: &Path) -> Result<Config> {
             .map(|m| resolve_mount_spec(m, base))
             .collect::<Result<Vec<_>>>()?;
     }
-    if !config.hooks.post_launch.is_empty() || !config.hooks.pre_stop.is_empty() {
+    if !config.hooks.post_launch.is_empty()
+        || !config.hooks.post_start.is_empty()
+        || !config.hooks.pre_stop.is_empty()
+    {
         let absolute_base;
         let base = if base.is_absolute() {
             base
@@ -433,6 +439,7 @@ pub fn parse(content: &str, base: &Path) -> Result<Config> {
             .hooks
             .post_launch
             .values_mut()
+            .chain(config.hooks.post_start.values_mut())
             .chain(config.hooks.pre_stop.values_mut())
         {
             *path = resolve_path(path, base).to_string_lossy().into_owned();
@@ -451,6 +458,8 @@ mod tests {
 [hooks.post-launch]
 "notify.ready" = "scripts/notify"
 absolute = "/nix/store/ready/bin/ready"
+[hooks.post-start]
+"notify.resume" = "scripts/resume"
 [hooks.pre-stop]
 flush = "scripts/flush"
 "#;
@@ -464,6 +473,10 @@ flush = "scripts/flush"
         assert_eq!(
             generated["hooks"]["post-launch"]["absolute"].as_str(),
             Some("/nix/store/ready/bin/ready")
+        );
+        assert_eq!(
+            generated["hooks"]["post-start"]["notify.resume"].as_str(),
+            Some(cwd.join("./scripts/resume").to_str().unwrap())
         );
         assert_eq!(
             generated["hooks"]["pre-stop"]["flush"].as_str(),
@@ -481,6 +494,9 @@ flush = "scripts/flush"
 [hooks.post-launch]
 shared = "user-ready"
 user = "user-only"
+[hooks.post-start]
+shared = "user-resume"
+user = "user-only-resume"
 [hooks.pre-stop]
 shared = "user-stop"
 "#,
@@ -489,6 +505,8 @@ shared = "user-stop"
             r#"
 [hooks.post-launch]
 shared = "project-ready"
+[hooks.post-start]
+shared = "project-resume"
 [hooks.pre-stop]
 project = "project-stop"
 "#,
@@ -504,6 +522,14 @@ project = "project-stop"
         assert_eq!(
             generated["hooks"]["post-launch"]["user"].as_str(),
             Some(user_dir.path().join("user-only").to_str().unwrap())
+        );
+        assert_eq!(
+            generated["hooks"]["post-start"]["shared"].as_str(),
+            Some(project_dir.path().join("project-resume").to_str().unwrap())
+        );
+        assert_eq!(
+            generated["hooks"]["post-start"]["user"].as_str(),
+            Some(user_dir.path().join("user-only-resume").to_str().unwrap())
         );
         assert_eq!(
             generated["hooks"]["pre-stop"]["shared"].as_str(),
@@ -546,6 +572,7 @@ disk_size = "50G"
         assert_eq!(config.target.unwrap(), ".#dev");
         assert!(config.mounts.is_none());
         assert!(config.disk_size.is_none());
+        assert!(config.hooks.post_start.is_empty());
     }
 
     #[test]
@@ -1267,21 +1294,32 @@ project_dir = "/does/not/exist"
     }
 
     #[test]
-    fn resolve_project_target_overrides_user() {
+    fn resolve_project_overrides_user_before_hook_canonicalization() {
         let _lock = RESOLVE_LOCK.lock().unwrap();
 
-        let (_user_dir, user_path) = write_temp_config(r#"target = ".#user""#);
-        let (_proj_dir, proj_path) = write_temp_config(r#"target = ".#project""#);
+        let (_user_dir, user_path) =
+            write_temp_config("target = \".#user\"\n[hooks.post-start]\nresume = \"missing-hook\"");
+        let (proj_dir, proj_path) = write_temp_config(
+            "target = \".#project\"\n[hooks.post-start]\nresume = \"resume-link\"",
+        );
+        let script = proj_dir.path().join("resume.sh");
+        fs::write(&script, "#!/bin/sh\ntrue\n").unwrap();
+        std::os::unix::fs::symlink("resume.sh", proj_dir.path().join("resume-link")).unwrap();
 
         unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
         unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", &proj_path) };
 
-        let resolved = resolve(None, &[], None, None, None, &[], true).unwrap();
+        let resolved = resolve(None, &[], None, None, None, &[], true);
 
         unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
         unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
 
+        let resolved = resolved.unwrap();
         assert_eq!(resolved.target, ".#project");
+        assert_eq!(
+            resolved.hooks.post_start["resume"],
+            script.canonicalize().unwrap().to_str().unwrap()
+        );
     }
 
     #[test]

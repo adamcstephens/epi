@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- `post-start`: Add host hooks for initial launch (after provisioning) and later starts (after SSH readiness), available through filesystem directories, TOML, Hjem, and NixOS. Configured and NixOS paths persist with the instance and remain GC-rooted; `--no-provision` skips the hooks.
 - Host lifecycle hooks: Configure named `hooks.post-launch` and `hooks.pre-stop` script paths in TOML or Hjem instance options. Canonical paths are saved at launch, retained across start/stop/upgrade, and GC-rooted when they reference the Nix store. Project entries override same-name user entries; configured scripts run after filesystem hooks and before NixOS hooks.
 - `project_dir`: Configure a canonical host project directory independently of configuration-file location. Project configuration overrides user configuration; the resolved directory is persisted in instance state, supplied to lifecycle hooks, and automatically mounted unless disabled. Hjem instances pass it through as `settings.project_dir`.
 - `--mount`/`mounts`: Support an optional `:<dst>` destination override (`--mount <src>[:<dst>]`), mirroring `--port HOST:GUEST`. By default a mount still lands in the guest at the same path as the host source; an explicit `dst` places it elsewhere instead, and suppresses the automatic bind into the guest home that normally applies to mounts under the host home directory
@@ -12,11 +13,11 @@
 - `ssh`/`exec`/`cp`: When the instance exists but is stopped, prompt to start it before connecting. Pass `--start` to start it without prompting (e.g. in scripts); with no TTY and no `--start`, the command errors and points at `epi start`
 
 ### Fixed
-- `start`: Run post-launch hooks after SSH readiness, using the stored descriptor and configured host hook paths without re-evaluating the target or Hjem configuration.
 - `rm`: Reap stale helper units before removing state. Previously, if the VM died on its own (e.g. OOM-killed), `epi rm` saw the VM unit as stopped, skipped teardown, and deleted the instance state — orphaning the `passt`/`virtiofsd` units (which kept holding their forwarded ports) with no state left to reap them. `rm` now runs the same stale-runtime reaping as `list`/`stop` before removing state
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 
 ### Changed
+- `start`: Run `post-start` rather than `post-launch` hooks. Provisioning hooks remain on launch, rebuild, and boot-mode upgrade; a provisioning failure prevents post-start hooks from running.
 - Guest boot is roughly 800ms faster. systemd rate-limits its `/proc/self/mountinfo` watch to 5 events per second, and the initrd's own API filesystem mounts exhaust that budget before `sysroot.mount` is queued — every mount job was then held unrunnable until the window expired, stalling the initrd ~840ms with PID 1 completely idle. `SYSTEMD_DEFAULT_MOUNT_RATE_LIMIT_BURST=1000` on the kernel command line lifts the limit (the kernel passes unrecognised `NAME=VALUE` arguments to init as environment variables, so it reaches stage-1 PID 1 with no initrd changes). The initrd phase drops from ~2.9s to ~2.1s
 - Guest boot no longer waits ~2s for IPv6 duplicate address detection. `network-online.target` gates `epi-init-hooks`, and `systemd-networkd-wait-online` does not consider a link configured until IPv6 link-local completes DAD — about 2s after DHCPv4 has already returned a usable address. DAD is now disabled (`net.ipv6.conf.{all,default}.accept_dad`); the guest has a single virtio NIC on a point-to-point link, so no address it assigns can collide. `network-online.target` is no longer on the boot critical path
 - `launch`/`start`: Poll for SSH every 200ms instead of every 2s. The old interval quantised the reported ready time to two-second buckets, so guest boot improvements smaller than one poll rounded away to nothing

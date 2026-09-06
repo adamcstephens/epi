@@ -554,7 +554,7 @@ fn e2e_hooks() {
     let dir = TempDir::new().unwrap();
     let scripts = dir.path().join(&name);
     fs::create_dir(&scripts).unwrap();
-    for point in ["post-launch", "pre-stop"] {
+    for point in ["post-launch", "pre-stop", "post-start"] {
         let hook_dir = scripts.join(format!("{name}-{point}"));
         fs::create_dir(&hook_dir).unwrap();
         let path = hook_dir.join("run");
@@ -576,6 +576,7 @@ fn e2e_hooks() {
                 .to_str()
                 .unwrap(),
             scripts.join(format!("{name}-pre-stop")).to_str().unwrap(),
+            scripts.join(format!("{name}-post-start")).to_str().unwrap(),
         ],
     )
     .unwrap();
@@ -583,39 +584,46 @@ fn e2e_hooks() {
     let store_paths: Vec<&str> = added.stdout.lines().collect();
     let post_launch_link = dir.path().join("post-launch");
     std::os::unix::fs::symlink(format!("{}/run", store_paths[0]), &post_launch_link).unwrap();
+    let post_start_link = dir.path().join("post-start");
+    std::os::unix::fs::symlink(format!("{}/run", store_paths[2]), &post_start_link).unwrap();
     let config_path = dir.path().join("config.toml");
     fs::write(
         &config_path,
         format!(
-            "target = {:?}\nproject_mount = false\n[hooks.post-launch]\nsetup = {:?}\n[hooks.pre-stop]\ncleanup = {:?}\n",
+            "target = {:?}\nproject_mount = false\n[hooks.post-launch]\nsetup = {:?}\n[hooks.pre-stop]\ncleanup = {:?}\n[hooks.post-start]\nready = {:?}\n",
             e2e_target(),
             "post-launch",
             format!("{}/run", store_paths[1]),
+            "post-start",
         ),
     )
     .unwrap();
     let xdg = dir.path().join("xdg");
     let project_hooks = dir.path().join("project-hooks");
+    let cache = dir.path().join("cache");
     for (layer, base) in [
         ("user", xdg.join("epi/hooks")),
         ("project", project_hooks.clone()),
     ] {
-        let hook_dir = base.join("post-launch.d");
-        fs::create_dir_all(&hook_dir).unwrap();
-        let script = hook_dir.join("record");
-        fs::write(
-            &script,
-            format!(
-                "#!/usr/bin/env bash\nprintf '%s\\n' '{layer}' >> \"$EPI_STATE_DIR/$EPI_INSTANCE/configured-hooks.log\"\n"
-            ),
-        )
-        .unwrap();
-        fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
+        for point in ["post-launch", "post-start"] {
+            let hook_dir = base.join(format!("{point}.d"));
+            fs::create_dir_all(&hook_dir).unwrap();
+            let script = hook_dir.join("record");
+            fs::write(
+                &script,
+                format!(
+                    "#!/usr/bin/env bash\n\"$EPI_BIN\" exec \"$EPI_INSTANCE\" -- true\nprintf '%s\\n' '{layer}-{point}' >> \"$EPI_STATE_DIR/$EPI_INSTANCE/configured-hooks.log\"\n"
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
     let env = [
         ("XDG_CONFIG_HOME", xdg.to_str().unwrap()),
         ("EPI_PROJECT_CONFIG_FILE", config_path.to_str().unwrap()),
         ("EPI_PROJECT_HOOKS_DIR", project_hooks.to_str().unwrap()),
+        ("EPI_CACHE_DIR", cache.to_str().unwrap()),
     ];
     let run = |args: &[&str]| {
         let out = process::run_with_env(env!("CARGO_BIN_EXE_epi"), args, &env).unwrap();
@@ -627,32 +635,54 @@ fn e2e_hooks() {
         );
     };
     let log = instance_store::instance_path(&name, "configured-hooks.log");
+    run(&["launch", &name, "--no-provision"]);
+    assert!(!log.exists());
+    run(&["stop", &name, "--force"]);
+    let fail_launch = project_hooks.join("post-launch.d/00-fail");
+    fs::write(&fail_launch, "#!/usr/bin/env bash\nexit 23\n").unwrap();
+    fs::set_permissions(&fail_launch, fs::Permissions::from_mode(0o755)).unwrap();
+    let failed =
+        process::run_with_env(env!("CARGO_BIN_EXE_epi"), &["launch", &name], &env).unwrap();
+    assert!(!failed.success());
+    assert!(failed.stderr.contains("00-fail"), "{}", failed.stderr);
+    assert_eq!(fs::read_to_string(&log).unwrap(), "user-post-launch\n");
+    assert!(epi::backend::instance_is_running(&name).unwrap());
+    assert!(!instance_store::instance_path(&name, "nix-post-start-ran").exists());
+    run(&["stop", &name, "--force"]);
+    fs::remove_file(&fail_launch).unwrap();
+    fs::remove_file(&log).unwrap();
     run(&["launch", &name]);
-    assert_eq!(
-        fs::read_to_string(&log).unwrap(),
-        "user\nproject\npost-launch\n"
-    );
-    assert!(instance_store::instance_path(&name, "nix-post-launch-ran").exists());
+    let launch = "user-post-launch\nproject-post-launch\npost-launch\n";
+    let start = "user-post-start\nproject-post-start\npost-start\nnix-post-start\n";
+    let mut expected = format!("{launch}{start}");
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
+    let launch_marker = instance_store::instance_path(&name, "nix-post-launch-ran");
+    assert!(launch_marker.exists());
+    fs::remove_file(&launch_marker).unwrap();
     fs::remove_file(&config_path).unwrap();
     fs::remove_file(&post_launch_link).unwrap();
+    fs::remove_file(&post_start_link).unwrap();
 
+    run(&["start", &name]);
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
     run(&["stop", &name]);
-    assert_eq!(
-        fs::read_to_string(&log).unwrap(),
-        "user\nproject\npost-launch\npre-stop\n"
-    );
+    expected.push_str("pre-stop\n");
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
     assert!(instance_store::instance_path(&name, "nix-pre-stop-ran").exists());
     run(&["start", &name]);
+    expected.push_str(start);
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
+    assert!(!launch_marker.exists());
     assert_eq!(
-        fs::read_to_string(&log).unwrap(),
-        "user\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\n"
+        fs::read_to_string(instance_store::instance_path(&name, "nix-post-start-ran")).unwrap(),
+        "post-start\npost-start\n"
     );
     run(&["upgrade", &name, "--mode", "boot"]);
-    assert_eq!(
-        fs::read_to_string(&log).unwrap(),
-        "user\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\n"
-    );
+    expected.push_str("pre-stop\n");
+    expected.push_str(launch);
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
     run(&["stop", &name]);
+    expected.push_str("pre-stop\n");
     for store_path in &store_paths {
         let deletion = process::run("nix-store", &["--delete", store_path]).unwrap();
         assert!(!deletion.success(), "persisted hooks must remain GC rooted");
@@ -660,10 +690,17 @@ fn e2e_hooks() {
     }
     run(&["start", &name, "--no-provision"]);
     run(&["stop", &name, "--force"]);
-    assert_eq!(
-        fs::read_to_string(&log).unwrap(),
-        "user\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\npre-stop\nuser\nproject\npost-launch\npre-stop\n"
-    );
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
+    let fail = project_hooks.join("post-start.d/00-fail");
+    fs::write(&fail, "#!/usr/bin/env bash\nexit 23\n").unwrap();
+    fs::set_permissions(&fail, fs::Permissions::from_mode(0o755)).unwrap();
+    let failed = process::run_with_env(env!("CARGO_BIN_EXE_epi"), &["start", &name], &env).unwrap();
+    assert!(!failed.success());
+    assert!(failed.stderr.contains("00-fail"), "{}", failed.stderr);
+    expected.push_str("user-post-start\n");
+    assert_eq!(fs::read_to_string(&log).unwrap(), expected);
+    assert!(epi::backend::instance_is_running(&name).unwrap());
+    run(&["stop", &name, "--force"]);
     run(&["rm", &name]);
     for store_path in &store_paths {
         let deletion = process::run("nix-store", &["--delete", store_path]).unwrap();

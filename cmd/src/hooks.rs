@@ -76,7 +76,7 @@ pub fn discover_guest(instance_name: &str) -> Result<Vec<PathBuf>> {
     Ok(hooks)
 }
 
-/// Discover hooks for a given hook point (post-launch, pre-stop)
+/// Discover hooks for a given hook point (post-launch, post-start, pre-stop)
 pub fn discover(
     instance_name: &str,
     nix_hooks: &[String],

@@ -125,7 +125,8 @@ pub fn cmd_launch(
                     &extra_ssh,
                 )?;
                 eprintln!("Instance {inst} is ready");
-                run_post_launch_hooks(&inst, ssh_sock, &key, pdir)?;
+                run_post_launch_hooks(&inst, ssh_sock, &key, pdir.clone())?;
+                run_post_start_hooks(&inst, ssh_sock, &key, pdir)?;
                 Ok(())
             }))
         } else {
@@ -135,7 +136,9 @@ pub fn cmd_launch(
         console::attach(instance, None, None)?;
 
         if let Some(handle) = wait_handle {
-            let _ = handle.join();
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("SSH readiness and hooks thread panicked"))??;
         }
     } else if ssh_port.is_some() && !no_provision {
         let timeout = std::env::var("EPI_WAIT_TIMEOUT_SECONDS")
@@ -151,7 +154,8 @@ pub fn cmd_launch(
             &resolved.ssh_extra_config,
         )?;
 
-        run_post_launch_hooks(instance, ssh_sock, &ssh_key_path, project_dir_ref)?;
+        run_post_launch_hooks(instance, ssh_sock, &ssh_key_path, project_dir_ref.clone())?;
+        run_post_start_hooks(instance, ssh_sock, &ssh_key_path, project_dir_ref)?;
     }
 
     Ok(())
@@ -392,6 +396,38 @@ fn run_post_launch_hooks(
     Ok(())
 }
 
+fn run_post_start_hooks(
+    instance: &str,
+    ssh: SocketAddr,
+    ssh_key_path: &str,
+    project_dir: Option<String>,
+) -> Result<()> {
+    let state = instance_store::load_state(instance)?
+        .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
+    let descriptor = state.descriptor.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("instance {instance} has no stored descriptor — re-launch required")
+    })?;
+    let hook_scripts = hooks::discover(
+        instance,
+        &descriptor.hooks.post_start_scripts(),
+        &state.hooks.post_start,
+        "post-start",
+    )?;
+    if !hook_scripts.is_empty() {
+        let env = hooks::HookEnv {
+            instance_name: instance.to_string(),
+            ssh_host: ssh.ip().to_string(),
+            ssh_port: ssh.port(),
+            ssh_key_path: ssh_key_path.to_string(),
+            ssh_user: ssh::user(),
+            state_dir: instance_store::state_dir().to_string_lossy().to_string(),
+            project_dir,
+        };
+        hooks::execute(&env, &hook_scripts)?;
+    }
+    Ok(())
+}
+
 pub fn cmd_start(
     instance: &str,
     attach_console: bool,
@@ -433,7 +469,7 @@ pub fn cmd_start(
             wait_timeout,
             &state.ssh_extra_config,
         )?;
-        run_post_launch_hooks(instance, ssh_sock, &ssh_key_path, state.project_dir.clone())?;
+        run_post_start_hooks(instance, ssh_sock, &ssh_key_path, state.project_dir.clone())?;
     }
 
     if attach_console {

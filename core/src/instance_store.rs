@@ -64,6 +64,8 @@ fn default_disk_size() -> String {
 pub struct HostHooks {
     #[serde(rename = "post-launch")]
     pub post_launch: BTreeMap<String, String>,
+    #[serde(rename = "post-start")]
+    pub post_start: BTreeMap<String, String>,
     #[serde(rename = "pre-stop")]
     pub pre_stop: BTreeMap<String, String>,
 }
@@ -350,6 +352,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let hooks = json!({
             "post-launch": {"ready": "/nix/store/ready/bin/ready"},
+            "post-start": {"resume": "/nix/store/resume/bin/resume"},
             "pre-stop": {"flush": "/nix/store/flush/bin/flush"}
         });
         let state: InstanceState = serde_json::from_value(json!({
@@ -934,6 +937,7 @@ mod tests {
 
         let mut post_launch = BTreeMap::new();
         post_launch.insert("00-hook".into(), "/nix/store/hook1/script".into());
+        let post_start = BTreeMap::from([("00-resume".into(), "/nix/store/resume/script".into())]);
 
         let desc = Descriptor {
             kernel: "/nix/store/abc-kernel/bzImage".into(),
@@ -944,6 +948,7 @@ mod tests {
             configured_users: vec!["root".into()],
             hooks: HooksDescriptor {
                 post_launch,
+                post_start,
                 pre_stop: BTreeMap::new(),
                 guest_init: BTreeMap::new(),
             },
@@ -969,13 +974,22 @@ mod tests {
         assert_eq!(d.disk, "/nix/store/def-image/image.img");
         assert_eq!(d.initrd.unwrap(), "/nix/store/ghi-initrd/initrd");
         assert_eq!(d.hooks.post_launch.len(), 1);
+        assert_eq!(
+            d.hooks.post_start_scripts(),
+            vec!["/nix/store/resume/script"]
+        );
     }
 
     #[test]
     fn state_without_descriptor_deserializes_none() {
-        let json = r#"{"target": ".#test", "mounts": []}"#;
-        let state: InstanceState = serde_json::from_str(json).unwrap();
-        assert!(state.descriptor.is_none());
+        for json in [
+            r#"{"target": ".#test", "mounts": []}"#,
+            r#"{"target": ".#test", "hooks": {"post-launch": {}, "pre-stop": {}}}"#,
+        ] {
+            let state: InstanceState = serde_json::from_str(json).unwrap();
+            assert!(state.descriptor.is_none());
+            assert!(state.hooks.post_start.is_empty());
+        }
     }
 
     #[test]

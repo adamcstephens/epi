@@ -77,7 +77,7 @@ enum Command {
         #[arg(long)]
         no_project_mount: bool,
 
-        /// Skip post-launch provisioning (SSH wait, host key trust, hooks)
+        /// Skip SSH readiness, host key trust, and post-launch/post-start hooks
         #[arg(long)]
         no_provision: bool,
 
@@ -96,7 +96,7 @@ enum Command {
         #[arg(long)]
         console: bool,
 
-        /// Skip post-launch provisioning (SSH wait, host key trust, hooks)
+        /// Skip SSH readiness, host key trust, and post-start hooks
         #[arg(long)]
         no_provision: bool,
 

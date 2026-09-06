@@ -10,6 +10,8 @@ use crate::process;
 pub struct HooksDescriptor {
     #[serde(default, alias = "post-launch")]
     pub post_launch: BTreeMap<String, String>,
+    #[serde(default, alias = "post-start")]
+    pub post_start: BTreeMap<String, String>,
     #[serde(default, alias = "pre-stop")]
     pub pre_stop: BTreeMap<String, String>,
     #[serde(default, alias = "guest-init")]
@@ -53,6 +55,10 @@ impl HooksDescriptor {
     /// Sorted hook script paths for a given hook point.
     pub fn post_launch_scripts(&self) -> Vec<String> {
         self.post_launch.values().cloned().collect()
+    }
+
+    pub fn post_start_scripts(&self) -> Vec<String> {
+        self.post_start.values().cloned().collect()
     }
 
     pub fn pre_stop_scripts(&self) -> Vec<String> {
@@ -358,6 +364,11 @@ fn descriptor_hook_store_paths(desc: &Descriptor) -> Vec<&str> {
             paths.push(script.as_str());
         }
     }
+    for script in desc.hooks.post_start.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
     for script in desc.hooks.pre_stop.values() {
         if is_nix_store_path(script) {
             paths.push(script.as_str());
@@ -377,6 +388,11 @@ fn descriptor_store_paths(desc: &Descriptor) -> Vec<&str> {
         paths.push(initrd.as_str());
     }
     for script in desc.hooks.post_launch.values() {
+        if is_nix_store_path(script) {
+            paths.push(script.as_str());
+        }
+    }
+    for script in desc.hooks.post_start.values() {
         if is_nix_store_path(script) {
             paths.push(script.as_str());
         }
@@ -520,11 +536,56 @@ mod tests {
 
     #[test]
     fn descriptor_deserialize_defaults() {
-        let json = r#"{"kernel": "/k", "disk": "/d"}"#;
-        let desc: Descriptor = serde_json::from_str(json).unwrap();
-        assert_eq!(desc.cmdline, "console=ttyS0 root=/dev/vda2 ro");
-        assert!(desc.initrd.is_none());
-        assert!(desc.configured_users.is_empty());
+        for json in [
+            r#"{"kernel": "/k", "disk": "/d"}"#,
+            r#"{"kernel": "/k", "disk": "/d", "hooks": {"post-launch": {}, "pre-stop": {}}}"#,
+        ] {
+            let desc: Descriptor = serde_json::from_str(json).unwrap();
+            assert_eq!(desc.cmdline, "console=ttyS0 root=/dev/vda2 ro");
+            assert!(desc.initrd.is_none());
+            assert!(desc.configured_users.is_empty());
+            assert!(desc.hooks.post_start_scripts().is_empty());
+        }
+    }
+
+    #[test]
+    fn descriptor_store_paths_include_only_store_hooks() {
+        let desc: Descriptor = serde_json::from_str(
+            r#"{
+                "kernel": "/nix/store/kernel/bzImage",
+                "disk": "/nix/store/disk/image",
+                "hooks": {
+                    "post-launch": {"ready": "/nix/store/ready/script"},
+                    "post-start": {
+                        "resume": "/nix/store/resume/script",
+                        "local": "/home/user/resume.sh"
+                    },
+                    "pre-stop": {"flush": "/nix/store/flush/script"},
+                    "guest-init": {"setup": "/nix/store/setup/script"}
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            descriptor_hook_store_paths(&desc),
+            vec![
+                "/nix/store/ready/script",
+                "/nix/store/resume/script",
+                "/nix/store/flush/script",
+                "/nix/store/setup/script",
+            ]
+        );
+        assert_eq!(
+            descriptor_store_paths(&desc),
+            vec![
+                "/nix/store/kernel/bzImage",
+                "/nix/store/disk/image",
+                "/nix/store/ready/script",
+                "/nix/store/resume/script",
+                "/nix/store/flush/script",
+                "/nix/store/setup/script",
+            ]
+        );
     }
 
     #[test]
@@ -537,6 +598,7 @@ mod tests {
             "configured_users": ["root", "admin"],
             "hooks": {
                 "post_launch": {"00-hook": "/nix/store/hook1"},
+                "post_start": {"00-resume": "/nix/store/resume"},
                 "pre_stop": {}
             }
         }"#;
@@ -544,6 +606,7 @@ mod tests {
         assert_eq!(desc.initrd.unwrap(), "/nix/store/abc/initrd");
         assert_eq!(desc.configured_users.len(), 2);
         assert_eq!(desc.hooks.post_launch.len(), 1);
+        assert_eq!(desc.hooks.post_start_scripts(), vec!["/nix/store/resume"]);
     }
 
     #[test]
@@ -659,12 +722,20 @@ mod tests {
             "configuredUsers": ["root", "admin"],
             "hooks": {
                 "post-launch": {"00-hook1": "/nix/store/hook1"},
+                "post-start": {
+                    "20-last": "/nix/store/last",
+                    "10-first": "/nix/store/first"
+                },
                 "pre-stop": {"00-hook2": "/nix/store/hook2"}
             }
         }"#;
         let desc: Descriptor = serde_json::from_str(json).unwrap();
         assert_eq!(desc.configured_users, vec!["root", "admin"]);
         assert_eq!(desc.hooks.post_launch_scripts(), vec!["/nix/store/hook1"]);
+        assert_eq!(
+            desc.hooks.post_start_scripts(),
+            vec!["/nix/store/first", "/nix/store/last"]
+        );
         assert_eq!(desc.hooks.pre_stop_scripts(), vec!["/nix/store/hook2"]);
     }
 

@@ -31,6 +31,11 @@ fn store_paths_to_root<'a>(
             paths.push((format!("hook-post-launch-{name}"), script.as_str()));
         }
     }
+    for (name, script) in &desc.hooks.post_start {
+        if target::is_nix_store_path(script) {
+            paths.push((format!("hook-post-start-{name}"), script.as_str()));
+        }
+    }
     for (name, script) in &desc.hooks.pre_stop {
         if target::is_nix_store_path(script) {
             paths.push((format!("hook-pre-stop-{name}"), script.as_str()));
@@ -43,6 +48,7 @@ fn store_paths_to_root<'a>(
     }
     for (point, scripts) in [
         ("post-launch", &configured.post_launch),
+        ("post-start", &configured.post_start),
         ("pre-stop", &configured.pre_stop),
     ] {
         for (index, script) in scripts.values().enumerate() {
@@ -163,6 +169,10 @@ mod tests {
         post_launch.insert("00-setup".into(), "/nix/store/hook1/script".into());
         post_launch.insert("01-config".into(), "/home/user/local-hook.sh".into()); // not a store path
 
+        let mut post_start = BTreeMap::new();
+        post_start.insert("00-resume".into(), "/nix/store/resume/script".into());
+        post_start.insert("01-local".into(), "/home/user/resume.sh".into());
+
         let mut guest_init = BTreeMap::new();
         guest_init.insert("00-init".into(), "/nix/store/hook2/script".into());
 
@@ -175,17 +185,43 @@ mod tests {
             configured_users: vec![],
             hooks: HooksDescriptor {
                 post_launch,
+                post_start,
                 pre_stop: BTreeMap::new(),
                 guest_init,
             },
         };
 
-        let configured = instance_store::HostHooks::default();
+        let configured = instance_store::HostHooks {
+            post_start: BTreeMap::from([
+                ("00-local".into(), "/home/user/configured-resume.sh".into()),
+                (
+                    "01-resume".into(),
+                    "/nix/store/configured-resume/script".into(),
+                ),
+            ]),
+            ..Default::default()
+        };
         let paths = store_paths_to_root(&desc, &configured);
-        // kernel + disk + 1 post_launch store path + 1 guest_init store path = 4
-        assert_eq!(paths.len(), 4);
-        assert_eq!(paths[2].0, "hook-post-launch-00-setup");
-        assert_eq!(paths[3].0, "hook-guest-init-00-init");
+        assert_eq!(
+            paths,
+            vec![
+                ("kernel".into(), "/nix/store/abc-kernel/bzImage"),
+                ("disk".into(), "/nix/store/def-image/image.img"),
+                (
+                    "hook-post-launch-00-setup".into(),
+                    "/nix/store/hook1/script"
+                ),
+                (
+                    "hook-post-start-00-resume".into(),
+                    "/nix/store/resume/script"
+                ),
+                ("hook-guest-init-00-init".into(), "/nix/store/hook2/script"),
+                (
+                    "configured-post-start-1".into(),
+                    "/nix/store/configured-resume/script"
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -202,6 +238,7 @@ mod tests {
             configured_users: vec![],
             hooks: HooksDescriptor {
                 post_launch,
+                post_start: BTreeMap::new(),
                 pre_stop: BTreeMap::new(),
                 guest_init: BTreeMap::new(),
             },

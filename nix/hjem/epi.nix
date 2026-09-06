@@ -28,8 +28,17 @@ let
         type = attrsOf lib.types.path;
         default = { };
         description = ''
-          Named executable scripts run on the host after the instance starts,
-          in lexical name order. Paths are saved with the instance at launch.
+          Named executable scripts run on the host after launch, rebuild, or
+          boot upgrade, in lexical name order. Paths are saved with the instance at launch.
+        '';
+      };
+      post-start = mkOption {
+        type = attrsOf lib.types.path;
+        default = { };
+        description = ''
+          Named executable scripts run on the host after SSH readiness on
+          launch and start, in lexical name order. On launch, these run after
+          post-launch hooks. Paths are saved with the instance at launch.
         '';
       };
       pre-stop = mkOption {
