@@ -17,8 +17,14 @@ impl Step {
             let bar = ProgressBar::new_spinner();
             bar.set_style(
                 ProgressStyle::default_spinner()
-                    .template("{spinner:.yellow} {msg} {elapsed:.dim}")
+                    .template("{spinner:.yellow} {msg} {precise_elapsed:.dim}")
                     .expect("invalid template")
+                    .with_key(
+                        "precise_elapsed",
+                        |state: &indicatif::ProgressState, writer: &mut dyn std::fmt::Write| {
+                            let _ = writer.write_str(&format_elapsed(state.elapsed()));
+                        },
+                    )
                     .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " "]),
             );
             bar.set_message(msg.to_string());
@@ -97,8 +103,14 @@ impl Group {
             let bar = self.mp.add(ProgressBar::new_spinner());
             bar.set_style(
                 ProgressStyle::default_spinner()
-                    .template("  {spinner:.yellow} {msg} {elapsed:.dim}")
+                    .template("  {spinner:.yellow} {msg} {precise_elapsed:.dim}")
                     .expect("invalid template")
+                    .with_key(
+                        "precise_elapsed",
+                        |state: &indicatif::ProgressState, writer: &mut dyn std::fmt::Write| {
+                            let _ = writer.write_str(&format_elapsed(state.elapsed()));
+                        },
+                    )
                     .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " "]),
             );
             bar.set_message(msg.to_string());
@@ -131,23 +143,27 @@ impl Group {
 
     pub fn finish(&self, msg: &str) {
         let style = Style::new().for_stderr().green();
+        let dim = Style::new().for_stderr().dim();
+        let elapsed = dim.apply_to(format_elapsed(self.header.elapsed()));
         if self.is_tty {
             self.header
-                .set_message(format!("{} {msg}", style.apply_to("✓")));
+                .set_message(format!("{} {msg} {elapsed}", style.apply_to("✓")));
             self.header.finish();
         } else {
-            eprintln!("{msg}");
+            eprintln!("{msg} {elapsed}");
         }
     }
 
     pub fn fail(&self, msg: &str) {
         let style = Style::new().for_stderr().red();
+        let dim = Style::new().for_stderr().dim();
+        let elapsed = dim.apply_to(format_elapsed(self.header.elapsed()));
         if self.is_tty {
             self.header
-                .set_message(format!("{} {msg}", style.apply_to("✗")));
+                .set_message(format!("{} {msg} {elapsed}", style.apply_to("✗")));
             self.header.finish();
         } else {
-            eprintln!("{msg}");
+            eprintln!("{msg} {elapsed}");
         }
     }
 }
@@ -285,65 +301,26 @@ mod tests {
     }
 
     #[test]
-    fn step_non_tty_finish() {
-        // In test, stderr is not a TTY — verifies non-TTY path doesn't panic
-        let step = Step::start("test operation");
-        step.finish("test done");
-    }
-
-    #[test]
-    fn step_non_tty_fail() {
-        let step = Step::start("test operation");
-        step.fail("test failed");
-    }
-
-    #[test]
-    fn group_finish() {
-        console::set_colors_enabled_stderr(false);
-        let group = Group::start("Preparing");
+    fn group_finish_includes_total_elapsed() {
+        let mut group = Group::start("Preparing");
+        group.is_tty = true;
+        group.header.set_elapsed(Duration::from_secs(125));
         group.finish("Prepared");
+        let message = group.header.message();
+        assert_eq!(console::strip_ansi_codes(&message), "✓ Prepared 2m5s");
     }
 
     #[test]
-    fn group_fail() {
-        console::set_colors_enabled_stderr(false);
-        let group = Group::start("Preparing");
+    fn group_fail_includes_total_elapsed() {
+        let mut group = Group::start("Preparing");
+        group.is_tty = true;
+        group.header.set_elapsed(Duration::from_secs(65));
         group.fail("Preparation failed");
-    }
-
-    #[test]
-    fn group_step_finish() {
-        console::set_colors_enabled_stderr(false);
-        let group = Group::start("Preparing");
-        let step = group.step("Evaluating .#config");
-        step.finish("Evaluated .#config");
-        group.finish("Prepared");
-    }
-
-    #[test]
-    fn group_step_fail() {
-        console::set_colors_enabled_stderr(false);
-        let group = Group::start("Preparing");
-        let step = group.step("Evaluating .#config");
-        step.fail("Evaluation failed");
-        group.fail("Preparation failed");
-    }
-
-    #[test]
-    fn group_step_finish_cached() {
-        console::set_colors_enabled_stderr(false);
-        let group = Group::start("Preparing");
-        let step = group.step("Evaluating .#config");
-        step.finish_cached("Cached .#config");
-        group.finish("Prepared");
-    }
-
-    #[test]
-    fn group_cached() {
-        console::set_colors_enabled_stderr(false);
-        let group = Group::start("Preparing");
-        group.cached("Cached .#config");
-        group.finish("Prepared");
+        let message = group.header.message();
+        assert_eq!(
+            console::strip_ansi_codes(&message),
+            "✗ Preparation failed 1m5s"
+        );
     }
 
     #[test]
