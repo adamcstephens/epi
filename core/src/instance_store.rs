@@ -33,16 +33,18 @@ pub fn parse_port_mapping(s: &str) -> Result<(u16, u16)> {
     }
 }
 
-/// Parse a mount spec like "/host/path" or "/host/path:/guest/path". Only
-/// the last ':' followed by an absolute path counts as an explicit
-/// destination, so a host path containing a literal ':' still parses.
+/// Parse a host path with an optional absolute or guest-home-relative destination.
 pub fn parse_mount_spec(s: &str) -> Result<(String, Option<String>)> {
     let s = s.trim();
     match s.rsplit_once(':') {
         None => Ok((s.to_string(), None)),
-        Some((src, dst)) if dst.starts_with('/') => Ok((src.to_string(), Some(dst.to_string()))),
+        Some((src, dst)) if dst.starts_with('/') || dst == "~" || dst.starts_with("~/") => {
+            Ok((src.to_string(), Some(dst.to_string())))
+        }
         Some(_) => {
-            anyhow::bail!("invalid mount destination in '{s}' — expected an absolute path")
+            anyhow::bail!(
+                "invalid mount destination in '{s}' — expected an absolute path, ~, or ~/path"
+            )
         }
     }
 }
@@ -824,6 +826,21 @@ mod tests {
         let (src, dst) = parse_mount_spec("/host/path:/guest/path").unwrap();
         assert_eq!(src, "/host/path");
         assert_eq!(dst, Some("/guest/path".to_string()));
+    }
+
+    #[test]
+    fn parse_mount_spec_guest_home_destination() {
+        for destination in ["~", "~/.local/state/paseo"] {
+            let spec = format!("~/.local/state/paseo/sower:{destination}");
+            assert_eq!(
+                parse_mount_spec(&spec).unwrap(),
+                (
+                    "~/.local/state/paseo/sower".to_string(),
+                    Some(destination.to_string())
+                )
+            );
+        }
+        assert!(parse_mount_spec("/host:~someone/path").is_err());
     }
 
     #[test]

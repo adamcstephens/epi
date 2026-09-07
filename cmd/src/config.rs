@@ -1099,6 +1099,21 @@ mounts = ["/project/mount"]
     }
 
     #[test]
+    fn resolve_mounts_preserves_guest_home_destinations() {
+        let home = std::env::var("HOME").unwrap();
+        let config = parse(
+            r#"mounts = ["~/docs:~/documents", "/host/data:~"]"#,
+            Path::new("/project"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.mounts.unwrap(),
+            vec![format!("{home}/docs:~/documents"), "/host/data:~".into()]
+        );
+    }
+
+    #[test]
     fn resolve_three_way_mount_dedup() {
         let _lock = RESOLVE_LOCK.lock().unwrap();
 

@@ -73,6 +73,10 @@ let
       for i in $(seq 0 $((MOUNT_COUNT - 1))); do
         HOST_PATH=$(jq -r ".mounts[$i].host" "$EPI_JSON")
         GUEST_PATH=$(jq -r ".mounts[$i].guest" "$EPI_JSON")
+        case "$GUEST_PATH" in
+          \~) GUEST_PATH="$USER_HOME" ;;
+          \~/*) GUEST_PATH="$USER_HOME/''${GUEST_PATH#\~/}" ;;
+        esac
         if [ -n "$USER_HOME" ] && [[ "$GUEST_PATH" == "$USER_HOME"/* ]]; then
           su - "$USERNAME" -c "mkdir -p '$GUEST_PATH'"
         else

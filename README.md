@@ -96,7 +96,7 @@ epi detects a project when `.epi/config.toml` exists in the current directory. A
 
 Mount paths in config are resolved relative to the project root for `.epi/config.toml` and relative to the file directory for an `EPI_PROJECT_CONFIG_FILE` override, so `mounts = ["data"]` in `.epi/config.toml` mounts `<project>/data`. Tilde (`~/`) paths are expanded.
 
-By default a mount is placed in the guest at the same path as the host source. Append `:<dst>` (an absolute guest path) to mount somewhere else, e.g. `--mount ./data:/workspace` or `mounts = ["data:/workspace"]`. Overriding the destination also disables the automatic bind into the guest home for mounts under the host home directory (see the Changelog for that default behavior).
+By default a mount is placed in the guest at the same path as the host source. Append `:<dst>` to mount somewhere else, e.g. `--mount ./data:/workspace` or `mounts = ["data:/workspace"]`. The destination accepts an absolute guest path, `~`, or `~/path`; destination `~` expands to the configured guest user's home, while source `~` expands to the host home. Quote CLI arguments to let EPI handle expansion, e.g. `--mount '~/.local/state/paseo/sower:~/.local/state/paseo'`. Overriding the destination also disables the automatic bind into the guest home for mounts under the host home directory (see the Changelog for that default behavior).
 
 ### Project initialization
 

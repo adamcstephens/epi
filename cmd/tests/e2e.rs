@@ -486,6 +486,71 @@ fn e2e_mount_explicit_dst() {
 
 #[test]
 #[ignore]
+fn e2e_mount_home_dst_persists_after_restart() {
+    let name = unique_name("mounthome");
+    let _guard = InstanceGuard::new(&name);
+    let home_dir = TempDir::new().unwrap();
+    let nested_dir = TempDir::new().unwrap();
+    fs::write(home_dir.path().join("home-marker.txt"), "bare-home\n").unwrap();
+    fs::write(nested_dir.path().join("nested-marker.txt"), "nested-home").unwrap();
+    let home_path = fs::canonicalize(home_dir.path()).unwrap();
+    let nested_path = fs::canonicalize(nested_dir.path()).unwrap();
+
+    let mut resolved = default_resolved();
+    // Mount the home first so the nested destination lives inside it.
+    resolved.mounts = vec![
+        format!("{}:~", home_path.display()),
+        format!("{}:~/epi-test/nested", nested_path.display()),
+    ];
+    let runtime = provision_and_wait_with(&name, resolved);
+    let cat_markers = r#"cat "$HOME/home-marker.txt" "$HOME/epi-test/nested/nested-marker.txt""#;
+    let out = ssh_exec(&runtime, cat_markers);
+    assert!(
+        out.success(),
+        "cat guest-home markers failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "bare-home\nnested-home");
+
+    epi::backend::stop_instance(&name, false).expect("stop failed");
+    fs::write(
+        nested_dir.path().join("nested-marker.txt"),
+        "nested-restarted",
+    )
+    .unwrap();
+
+    let empty_xdg = TempDir::new().unwrap();
+    let xdg_str = empty_xdg.path().to_string_lossy().into_owned();
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["start", &name],
+        &[("XDG_CONFIG_HOME", &xdg_str)],
+    )
+    .expect("epi start failed to spawn");
+    assert!(
+        out.success(),
+        "epi start failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+    let runtime = instance_store::find_runtime(&name)
+        .expect("find_runtime failed")
+        .expect("runtime missing after restart");
+    ssh::wait_for_ssh(&ssh::config_path(&name), &name, 120).expect("ssh wait failed after restart");
+    let out = ssh_exec(&runtime, cat_markers);
+    assert!(
+        out.success(),
+        "cat guest-home markers after restart failed (exit {}): {}",
+        out.status,
+        out.stderr
+    );
+    assert_eq!(out.stdout, "bare-home\nnested-restarted");
+}
+
+#[test]
+#[ignore]
 fn e2e_configured_project_dir_is_mounted() {
     let name = unique_name("configured-project");
     let _guard = InstanceGuard::new(&name);

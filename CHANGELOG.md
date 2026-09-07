@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- `--mount`/`mounts`: Accept `~` and `~/path` destinations relative to the configured guest user's home, independently of the host home. Destination expansion also applies on subsequent starts.
 - `post-start`: Add host hooks for initial launch (after provisioning) and later starts (after SSH readiness), available through filesystem directories, TOML, Hjem, and NixOS. Configured and NixOS paths persist with the instance and remain GC-rooted; `--no-provision` skips the hooks.
 - Host lifecycle hooks: Configure named `hooks.post-launch` and `hooks.pre-stop` script paths in TOML or Hjem instance options. Canonical paths are saved at launch, retained across start/stop/upgrade, and GC-rooted when they reference the Nix store. Project entries override same-name user entries; configured scripts run after filesystem hooks and before NixOS hooks.
 - `project_dir`: Configure a canonical host project directory independently of configuration-file location. Project configuration overrides user configuration; the resolved directory is persisted in instance state, supplied to lifecycle hooks, and automatically mounted unless disabled. Hjem instances pass it through as `settings.project_dir`.
