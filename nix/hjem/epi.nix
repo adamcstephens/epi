@@ -157,6 +157,7 @@ in
       nameValuePair "epi-${name}" {
         description = "EPI instance ${name}";
         path = [
+          "${config.directory}/.local/state/hjem/standalone/current-profile"
           "/run/wrappers"
           "/run/current-system/sw"
         ];
