@@ -448,6 +448,7 @@ mod tests {
         fs::write(inst_dir.join("serial.sock"), "").unwrap();
 
         let state = instance_store::InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: Some(RunningInstance {
                 id: name.to_string(),

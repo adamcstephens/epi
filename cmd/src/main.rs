@@ -86,6 +86,21 @@ enum Command {
         wait_timeout: u64,
     },
 
+    /// Reconcile a declaratively managed instance with its configuration.
+    Reconcile {
+        /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
+        instance: Option<String>,
+
+        /// Skip SSH readiness, host key trust, and lifecycle hooks.
+        #[arg(long)]
+        no_provision: bool,
+
+        /// Max seconds to wait for SSH.
+        #[arg(long, default_value_t = 120)]
+        wait_timeout: u64,
+    },
+
     /// Start an existing stopped instance.
     Start {
         /// Instance name
@@ -312,6 +327,17 @@ fn run(command: Command) -> Result<()> {
                 no_provision,
                 wait_timeout,
             )
+        }
+        Command::Reconcile {
+            instance,
+            no_provision,
+            wait_timeout,
+        } => {
+            let instance = resolve_instance_name(instance)?;
+            let mut resolved = config::resolve(None, &[], None, None, None, &[], false)?;
+            resolved.target = target::expand_tilde(&resolved.target);
+            target::validate(&resolved.target)?;
+            commands::cmd_reconcile(&instance, &resolved, no_provision, wait_timeout)
         }
         Command::Start {
             instance,

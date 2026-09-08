@@ -48,6 +48,7 @@ pub fn cmd_launch(
             ssh_extra_config: resolved.ssh_extra_config.clone(),
             hooks: resolved.hooks.clone(),
             descriptor: None,
+            declarative: false,
         },
     )?;
 
@@ -159,6 +160,71 @@ pub fn cmd_launch(
     }
 
     Ok(())
+}
+pub fn cmd_reconcile(
+    instance: &str,
+    resolved: &config::Resolved,
+    no_provision: bool,
+    wait_timeout: u64,
+) -> Result<()> {
+    let Some(mut state) = instance_store::load_state(instance)? else {
+        cmd_launch(instance, resolved, false, true, no_provision, wait_timeout)?;
+        let mut state = instance_store::load_state(instance)?
+            .ok_or_else(|| anyhow::anyhow!("instance {instance} disappeared after launch"))?;
+        state.declarative = true;
+        instance_store::save_state(instance, &state)?;
+        return Ok(());
+    };
+
+    if !state.declarative {
+        bail!("instance {instance} is imperatively managed; refusing declarative takeover");
+    }
+
+    let desired = target::resolve_descriptor(&resolved.target)?;
+    let shape_changed = state.mounts != instance_store::canonicalize_mounts(&resolved.mounts)
+        || state.disk_size != resolved.disk_size
+        || state.cpus != resolved.cpus
+        || state.memory_mib != resolved.memory
+        || state.port_specs != resolved.ports;
+    let generation_changed = state.descriptor.as_ref() != Some(&desired);
+
+    if !generation_changed && !shape_changed {
+        if state.hooks != resolved.hooks {
+            state.hooks = resolved.hooks.clone();
+            state.target = resolved.target.clone();
+            instance_store::save_state(instance, &state)?;
+            gcroots::create(instance, &desired, &state.hooks)?;
+        }
+        return cmd_start(instance, false, no_provision, wait_timeout);
+    }
+
+    target::ensure_paths_exist(&resolved.target, &desired)?;
+    target::ensure_hook_paths(&resolved.target, &desired)?;
+
+    let failed_replacement = instance_store::InstanceState {
+        target: resolved.target.clone(),
+        runtime: None,
+        mounts: instance_store::canonicalize_mounts(&resolved.mounts),
+        project_dir: resolved.project_dir.clone(),
+        disk_size: resolved.disk_size.clone(),
+        cpus: resolved.cpus,
+        memory_mib: resolved.memory,
+        port_specs: resolved.ports.clone(),
+        ssh_extra_config: resolved.ssh_extra_config.clone(),
+        hooks: resolved.hooks.clone(),
+        descriptor: Some(desired),
+        declarative: true,
+    };
+
+    cmd_rm(instance, true)?;
+    if let Err(error) = cmd_launch(instance, resolved, false, true, no_provision, wait_timeout) {
+        instance_store::save_state(instance, &failed_replacement)?;
+        return Err(error);
+    }
+    let mut replacement = instance_store::load_state(instance)?
+        .ok_or_else(|| anyhow::anyhow!("instance {instance} disappeared after launch"))?;
+    replacement.declarative = true;
+    instance_store::save_state(instance, &replacement)
 }
 
 fn prepare_and_provision(

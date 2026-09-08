@@ -12,6 +12,7 @@
 - `--mount`/`mounts`: Support an optional `:<dst>` destination override (`--mount <src>[:<dst>]`), mirroring `--port HOST:GUEST`. By default a mount still lands in the guest at the same path as the host source; an explicit `dst` places it elsewhere instead, and suppresses the automatic bind into the guest home that normally applies to mounts under the host home directory
 - macOS (VZ) backend: Enable nested virtualization for Linux guests, so the guest exposes `/dev/kvm` and can run nested VMs (requires Apple Silicon M3+ and macOS 15+)
 - `ssh`/`exec`/`cp`: When the instance exists but is stopped, prompt to start it before connecting. Pass `--start` to start it without prompting (e.g. in scripts); with no TTY and no `--start`, the command errors and points at `epi start`
+- Artifact targets: NixOS now exposes `config.system.build.epi`, a versioned manifest and linked closure containing the guest toplevel, boot artifacts, and hooks. Hjem services reconcile this target on activation; unchanged instances restart normally, changed target or machine settings recreate the instance, and declarative services refuse to take over imperative instances.
 
 ### Fixed
 - `rm`: Reap stale helper units before removing state. Previously, if the VM died on its own (e.g. OOM-killed), `epi rm` saw the VM unit as stopped, skipped teardown, and deleted the instance state — orphaning the `passt`/`virtiofsd` units (which kept holding their forwarded ports) with no state left to reap them. `rm` now runs the same stale-runtime reaping as `list`/`stop` before removing state

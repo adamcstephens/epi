@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::process;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HooksDescriptor {
     #[serde(default, alias = "post-launch")]
     pub post_launch: BTreeMap<String, String>,
@@ -18,8 +18,10 @@ pub struct HooksDescriptor {
     pub guest_init: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Descriptor {
+    #[serde(default)]
+    pub toplevel: String,
     pub kernel: String,
     pub disk: String,
     #[serde(default, alias = "diskQcow2")]
@@ -32,6 +34,13 @@ pub struct Descriptor {
     pub configured_users: Vec<String>,
     #[serde(default)]
     pub hooks: HooksDescriptor,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ArtifactManifest {
+    version: u32,
+    #[serde(flatten)]
+    descriptor: Descriptor,
 }
 
 fn default_cmdline() -> String {
@@ -70,7 +79,7 @@ impl HooksDescriptor {
     }
 }
 
-/// Expand tilde in the flake-ref portion of a target string
+/// Expand tilde in the flake-ref portion of a target string.
 pub fn expand_tilde(target: &str) -> String {
     if let Some((flake, config)) = target.split_once('#') {
         if let Some(rest) = flake.strip_prefix("~/")
@@ -87,11 +96,16 @@ pub fn expand_tilde(target: &str) -> String {
     target.to_string()
 }
 
-/// Validate target format: must contain '#'
+/// Validate a flake target or realized EPI artifact path.
 pub fn validate(target: &str) -> Result<()> {
+    if is_nix_store_path(target) {
+        return Ok(());
+    }
     let parts: Vec<&str> = target.splitn(2, '#').collect();
     if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-        bail!("invalid target format: expected <flake-ref>#<config-name>, got: {target}");
+        bail!(
+            "invalid target format: expected <flake-ref>#<config-name> or /nix/store/<artifact>, got: {target}"
+        );
     }
     Ok(())
 }
@@ -106,8 +120,26 @@ pub fn canonicalize(target: &str) -> String {
     target.to_string()
 }
 
-/// Resolve a flake target to a descriptor by evaluating nix
+/// Resolve a flake target or an EPI artifact target to a descriptor.
 pub fn resolve_descriptor(target: &str) -> Result<Descriptor> {
+    if is_nix_store_path(target) {
+        let manifest_path = Path::new(target).join("manifest.json");
+        let content = fs::read_to_string(&manifest_path).with_context(|| {
+            format!("reading EPI artifact manifest {}", manifest_path.display())
+        })?;
+        let manifest: ArtifactManifest = serde_json::from_str(&content).with_context(|| {
+            format!("parsing EPI artifact manifest {}", manifest_path.display())
+        })?;
+        if manifest.version != 1 {
+            bail!(
+                "unsupported EPI artifact manifest version {} at {}",
+                manifest.version,
+                manifest_path.display()
+            );
+        }
+        return Ok(manifest.descriptor);
+    }
+
     if let Ok(resolver) = std::env::var("EPI_TARGET_RESOLVER_CMD") {
         let out = process::run_with_env(&resolver, &[], &[("EPI_TARGET", target)])?;
         if !out.success() {
@@ -124,7 +156,6 @@ pub fn resolve_descriptor(target: &str) -> Result<Descriptor> {
 
     let canonical = canonicalize(target);
 
-    // Check target exists
     let check = process::run("nix", &["eval", &canonical, "--apply", "x: true"])?;
     if !check.success() {
         bail!(
@@ -134,7 +165,6 @@ pub fn resolve_descriptor(target: &str) -> Result<Descriptor> {
         );
     }
 
-    // Evaluate config
     let epi_attr = format!("{canonical}.config.epi");
     let eval = process::run("nix", &["eval", "--json", &epi_attr])?;
     if !eval.success() {
@@ -384,6 +414,9 @@ fn descriptor_hook_store_paths(desc: &Descriptor) -> Vec<&str> {
 
 fn descriptor_store_paths(desc: &Descriptor) -> Vec<&str> {
     let mut paths = vec![desc.kernel.as_str(), desc.root_disk()];
+    if !desc.toplevel.is_empty() {
+        paths.push(desc.toplevel.as_str());
+    }
     if let Some(ref initrd) = desc.initrd {
         paths.push(initrd.as_str());
     }
@@ -619,6 +652,7 @@ mod tests {
     #[test]
     fn root_disk_falls_back_to_raw_when_no_qcow2() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: None,
@@ -634,6 +668,7 @@ mod tests {
     #[test]
     fn root_disk_prefers_qcow2_on_linux() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: Some("/q".into()),
@@ -649,6 +684,7 @@ mod tests {
     #[test]
     fn root_disk_uses_raw_on_macos() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: Some("/q".into()),
@@ -664,6 +700,7 @@ mod tests {
     #[test]
     fn all_artifacts_uses_qcow2_image_on_linux() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: Some("/q".into()),
@@ -700,6 +737,7 @@ mod tests {
         fs::write(&raw, "").unwrap();
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: raw.to_string_lossy().into(),
             disk_qcow2: Some("/nonexistent/disk.qcow2".into()),
@@ -759,6 +797,7 @@ mod tests {
         fs::write(&initrd, "").unwrap();
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: disk.to_string_lossy().into(),
             disk_qcow2: None,
@@ -779,6 +818,7 @@ mod tests {
         fs::write(&kernel, "").unwrap();
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: "/nonexistent/disk".into(),
             disk_qcow2: None,
@@ -803,6 +843,7 @@ mod tests {
         fs::write(&disk, "").unwrap();
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: disk.to_string_lossy().into(),
             disk_qcow2: None,
@@ -849,6 +890,7 @@ mod tests {
     #[test]
     fn descriptor_roundtrip_json() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: None,
@@ -874,6 +916,7 @@ mod tests {
     #[test]
     fn all_artifacts_with_initrd() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: None,
@@ -892,6 +935,7 @@ mod tests {
     #[test]
     fn all_artifacts_without_initrd() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: None,
@@ -909,6 +953,7 @@ mod tests {
     #[test]
     fn upgrade_artifacts_with_initrd() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: None,
@@ -928,6 +973,7 @@ mod tests {
     #[test]
     fn upgrade_artifacts_without_initrd() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
             disk_qcow2: None,

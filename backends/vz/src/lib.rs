@@ -779,6 +779,7 @@ pub(crate) mod tests {
         std::fs::write(ip_discovery::ip_file(&inst_dir), "192.168.64.5").unwrap();
 
         let state = instance_store::InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             // A dead pid (init is never our reapable daemon).
             runtime: Some(vz_runtime_named(name, 999_999)),

@@ -61,7 +61,7 @@ fn default_disk_size() -> String {
     "40G".into()
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostHooks {
     #[serde(rename = "post-launch")]
@@ -95,6 +95,8 @@ pub struct InstanceState {
     pub hooks: HostHooks,
     #[serde(default)]
     pub descriptor: Option<target::Descriptor>,
+    #[serde(default)]
+    pub declarative: bool,
 }
 
 pub fn state_dir() -> PathBuf {
@@ -371,6 +373,7 @@ mod tests {
     #[test]
     fn state_json_roundtrip() {
         let state = InstanceState {
+            declarative: false,
             target: ".#test".into(),
             runtime: Some(test_runtime("vm1", "aabb", 3333)),
             mounts: vec!["/a".into(), "/b".into()],
@@ -393,6 +396,7 @@ mod tests {
     #[test]
     fn state_without_runtime() {
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec![],
@@ -414,6 +418,7 @@ mod tests {
     #[test]
     fn state_with_mounts() {
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec!["/home".into(), "/opt".into()],
@@ -435,6 +440,7 @@ mod tests {
     fn write_and_read_state_on_disk() {
         let dir = TempDir::new().unwrap();
         let state = InstanceState {
+            declarative: false,
             target: ".#test".into(),
             runtime: None,
             mounts: vec!["/home".into()],
@@ -465,6 +471,7 @@ mod tests {
     fn set_provisioned_preserves_target_and_mounts() {
         let dir = TempDir::new().unwrap();
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec!["/mnt".into()],
@@ -499,6 +506,7 @@ mod tests {
     fn clear_runtime_preserves_target() {
         let dir = TempDir::new().unwrap();
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: Some(test_runtime("vm1", "abcd", 2222)),
             mounts: vec![],
@@ -527,6 +535,7 @@ mod tests {
     fn set_partial_runtime_writes_unit_id() {
         let dir = TempDir::new().unwrap();
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec!["/mnt".into()],
@@ -581,6 +590,7 @@ mod tests {
                 dir.path(),
                 name,
                 &InstanceState {
+                    declarative: false,
                     target: target.into(),
                     runtime: None,
                     mounts: vec![],
@@ -622,6 +632,7 @@ mod tests {
             dir.path(),
             "vm1",
             &InstanceState {
+                declarative: false,
                 target: ".#dev".into(),
                 runtime: None,
                 mounts: vec![],
@@ -654,6 +665,7 @@ mod tests {
     #[test]
     fn state_with_project_dir_roundtrip() {
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec![],
@@ -750,6 +762,7 @@ mod tests {
     fn state_with_cpus_and_memory_roundtrip() {
         // epi-zeq: cpus and memory_mib persist in state
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec![],
@@ -772,6 +785,7 @@ mod tests {
     fn state_with_port_specs_roundtrip() {
         // epi-ch5: port_specs persist in state
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec![],
@@ -957,6 +971,7 @@ mod tests {
         let post_start = BTreeMap::from([("00-resume".into(), "/nix/store/resume/script".into())]);
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
             disk_qcow2: None,
@@ -972,6 +987,7 @@ mod tests {
         };
 
         let state = InstanceState {
+            declarative: false,
             target: ".#dev".into(),
             runtime: None,
             mounts: vec![],
@@ -1017,6 +1033,7 @@ mod tests {
                 dir.path(),
                 name,
                 &InstanceState {
+                    declarative: false,
                     target: target.into(),
                     runtime: None,
                     mounts: vec![],

@@ -316,6 +316,28 @@ in
         builtins.attrNames normalUsers;
     };
 
+    system.build.epi = pkgs.runCommand "epi-target" { } ''
+      mkdir -p "$out"
+      ln -s ${config.system.build.toplevel} "$out/toplevel"
+      ln -s ${config.system.build.kernel} "$out/kernel"
+      ln -s ${config.system.build.initialRamdisk} "$out/initrd"
+      ln -s ${config.system.build.image} "$out/image"
+      ln -s ${config.system.build.epiDiskQcow2} "$out/image-qcow2"
+      cat > "$out/manifest.json" <<'EOF'
+      ${builtins.toJSON {
+        version = 1;
+        toplevel = "${config.system.build.toplevel}";
+        kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
+        initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
+        disk = "${config.system.build.image}/${config.image.baseName}.raw";
+        diskQcow2 = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
+        cmdline = config.epi.cmdline;
+        configuredUsers = config.epi.configuredUsers;
+        hooks = config.epi.hooks;
+      }}
+      EOF
+    '';
+
     system.extraDependencies = [
       # Fails the build if a kernel symbol the guest depends on did not
       # survive Kconfig dependency resolution.

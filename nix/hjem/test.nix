@@ -3,8 +3,7 @@ let
   fakeEpi = pkgs.writeShellScriptBin "epi" ''
     printf '%s\n' "$*" >> "$EPI_TEST_LOG"
     case "$1" in
-      launch) mkdir -p "$EPI_STATE_DIR/dev"; touch "$EPI_STATE_DIR/dev/state.json" ;;
-      rm) rm -rf "$EPI_STATE_DIR/dev" ;;
+      reconcile) mkdir -p "$EPI_STATE_DIR/dev"; touch "$EPI_STATE_DIR/dev/state.json" ;;
     esac
   '';
 
@@ -159,17 +158,14 @@ pkgs.runCommand "epi-hjem-module-test" { nativeBuildInputs = [ pkgs.python3 ]; }
   PY
 
   ${service.serviceConfig.ExecStart}
-  grep --quiet --line-regexp 'launch' "$EPI_TEST_LOG"
-  test "$(cat "$EPI_STATE_DIR/dev/.hjem-generation")" = ${source}
+  grep --quiet --line-regexp 'reconcile' "$EPI_TEST_LOG"
 
   : > "$EPI_TEST_LOG"
   ${service.serviceConfig.ExecStart}
-  grep --quiet --line-regexp 'start' "$EPI_TEST_LOG"
+  grep --quiet --line-regexp 'reconcile' "$EPI_TEST_LOG"
 
   : > "$EPI_TEST_LOG"
   ${changedService.serviceConfig.ExecStart}
-  grep --quiet --line-regexp 'rm --force' "$EPI_TEST_LOG"
-  grep --quiet --line-regexp 'launch' "$EPI_TEST_LOG"
-  test "$(cat "$EPI_STATE_DIR/dev/.hjem-generation")" = ${changedSource}
+  grep --quiet --line-regexp 'reconcile' "$EPI_TEST_LOG"
   touch $out
 ''

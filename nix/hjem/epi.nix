@@ -74,22 +74,7 @@ let
         pkgs.coreutils
       ];
       text = ''
-        state_dir="''${EPI_STATE_DIR:-$HOME/.local/state/epi}"
-        state_file="$state_dir/${name}/state.json"
-        generation_file="$state_dir/${name}/.hjem-generation"
-        generation=${configSource name instance}
-
-        if [ -e "$state_file" ] && [ -f "$generation_file" ] && [ "$(cat "$generation_file")" = "$generation" ]; then
-          exec ${getExe cfg.package} start
-        fi
-
-        if [ -e "$state_file" ]; then
-          ${getExe cfg.package} rm --force
-        fi
-
-        ${getExe cfg.package} launch
-        mkdir -p "$state_dir/${name}"
-        printf '%s' "$generation" > "$generation_file"
+        exec ${getExe cfg.package} reconcile
       '';
     };
 in

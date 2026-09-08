@@ -102,6 +102,7 @@ fn provision_and_wait_with(
     instance_store::save_state(
         name,
         &instance_store::InstanceState {
+            declarative: false,
             target: resolved.target.clone(),
             runtime: None,
             mounts: instance_store::canonicalize_mounts(&resolved.mounts),
@@ -384,6 +385,7 @@ fn e2e_mount() {
     instance_store::save_state(
         &name,
         &instance_store::InstanceState {
+            declarative: false,
             target: target_str.to_string(),
             runtime: None,
             mounts: instance_store::canonicalize_mounts(&mounts),
@@ -1491,6 +1493,7 @@ fn save_stopped_state(name: &str) {
     instance_store::save_state(
         name,
         &instance_store::InstanceState {
+            declarative: false,
             target: e2e_target(),
             runtime: None,
             mounts: vec![],

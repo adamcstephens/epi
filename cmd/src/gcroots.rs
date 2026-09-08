@@ -20,6 +20,9 @@ fn store_paths_to_root<'a>(
     let mut paths = Vec::new();
 
     paths.push(("kernel".to_string(), desc.kernel.as_str()));
+    if !desc.toplevel.is_empty() {
+        paths.push(("toplevel".to_string(), desc.toplevel.as_str()));
+    }
     paths.push(("disk".to_string(), desc.root_disk()));
 
     if let Some(ref initrd) = desc.initrd {
@@ -101,6 +104,7 @@ mod tests {
     #[test]
     fn store_paths_to_root_kernel_and_disk() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
             disk_qcow2: None,
@@ -127,6 +131,7 @@ mod tests {
     #[test]
     fn store_paths_to_root_uses_qcow2_disk_on_linux() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.raw".into(),
             disk_qcow2: Some("/nix/store/ghi-qcow2/image.qcow2".into()),
@@ -147,6 +152,7 @@ mod tests {
     #[test]
     fn store_paths_to_root_with_initrd() {
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
             disk_qcow2: None,
@@ -177,6 +183,7 @@ mod tests {
         guest_init.insert("00-init".into(), "/nix/store/hook2/script".into());
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
             disk_qcow2: None,
@@ -230,6 +237,7 @@ mod tests {
         post_launch.insert("00-local".into(), "/home/user/hook.sh".into());
 
         let desc = Descriptor {
+            toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
             disk: "/nix/store/def-image/image.img".into(),
             disk_qcow2: None,
