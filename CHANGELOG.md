@@ -15,6 +15,7 @@
 - Artifact targets: NixOS now exposes `config.system.build.epi`, a versioned manifest and linked closure containing the guest toplevel, boot artifacts, and hooks. Hjem services reconcile this target on activation; unchanged instances restart normally, changed target or machine settings recreate the instance, and declarative services refuse to take over imperative instances.
 
 ### Fixed
+- NixOS module: Explicitly enable repart image generation, fixing missing `system.build.image` errors with newer nixpkgs. Update the nixpkgs lock to support the new enable option.
 - `rm`: Reap stale helper units before removing state. Previously, if the VM died on its own (e.g. OOM-killed), `epi rm` saw the VM unit as stopped, skipped teardown, and deleted the instance state — orphaning the `passt`/`virtiofsd` units (which kept holding their forwarded ports) with no state left to reap them. `rm` now runs the same stale-runtime reaping as `list`/`stop` before removing state
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 

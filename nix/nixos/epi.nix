@@ -536,6 +536,7 @@ in
     users.users.root.initialHashedPassword = lib.mkOverride 150 "";
 
     image.repart = {
+      enable = true;
       name = "epi-disk";
       sectorSize = 512;
       partitions."10-root" = {
