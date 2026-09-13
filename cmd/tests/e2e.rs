@@ -304,6 +304,19 @@ fn e2e_ssh_config_trusted_after_launch() {
     assert!(known_hosts.exists(), "known_hosts file should exist");
     let kh_contents = std::fs::read_to_string(&known_hosts).unwrap();
     assert!(!kh_contents.is_empty(), "known_hosts should not be empty");
+    let host_keys: Vec<_> = kh_contents
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        host_keys.len(),
+        1,
+        "known_hosts should contain one host key, got:\n{kh_contents}"
+    );
+    assert!(
+        host_keys[0].contains(" ssh-ed25519 "),
+        "known_hosts should contain an ed25519 host key, got:\n{kh_contents}"
+    );
 
     // Verify SSH config was rewritten with trusted settings
     let config = ssh::config_path(&name);

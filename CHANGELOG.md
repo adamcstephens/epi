@@ -21,6 +21,7 @@
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 
 ### Changed
+- NixOS module: Generate only an ed25519 SSH host key. Removing the unused RSA-4096 key avoids its variable key-generation cost on every fresh guest launch while preserving host-key scanning and strict SSH verification.
 - Preparation: Show total elapsed time in completed and failed group headings. Live task timers retain seconds above a minute (for example, `2m5s`), matching completed task timings.
 - `start`: Run `post-start` rather than `post-launch` hooks. Provisioning hooks remain on launch, rebuild, and boot-mode upgrade; a provisioning failure prevents post-start hooks from running.
 - Guest boot is roughly 800ms faster. systemd rate-limits its `/proc/self/mountinfo` watch to 5 events per second, and the initrd's own API filesystem mounts exhaust that budget before `sysroot.mount` is queued — every mount job was then held unrunnable until the window expired, stalling the initrd ~840ms with PID 1 completely idle. `SYSTEMD_DEFAULT_MOUNT_RATE_LIMIT_BURST=1000` on the kernel command line lifts the limit (the kernel passes unrecognised `NAME=VALUE` arguments to init as environment variables, so it reaches stage-1 PID 1 with no initrd changes). The initrd phase drops from ~2.9s to ~2.1s
