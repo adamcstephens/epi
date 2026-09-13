@@ -171,7 +171,7 @@ fn allocate_port() -> Result<u16> {
 fn resolve_shares(mounts: &[String]) -> Result<Vec<SharedDir>> {
     let mut shares = Vec::with_capacity(mounts.len());
     for (i, spec) in mounts.iter().enumerate() {
-        let (src, dst) = instance_store::parse_mount_spec(spec)?;
+        let (src, dst, read_only) = instance_store::parse_mount_spec(spec)?;
         let mount_dir = Path::new(&src);
         if !mount_dir.is_dir() {
             bail!("mount path is not a directory: {src}");
@@ -184,7 +184,7 @@ fn resolve_shares(mounts: &[String]) -> Result<Vec<SharedDir>> {
             tag: format!("hostfs-{i}"),
             host_path,
             guest_path,
-            read_only: false,
+            read_only,
         });
     }
     Ok(shares)
@@ -222,10 +222,11 @@ fn generate_seed_iso(
     }
     let mount_entries: Vec<serde_json::Value> = shares
         .iter()
-        .map(|s| {
+        .map(|share| {
             serde_json::json!({
-                "host": s.host_path.to_string_lossy(),
-                "guest": s.guest_path.to_string_lossy(),
+                "host": share.host_path.to_string_lossy(),
+                "guest": share.guest_path.to_string_lossy(),
+                "read_only": share.read_only,
             })
         })
         .collect();
@@ -311,6 +312,21 @@ mod tests {
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].guest_path, PathBuf::from("/workspace"));
         assert_eq!(shares[0].host_path, dir.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_shares_preserves_read_only_mode() {
+        let dir_a = TempDir::new().unwrap();
+        let dir_b = TempDir::new().unwrap();
+        let mounts = vec![
+            format!("{}:ro", dir_a.path().display()),
+            format!("{}:/workspace:ro", dir_b.path().display()),
+        ];
+        let shares = resolve_shares(&mounts).unwrap();
+        assert!(shares[0].read_only);
+        assert_eq!(shares[0].guest_path, shares[0].host_path);
+        assert!(shares[1].read_only);
+        assert_eq!(shares[1].guest_path, PathBuf::from("/workspace"));
     }
 
     #[test]

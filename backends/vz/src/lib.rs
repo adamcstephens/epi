@@ -55,8 +55,19 @@ fn ip_timeout() -> Duration {
         .unwrap_or(Duration::from_secs(120))
 }
 
+fn validate_shares(spec: &LaunchSpec) -> Result<()> {
+    if let Some(share) = spec.shares.iter().find(|share| share.read_only) {
+        bail!(
+            "read-only mounts are not supported on macOS: {}",
+            share.host_path.display()
+        );
+    }
+    Ok(())
+}
+
 impl Backend for VzBackend {
     fn launch(&self, spec: &LaunchSpec) -> Result<RunningInstance> {
+        validate_shares(spec)?;
         let disk_path = spec.instance_dir.join("disk.img");
         overlay::ensure_writable_disk(&spec.root_disk, &disk_path, &spec.disk_size)?;
         daemon::write_launch_spec(&spec.instance_dir, spec)?;
@@ -183,6 +194,8 @@ fn wait_for_exit(pid: Pid, timeout: Duration) -> bool {
 /// share (tags stay `hostfs-{N}` so the guest mount loop in
 /// `nix/nixos/epi.nix` is unchanged), NAT network, pty serial console.
 pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
+    validate_shares(spec)?;
+
     let mut builder = vfrust::VmConfig::builder()
         .cpus(spec.cpus)
         .memory_mib(u64::from(spec.memory_mib))
@@ -214,8 +227,6 @@ pub fn vm_config(spec: &LaunchSpec) -> Result<vfrust::VmConfig> {
         }));
 
     for share in &spec.shares {
-        // VZ single-directory shares carry no read-only flag; epi only
-        // creates writable shares today.
         builder = builder.device(vfrust::Device::VirtioFs(vfrust::VirtioFs {
             mount_tag: share.tag.clone(),
             shared_dir: Some(share.host_path.clone()),
@@ -554,6 +565,23 @@ pub(crate) mod tests {
         assert_eq!(
             fs_devices[2].shared_dir,
             Some(PathBuf::from("/Users/me/data"))
+        );
+    }
+
+    #[test]
+    fn vm_config_rejects_read_only_share() {
+        let mut spec = test_spec(PathBuf::from("/inst/testvm"));
+        spec.shares = vec![epi_core::backend::SharedDir {
+            tag: "hostfs-0".into(),
+            host_path: PathBuf::from("/Users/me/project"),
+            guest_path: PathBuf::from("/Users/me/project"),
+            read_only: true,
+        }];
+        let error = vm_config(&spec).err().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("read-only mounts are not supported on macOS")
         );
     }
 

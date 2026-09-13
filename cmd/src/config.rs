@@ -64,11 +64,13 @@ fn resolve_path(path: &str, base: &Path) -> PathBuf {
 }
 
 fn resolve_mount_spec(spec: &str, base: &Path) -> Result<String> {
-    let (src, dst) = instance_store::parse_mount_spec(spec)?;
+    let (src, dst, read_only) = instance_store::parse_mount_spec(spec)?;
     let resolved_src = resolve_path(&src, base).to_string_lossy().to_string();
-    Ok(match dst {
-        Some(dst) => format!("{resolved_src}:{dst}"),
-        None => resolved_src,
+    Ok(match (dst, read_only) {
+        (Some(dst), true) => format!("{resolved_src}:{dst}:ro"),
+        (Some(dst), false) => format!("{resolved_src}:{dst}"),
+        (None, true) => format!("{resolved_src}:ro"),
+        (None, false) => resolved_src,
     })
 }
 
@@ -290,7 +292,7 @@ pub fn resolve(
     if auto_mount && let Some(dir) = &project_dir {
         let already_mounted = mounts.iter().any(|mount| {
             let src = instance_store::parse_mount_spec(mount)
-                .map(|(src, _)| src)
+                .map(|(src, _, _)| src)
                 .unwrap_or_else(|_| mount.clone());
             Path::new(&src)
                 .canonicalize()
@@ -663,6 +665,16 @@ memory = 2048
         let toml = r#"mounts = ["data"]"#;
         let config = parse(toml, Path::new("/base")).unwrap();
         assert_eq!(config.mounts.unwrap(), vec!["/base/data"]);
+    }
+
+    #[test]
+    fn parse_read_only_mounts_resolves_source_and_preserves_mode() {
+        let toml = r#"mounts = ["data:ro", "other:/workspace:ro"]"#;
+        let config = parse(toml, Path::new("/base")).unwrap();
+        assert_eq!(
+            config.mounts.unwrap(),
+            vec!["/base/data:ro", "/base/other:/workspace:ro"]
+        );
     }
 
     #[test]

@@ -73,6 +73,7 @@ let
       for i in $(seq 0 $((MOUNT_COUNT - 1))); do
         HOST_PATH=$(jq -r ".mounts[$i].host" "$EPI_JSON")
         GUEST_PATH=$(jq -r ".mounts[$i].guest" "$EPI_JSON")
+        READ_ONLY=$(jq -r ".mounts[$i].read_only // false" "$EPI_JSON")
         case "$GUEST_PATH" in
           \~) GUEST_PATH="$USER_HOME" ;;
           \~/*) GUEST_PATH="$USER_HOME/''${GUEST_PATH#\~/}" ;;
@@ -82,7 +83,11 @@ let
         else
           mkdir -p "$GUEST_PATH"
         fi
-        mount -t virtiofs "hostfs-$i" "$GUEST_PATH"
+        if [ "$READ_ONLY" = true ]; then
+          mount --types virtiofs --options ro "hostfs-$i" "$GUEST_PATH"
+        else
+          mount --types virtiofs "hostfs-$i" "$GUEST_PATH"
+        fi
 
         # When the destination wasn't explicitly overridden (guest == host)
         # and the host home differs from the guest home (e.g. macOS

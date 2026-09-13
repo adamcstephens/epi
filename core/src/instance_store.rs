@@ -33,17 +33,21 @@ pub fn parse_port_mapping(s: &str) -> Result<(u16, u16)> {
     }
 }
 
-/// Parse a host path with an optional absolute or guest-home-relative destination.
-pub fn parse_mount_spec(s: &str) -> Result<(String, Option<String>)> {
+/// Parse a host path with an optional guest destination and `:ro` suffix.
+pub fn parse_mount_spec(s: &str) -> Result<(String, Option<String>, bool)> {
     let s = s.trim();
-    match s.rsplit_once(':') {
-        None => Ok((s.to_string(), None)),
+    let (mount, read_only) = match s.strip_suffix(":ro") {
+        Some(mount) => (mount, true),
+        None => (s, false),
+    };
+    match mount.rsplit_once(':') {
+        None => Ok((mount.to_string(), None, read_only)),
         Some((src, dst)) if dst.starts_with('/') || dst == "~" || dst.starts_with("~/") => {
-            Ok((src.to_string(), Some(dst.to_string())))
+            Ok((src.to_string(), Some(dst.to_string()), read_only))
         }
         Some(_) => {
             anyhow::bail!(
-                "invalid mount destination in '{s}' — expected an absolute path, ~, or ~/path"
+                "invalid mount destination in '{s}' — expected an absolute path, ~, ~/path, or ro"
             )
         }
     }
@@ -204,16 +208,18 @@ pub fn canonicalize_mounts(mounts: &[String]) -> Vec<String> {
     mounts
         .iter()
         .map(|m| {
-            let Ok((src, dst)) = parse_mount_spec(m) else {
+            let Ok((src, dst, read_only)) = parse_mount_spec(m) else {
                 return m.clone();
             };
             let canonical_src = std::path::Path::new(&src)
                 .canonicalize()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or(src);
-            match dst {
-                Some(dst) => format!("{canonical_src}:{dst}"),
-                None => canonical_src,
+            match (dst, read_only) {
+                (Some(dst), true) => format!("{canonical_src}:{dst}:ro"),
+                (Some(dst), false) => format!("{canonical_src}:{dst}"),
+                (None, true) => format!("{canonical_src}:ro"),
+                (None, false) => canonical_src,
             }
         })
         .collect()
@@ -421,7 +427,7 @@ mod tests {
             declarative: false,
             target: ".#dev".into(),
             runtime: None,
-            mounts: vec!["/home".into(), "/opt".into()],
+            mounts: vec!["/home".into(), "/opt:/workspace:ro".into()],
             project_dir: None,
             disk_size: String::new(),
             cpus: 0,
@@ -433,7 +439,7 @@ mod tests {
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.mounts, vec!["/home", "/opt"]);
+        assert_eq!(parsed.mounts, vec!["/home", "/opt:/workspace:ro"]);
     }
 
     #[test]
@@ -837,9 +843,10 @@ mod tests {
 
     #[test]
     fn parse_mount_spec_with_dst() {
-        let (src, dst) = parse_mount_spec("/host/path:/guest/path").unwrap();
+        let (src, dst, read_only) = parse_mount_spec("/host/path:/guest/path").unwrap();
         assert_eq!(src, "/host/path");
         assert_eq!(dst, Some("/guest/path".to_string()));
+        assert!(!read_only);
     }
 
     #[test]
@@ -850,7 +857,8 @@ mod tests {
                 parse_mount_spec(&spec).unwrap(),
                 (
                     "~/.local/state/paseo/sower".to_string(),
-                    Some(destination.to_string())
+                    Some(destination.to_string()),
+                    false
                 )
             );
         }
@@ -859,18 +867,40 @@ mod tests {
 
     #[test]
     fn parse_mount_spec_without_dst() {
-        let (src, dst) = parse_mount_spec("/host/path").unwrap();
+        let (src, dst, read_only) = parse_mount_spec("/host/path").unwrap();
         assert_eq!(src, "/host/path");
         assert_eq!(dst, None);
+        assert!(!read_only);
     }
 
     #[test]
     fn parse_mount_spec_src_with_literal_colon() {
         // Last colon wins: a src containing ':' still parses correctly as
         // long as the trailing segment after the last ':' is absolute.
-        let (src, dst) = parse_mount_spec("/mnt/back:up:/guest").unwrap();
+        let (src, dst, read_only) = parse_mount_spec("/mnt/back:up:/guest").unwrap();
         assert_eq!(src, "/mnt/back:up");
         assert_eq!(dst, Some("/guest".to_string()));
+        assert!(!read_only);
+    }
+
+    #[test]
+    fn parse_mount_spec_read_only_without_dst() {
+        assert_eq!(
+            parse_mount_spec("/host/path:ro").unwrap(),
+            ("/host/path".to_string(), None, true)
+        );
+    }
+
+    #[test]
+    fn parse_mount_spec_read_only_with_dst() {
+        assert_eq!(
+            parse_mount_spec("/host/path:/guest/path:ro").unwrap(),
+            (
+                "/host/path".to_string(),
+                Some("/guest/path".to_string()),
+                true
+            )
+        );
     }
 
     #[test]
@@ -896,6 +926,30 @@ mod tests {
         let canonicalized = canonicalize_mounts(&[spec]);
         let expected = format!("{}:/guest/path", real.canonicalize().unwrap().display());
         assert_eq!(canonicalized, vec![expected]);
+    }
+
+    #[test]
+    fn canonicalize_mounts_preserves_read_only_suffix() {
+        let dir = TempDir::new().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let specs = [
+            format!("{}:ro", link.display()),
+            format!("{}:/guest/path:ro", link.display()),
+        ];
+        let canonicalized = canonicalize_mounts(&specs);
+        let canonical = real.canonicalize().unwrap();
+        assert_eq!(
+            canonicalized,
+            vec![
+                format!("{}:ro", canonical.display()),
+                format!("{}:/guest/path:ro", canonical.display()),
+            ]
+        );
     }
 
     #[test]

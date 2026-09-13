@@ -161,6 +161,7 @@ fn launch_inner(spec: &LaunchSpec, unit_id: &str, slice: &str) -> Result<Running
             Some(&vm_unit),
             &vfsd_socket.to_string_lossy(),
             &share.host_path.to_string_lossy(),
+            share.read_only,
         )?;
         helper_units.push(vfsd_unit);
         fs_args.push(format!(

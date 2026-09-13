@@ -450,6 +450,82 @@ fn e2e_mount() {
     assert_eq!(out.stdout, "mount-b");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn e2e_read_only_mount_rejects_guest_writes_after_restart() {
+    let name = unique_name("mountro");
+    let _guard = InstanceGuard::new(&name);
+    let mount_dir = TempDir::new().unwrap();
+    fs::write(mount_dir.path().join("marker.txt"), "read-only").unwrap();
+    let mount_path = fs::canonicalize(mount_dir.path()).unwrap();
+
+    let mut resolved = default_resolved();
+    resolved.mounts = vec![format!("{}:/workspace:ro", mount_path.display())];
+    let runtime = provision_and_wait_with(&name, resolved);
+
+    let out = ssh_exec(&runtime, "cat /workspace/marker.txt");
+    assert!(
+        out.success(),
+        "reading read-only mount failed: {}",
+        out.stderr
+    );
+    assert_eq!(out.stdout, "read-only");
+
+    let out = ssh_exec(&runtime, "findmnt --noheadings --output OPTIONS /workspace");
+    assert!(out.success(), "findmnt failed: {}", out.stderr);
+    assert!(out.stdout.split(',').any(|option| option == "ro"));
+
+    for command in [
+        "sudo touch /workspace/new",
+        "sudo sh -c 'printf changed > /workspace/marker.txt'",
+        "sudo mv /workspace/marker.txt /workspace/renamed.txt",
+        "sudo rm /workspace/marker.txt",
+    ] {
+        let out = ssh_exec(&runtime, command);
+        assert!(!out.success(), "{command} unexpectedly succeeded");
+        assert!(
+            out.stderr.contains("Read-only file system"),
+            "{command} failed without EROFS: {}",
+            out.stderr
+        );
+    }
+
+    let _ = ssh_exec(&runtime, "sudo mount --options remount,rw /workspace");
+    let out = ssh_exec(&runtime, "sudo touch /workspace/remounted");
+    assert!(
+        !out.success(),
+        "guest root made host-enforced read-only mount writable"
+    );
+
+    epi::backend::stop_instance(&name, false).expect("stop failed");
+    let empty_xdg = TempDir::new().unwrap();
+    let xdg_str = empty_xdg.path().to_string_lossy().into_owned();
+    let out = process::run_with_env(
+        env!("CARGO_BIN_EXE_epi"),
+        &["start", &name],
+        &[("XDG_CONFIG_HOME", &xdg_str)],
+    )
+    .expect("epi start failed to spawn");
+    assert!(
+        out.success(),
+        "epi start failed (exit {}): {}\n{}",
+        out.status,
+        out.stderr,
+        out.stdout
+    );
+    let runtime = instance_store::find_runtime(&name)
+        .expect("find_runtime failed")
+        .expect("runtime missing after restart");
+    ssh::wait_for_ssh(&ssh::config_path(&name), &name, 120).expect("ssh wait failed after restart");
+    let out = ssh_exec(&runtime, "sudo touch /workspace/restarted");
+    assert!(!out.success(), "read-only mode was lost after stop/start");
+    assert_eq!(
+        fs::read_to_string(mount_path.join("marker.txt")).unwrap(),
+        "read-only"
+    );
+}
+
 #[test]
 #[ignore]
 fn e2e_mount_explicit_dst() {

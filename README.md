@@ -31,7 +31,7 @@ epi rm myvm
 
 epi merges configuration from three layers (highest priority first):
 
-1. **CLI flags** — `--cpus`, `--memory`, `--mount <src>[:<dst>]`, `--port`, `--disk-size`
+1. **CLI flags** — `--cpus`, `--memory`, `--mount <src>[:<dst>][:ro]`, `--port`, `--disk-size`
 2. **Project config** — `.epi/config.toml` in the current directory
 3. **User config** — `~/.config/epi/config.toml`
 
@@ -45,7 +45,7 @@ project_dir = "/home/user/src/my-project"
 cpus = 4
 memory = 2048
 disk_size = "80G"
-mounts = ["/home/user/data"]
+mounts = ["/home/user/data:ro"]
 ports = [":8080", "3000:3000"]
 project_mount = true
 ```
@@ -96,7 +96,7 @@ epi detects a project when `.epi/config.toml` exists in the current directory. A
 
 Mount paths in config are resolved relative to the project root for `.epi/config.toml` and relative to the file directory for an `EPI_PROJECT_CONFIG_FILE` override, so `mounts = ["data"]` in `.epi/config.toml` mounts `<project>/data`. Tilde (`~/`) paths are expanded.
 
-By default a mount is placed in the guest at the same path as the host source. Append `:<dst>` to mount somewhere else, e.g. `--mount ./data:/workspace` or `mounts = ["data:/workspace"]`. The destination accepts an absolute guest path, `~`, or `~/path`; destination `~` expands to the configured guest user's home, while source `~` expands to the host home. Quote CLI arguments to let EPI handle expansion, e.g. `--mount '~/.local/state/paseo/sower:~/.local/state/paseo'`. Overriding the destination also disables the automatic bind into the guest home for mounts under the host home directory (see the Changelog for that default behavior).
+By default a mount is writable and placed in the guest at the same path as the host source. Append `:<dst>` to mount somewhere else, e.g. `--mount ./data:/workspace` or `mounts = ["data:/workspace"]`. Append `:ro` to make an explicit mount read-only, e.g. `--mount ./data:ro`, `--mount ./data:/workspace:ro`, or `mounts = ["data:/workspace:ro"]`. On Linux, read-only mounts use both the guest `ro` mount option and `virtiofsd --readonly`, so guest root cannot regain write access by remounting the filesystem. macOS rejects read-only mounts because the VZ backend cannot provide equivalent host enforcement. Automatic project mounts remain writable; disable `project_mount` and declare the project directory explicitly to make it read-only. The destination accepts an absolute guest path, `~`, or `~/path`; destination `~` expands to the configured guest user's home, while source `~` expands to the host home. Quote CLI arguments to let EPI handle expansion, e.g. `--mount '~/.local/state/paseo/sower:~/.local/state/paseo:ro'`. Overriding the destination also disables the automatic bind into the guest home for mounts under the host home directory (see the Changelog for that default behavior).
 
 ### Project initialization
 
