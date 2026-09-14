@@ -21,6 +21,7 @@
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
 
 ### Changed
+- Linux (cloud-hypervisor) backend: Open the writable root qcow2 disk with direct I/O to avoid duplicating guest-cached filesystem data in the host page cache. The read-only seed disk remains cached.
 - NixOS module: Generate only an ed25519 SSH host key. Removing the unused RSA-4096 key avoids its variable key-generation cost on every fresh guest launch while preserving host-key scanning and strict SSH verification.
 - Preparation: Show total elapsed time in completed and failed group headings. Live task timers retain seconds above a minute (for example, `2m5s`), matching completed task timings.
 - `start`: Run `post-start` rather than `post-launch` hooks. Provisioning hooks remain on launch, rebuild, and boot-mode upgrade; a provisioning failure prevents post-start hooks from running.

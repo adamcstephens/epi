@@ -24,7 +24,7 @@ pub fn build_args(config: &CloudHypervisorConfig) -> Vec<String> {
         config.kernel.to_string(),
         "--disk".to_string(),
         format!(
-            "path={},image_type=qcow2,backing_files=on",
+            "path={},image_type=qcow2,backing_files=on,direct=on",
             config.disk_path
         ),
         format!("path={},readonly=on", config.seed_iso),
@@ -140,5 +140,17 @@ mod tests {
         let config = test_config();
         let args = build_args(&config);
         assert!(!args.iter().any(|a| a == "--fs"));
+    }
+
+    #[test]
+    fn build_args_enables_direct_io_only_for_root_disk() {
+        let args = build_args(&test_config());
+        let disk_idx = args.iter().position(|arg| arg == "--disk").unwrap();
+
+        assert_eq!(
+            args[disk_idx + 1],
+            "path=/tmp/inst/disk.img,image_type=qcow2,backing_files=on,direct=on"
+        );
+        assert_eq!(args[disk_idx + 2], "path=/tmp/inst/epidata.iso,readonly=on");
     }
 }
