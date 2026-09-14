@@ -461,6 +461,20 @@ fn e2e_mount() {
         out.stderr
     );
     assert_eq!(out.stdout, "mount-b");
+
+    for mount_path in [&mount_path_a, &mount_path_b] {
+        let out = ssh_exec(
+            &runtime,
+            &format!("printf guest-write > {mount_path}/guest.txt"),
+        );
+        assert!(out.success(), "guest write failed: {}", out.stderr);
+        let guest_file = std::path::Path::new(mount_path).join("guest.txt");
+        assert_eq!(fs::read_to_string(&guest_file).unwrap(), "guest-write");
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(&guest_file).unwrap();
+        assert_eq!(metadata.uid(), nix::unistd::getuid().as_raw());
+        assert_eq!(metadata.gid(), nix::unistd::getgid().as_raw());
+    }
 }
 
 #[cfg(target_os = "linux")]
