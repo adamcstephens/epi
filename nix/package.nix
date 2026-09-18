@@ -28,7 +28,7 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../Cargo.lock;
 
-  nativeBuildInputs = lib.optionals stdenv.isDarwin [
+  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isDarwin [
     rcodesign
   ];
 
@@ -45,7 +45,7 @@ rustPlatform.buildRustPackage {
   # the build sandbox; rcodesign produces an equivalent ad-hoc signature with
   # entitlements embedded. Ad-hoc is sufficient for local use — Developer ID
   # signing for distribution is intentionally out of scope.
-  postFixup = lib.optionalString stdenv.isDarwin ''
+  postFixup = lib.optionalString stdenv.hostPlatform.isDarwin ''
     rcodesign sign --entitlements-xml-path ${./epi.entitlements} $out/bin/epi
   '';
 
