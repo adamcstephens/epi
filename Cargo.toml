@@ -3,7 +3,7 @@ resolver = "3"
 members = ["cmd", "core", "backends/ch", "backends/vz"]
 
 [workspace.package]
-version = "0.20260914.2"
+version = "0.20260919.1"
 edition = "2024"
 
 [workspace.dependencies]

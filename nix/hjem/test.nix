@@ -89,6 +89,10 @@ let
               hooks.post-start.from-settings = postStartHook;
             };
           };
+          services.epi.instances.sleeping = {
+            defaultState = "stopped";
+            settings.target = ".#sleeping";
+          };
           services.epi.package = fakeEpi;
         }
         {
@@ -103,10 +107,17 @@ let
 
   service = evaluated.config.systemd.services.epi-dev;
   changedService = changed.config.systemd.services.epi-dev;
+  stoppedService = evaluated.config.systemd.services.epi-sleeping;
   source = evaluated.config.xdg.config.files."epi/instances/dev.toml".source;
   changedSource = changed.config.xdg.config.files."epi/instances/dev.toml".source;
 in
 assert service.description == "EPI instance dev";
+assert service.wantedBy == [ "default.target" ];
+assert stoppedService.wantedBy == [ ];
+assert
+  stoppedService.restartTriggers == [
+    evaluated.config.xdg.config.files."epi/instances/sleeping.toml".source
+  ];
 assert
   service.restartTriggers == [ evaluated.config.xdg.config.files."epi/instances/dev.toml".source ];
 assert service.serviceConfig.ExecStop == "${fakeEpi}/bin/epi stop";

@@ -99,6 +99,18 @@ in
                 default = true;
               };
 
+              defaultState = lib.mkOption {
+                type = lib.types.enum [
+                  "running"
+                  "stopped"
+                ];
+                default = "running";
+                description = ''
+                  Whether the instance starts with the user's default systemd
+                  target. A stopped instance remains available for manual start.
+                '';
+              };
+
               hooks = mkOption {
                 type = hostHooks;
               };
@@ -153,7 +165,7 @@ in
           ExecStart = "${startScript name instance}/bin/epi-${name}-start";
           ExecStop = "${getExe cfg.package} stop";
         };
-        wantedBy = [ "default.target" ];
+        wantedBy = lib.optional (instance.defaultState == "running") "default.target";
         restartTriggers = [ (configSource name enabledInstances.${name}) ];
       }
     ) enabledInstances;
