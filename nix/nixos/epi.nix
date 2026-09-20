@@ -250,12 +250,7 @@ in
 
     disk = lib.mkOption {
       type = lib.types.str;
-      description = "Raw disk image path used by the epi vz backend.";
-    };
-
-    diskQcow2 = lib.mkOption {
-      type = lib.types.str;
-      description = "qcow2 disk image path used by the epi cloud-hypervisor backend.";
+      description = "qcow2 disk image path used by epi; VZ converts it to an instance-local raw disk.";
     };
 
     initrd = lib.mkOption {
@@ -307,8 +302,7 @@ in
     epi = {
       kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
       initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
-      disk = "${config.system.build.image}/${config.image.baseName}.raw";
-      diskQcow2 = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
+      disk = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
       # Derived from boot.kernelParams rather than hardcoded: the systemd
       # initrd needs NixOS' own `root=fstab` sentinel, which tells
       # systemd-fstab-generator to take the root mount from the initrd fstab
@@ -326,16 +320,14 @@ in
       ln -s ${config.system.build.toplevel} "$out/toplevel"
       ln -s ${config.system.build.kernel} "$out/kernel"
       ln -s ${config.system.build.initialRamdisk} "$out/initrd"
-      ln -s ${config.system.build.image} "$out/image"
-      ln -s ${config.system.build.epiDiskQcow2} "$out/image-qcow2"
+      ln -s ${config.system.build.epiDiskQcow2} "$out/image"
       cat > "$out/manifest.json" <<'EOF'
       ${builtins.toJSON {
         version = 1;
         toplevel = "${config.system.build.toplevel}";
         kernel = "${config.system.build.kernel}/${config.system.boot.loader.kernelFile}";
         initrd = "${config.system.build.initialRamdisk}/${config.system.boot.loader.initrdFile}";
-        disk = "${config.system.build.image}/${config.image.baseName}.raw";
-        diskQcow2 = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
+        disk = "${config.system.build.epiDiskQcow2}/${config.image.baseName}.qcow2";
         cmdline = config.epi.cmdline;
         configuredUsers = config.epi.configuredUsers;
         hooks = config.epi.hooks;

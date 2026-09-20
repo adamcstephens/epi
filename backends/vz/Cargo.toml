@@ -8,6 +8,7 @@ anyhow.workspace = true
 epi-core = { path = "../../core" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 # Binds Virtualization.framework — macOS-only, never reaches the Linux build.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -22,6 +23,3 @@ tokio = { version = "1.52.3", features = [
   "signal",
 ] }
 nix = { workspace = true, features = ["signal", "process", "term"] }
-
-[dev-dependencies]
-tempfile.workspace = true

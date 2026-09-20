@@ -75,6 +75,7 @@
                 pkgs.just
 
                 pkgs.jq
+                pkgs.qemu-utils
                 pkgs.nixfmt-rs
                 pkgs.openssh
                 pkgs.rsync
@@ -88,7 +89,6 @@
               ]
               ++ lib.optionals pkgs.stdenv.isLinux [
                 pkgs.passt
-                pkgs.qemu-utils
                 pkgs.virtiofsd
                 pkgs.cloud-hypervisor
               ];

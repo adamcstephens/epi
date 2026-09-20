@@ -428,6 +428,17 @@ pub(crate) mod tests {
         }
     }
 
+    fn test_qcow2_disk(instance_dir: &Path) -> PathBuf {
+        let disk = instance_dir.join("base.qcow2");
+        let output = epi_core::process::run(
+            "qemu-img",
+            &["create", "-f", "qcow2", disk.to_str().unwrap(), "1M"],
+        )
+        .unwrap();
+        assert!(output.success(), "{}", output.stderr);
+        disk
+    }
+
     #[test]
     fn vm_config_resources_and_bootloader_from_spec() {
         let spec = test_spec(PathBuf::from("/inst/testvm"));
@@ -728,9 +739,7 @@ pub(crate) mod tests {
         unsafe { std::env::set_var("EPI_VZ_IP_TIMEOUT_SECS", "120") };
 
         let mut spec = test_spec(dir.path().to_path_buf());
-        let base_image = dir.path().join("base.raw");
-        std::fs::write(&base_image, b"bootsector").unwrap();
-        spec.root_disk = base_image;
+        spec.root_disk = test_qcow2_disk(dir.path());
         spec.disk_size = "1M".into();
 
         let start = std::time::Instant::now();
@@ -769,9 +778,7 @@ pub(crate) mod tests {
         unsafe { std::env::set_var("EPI_VZ_IP_TIMEOUT_SECS", "1") };
 
         let mut spec = test_spec(dir.path().to_path_buf());
-        let base_image = dir.path().join("base.raw");
-        std::fs::write(&base_image, b"bootsector").unwrap();
-        spec.root_disk = base_image;
+        spec.root_disk = test_qcow2_disk(dir.path());
         spec.disk_size = "1M".into();
         let err = VzBackend.launch(&spec).unwrap_err();
 
@@ -953,9 +960,7 @@ pub(crate) mod tests {
         unsafe { std::env::set_var("EPI_VZ_DAEMON_BIN", &fake_daemon) };
 
         let mut spec = test_spec(dir.path().to_path_buf());
-        let base_image = dir.path().join("base.raw");
-        std::fs::write(&base_image, b"bootsector").unwrap();
-        spec.root_disk = base_image;
+        spec.root_disk = test_qcow2_disk(dir.path());
         spec.disk_size = "1M".into();
         let rt = VzBackend.launch(&spec).unwrap();
 

@@ -27,6 +27,14 @@ epi stop myvm
 epi rm myvm
 ```
 
+### Disk artifacts
+
+`config.system.build.epi` contains a `manifest.json` with one `disk` field pointing to a compressed qcow2 image, also exposed through the artifact's `image` symlink. The raw image is only an intermediate build input; it is not part of the artifact's runtime closure.
+
+Linux uses qcow2 as the backing image for each instance. On macOS, VZ converts it with `qemu-img` into an instance-local sparse raw `disk.img` on first launch. Later starts reuse that disk and preserve guest changes. Failed conversion or resizing does not publish an incomplete instance disk.
+
+The Nix package and development shell provide `qemu-img` on both platforms. Custom target resolvers must return qcow2 in `disk`; the separate `diskQcow2` field and raw fallback are no longer supported.
+
 ## Configuration
 
 epi merges configuration from three layers (highest priority first):

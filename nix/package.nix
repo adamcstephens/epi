@@ -1,5 +1,6 @@
 {
   lib,
+  qemu-utils,
   rcodesign,
   rustPlatform,
   stdenv,
@@ -33,6 +34,7 @@ rustPlatform.buildRustPackage {
   ];
 
   nativeCheckInputs = [
+    qemu-utils
     writableTmpDirAsHomeHook
   ]
   ++ lib.optionals stdenv.isLinux [

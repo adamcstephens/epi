@@ -1,73 +1,68 @@
-//! Writable disk overlays via APFS clonefile.
+//! Instance-local sparse raw disks converted from the shared qcow2 image.
 //!
-//! Mirrors the contract of the Linux backend's `ensure_writable_disk`:
-//! idempotent, and grows the virtual disk to the requested size on
-//! creation. The base image is raw (the NixOS module emits `.raw`), so
-//! growing is a plain truncate — the guest grows the partition at boot via
-//! `boot.growPartition`.
+//! Conversion and growth are staged beside the destination, so a failed
+//! first launch cannot leave an incomplete disk for the next launch.
+//! The guest grows its partition at boot via `boot.growPartition`.
 
 use anyhow::{Context, Result, bail};
-use std::fs;
 use std::path::Path;
 
 use epi_core::process;
+use tempfile::NamedTempFile;
 
-/// Create `dest` as a writable overlay of `source` if it doesn't exist,
-/// grown to `disk_size` (qemu-img style, e.g. "40G"). No-op when `dest`
-/// already exists.
+/// Convert qcow2 `source` into a writable sparse raw `dest`, grown to
+/// `disk_size` (e.g. "40G"). Existing instance disks are left untouched.
 pub fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Result<()> {
     if dest.exists() {
         return Ok(());
     }
 
-    clone_or_copy(source, dest)?;
-
-    // A clone/copy inherits the source's permissions, and nix-store images
-    // are read-only — make the overlay owner-writable before resizing it.
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(dest)
-        .with_context(|| format!("reading overlay metadata: {}", dest.display()))?
-        .permissions();
-    perms.set_mode(perms.mode() | 0o600);
-    fs::set_permissions(dest, perms)
-        .with_context(|| format!("making overlay writable: {}", dest.display()))?;
-
     let target_bytes = parse_disk_size(disk_size)?;
-    let current = fs::metadata(dest)
-        .with_context(|| format!("reading overlay metadata: {}", dest.display()))?
+    let parent = dest
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let staged = NamedTempFile::new_in(parent)
+        .with_context(|| format!("staging writable disk beside {}", dest.display()))?;
+    let out = process::run(
+        "qemu-img",
+        &[
+            "convert",
+            "-f",
+            "qcow2",
+            "-O",
+            "raw",
+            "-S",
+            "4k",
+            &source.to_string_lossy(),
+            &staged.path().to_string_lossy(),
+        ],
+    )?;
+    if !out.success() {
+        bail!(
+            "qemu-img convert failed for {}: {}",
+            source.display(),
+            out.stderr
+        );
+    }
+
+    let current = staged
+        .as_file()
+        .metadata()
+        .context("reading converted disk metadata")?
         .len();
     if target_bytes < current {
         bail!(
             "disk_size {disk_size} is smaller than base image ({current} bytes); shrinking is not supported"
         );
     }
-    fs::OpenOptions::new()
-        .write(true)
-        .open(dest)
-        .and_then(|f| f.set_len(target_bytes))
-        .with_context(|| format!("resizing overlay to {disk_size}: {}", dest.display()))?;
-    Ok(())
-}
-
-/// `/bin/cp -c` clones via clonefile(2) on APFS — absolute path because a
-/// nix devshell puts GNU cp (no `-c`) first in PATH. The nix store usually
-/// lives on its own APFS volume and clonefile can't cross volumes, so fall
-/// back to a regular copy when cloning fails.
-fn clone_or_copy(source: &Path, dest: &Path) -> Result<()> {
-    let out = process::run(
-        "/bin/cp",
-        &["-c", &source.to_string_lossy(), &dest.to_string_lossy()],
-    )?;
-    if out.success() {
-        return Ok(());
-    }
-    fs::copy(source, dest).with_context(|| {
-        format!(
-            "copying base image {} to {}",
-            source.display(),
-            dest.display()
-        )
-    })?;
+    staged
+        .as_file()
+        .set_len(target_bytes)
+        .with_context(|| format!("resizing writable disk to {disk_size}: {}", dest.display()))?;
+    staged
+        .persist_noclobber(dest)
+        .with_context(|| format!("publishing writable disk: {}", dest.display()))?;
     Ok(())
 }
 
@@ -98,7 +93,50 @@ fn parse_disk_size(size: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::path::PathBuf;
     use tempfile::TempDir;
+
+    fn qcow2_source(dir: &Path) -> PathBuf {
+        let raw = dir.join("source.raw");
+        let source = dir.join("source.qcow2");
+        let mut file = fs::File::create(&raw).unwrap();
+        file.write_all(b"bootsector").unwrap();
+        file.set_len(1 << 20).unwrap();
+        let output = process::run(
+            "qemu-img",
+            &[
+                "convert",
+                "-f",
+                "raw",
+                "-O",
+                "qcow2",
+                raw.to_str().unwrap(),
+                source.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(output.success(), "{}", output.stderr);
+        source
+    }
+
+    #[test]
+    fn converts_qcow2_payload_to_raw() {
+        let dir = TempDir::new().unwrap();
+        let source = qcow2_source(dir.path());
+        let dest = dir.path().join("disk.img");
+
+        ensure_writable_disk(&source, &dest, "8M").unwrap();
+
+        let content = fs::read(&dest).unwrap();
+        assert_eq!(&content[..10], b"bootsector");
+        assert!(content[10..].iter().all(|byte| *byte == 0));
+        let metadata = fs::metadata(&dest).unwrap();
+        assert_eq!(metadata.len(), 8 << 20);
+        assert!(metadata.blocks() * 512 < 1 << 20, "raw disk must be sparse");
+    }
 
     #[test]
     fn parse_disk_size_suffixes() {
@@ -118,87 +156,68 @@ mod tests {
     }
 
     #[test]
-    fn creates_overlay_with_source_content_and_target_size() {
+    fn preserves_guest_writes_without_changing_readonly_source() {
         let dir = TempDir::new().unwrap();
-        let source = dir.path().join("base.raw");
+        let source = qcow2_source(dir.path());
+        let source_content = fs::read(&source).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o444)).unwrap();
         let dest = dir.path().join("disk.img");
-        fs::write(&source, b"bootsector").unwrap();
 
         ensure_writable_disk(&source, &dest, "1M").unwrap();
+        let mut disk = fs::OpenOptions::new().write(true).open(&dest).unwrap();
+        disk.seek(SeekFrom::Start(4096)).unwrap();
+        disk.write_all(b"guest wrote things").unwrap();
+        drop(disk);
+
+        // Existing disks need neither the source nor a valid requested size.
+        ensure_writable_disk(&dir.path().join("missing.qcow2"), &dest, "invalid").unwrap();
 
         let content = fs::read(&dest).unwrap();
-        assert_eq!(&content[..10], b"bootsector");
-        assert_eq!(content.len(), 1 << 20, "grown to requested size");
+        assert_eq!(&content[4096..4114], b"guest wrote things");
+        assert_eq!(content.len(), 1 << 20);
+        assert_eq!(fs::read(&source).unwrap(), source_content);
     }
 
     #[test]
-    fn overlay_is_writable_from_readonly_source() {
-        use std::os::unix::fs::PermissionsExt;
+    fn invalid_source_leaves_no_disk_and_can_be_retried() {
         let dir = TempDir::new().unwrap();
-        let source = dir.path().join("base.raw");
+        let source = dir.path().join("source.qcow2");
         let dest = dir.path().join("disk.img");
-        fs::write(&source, b"bootsector").unwrap();
-        // Nix-store images are read-only; a clone inherits that.
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o444)).unwrap();
+        fs::write(&source, b"not a qcow2 image").unwrap();
 
-        ensure_writable_disk(&source, &dest, "1M").unwrap();
-
-        let mode = fs::metadata(&dest).unwrap().permissions().mode();
-        assert!(
-            mode & 0o200 != 0,
-            "overlay must be owner-writable, got {mode:o}"
-        );
-        // And actually writable.
-        fs::OpenOptions::new().write(true).open(&dest).unwrap();
-    }
-
-    #[test]
-    fn idempotent_when_overlay_exists() {
-        let dir = TempDir::new().unwrap();
-        let source = dir.path().join("base.raw");
-        let dest = dir.path().join("disk.img");
-        fs::write(&source, b"base").unwrap();
-        fs::write(&dest, b"guest wrote things").unwrap();
-
-        ensure_writable_disk(&source, &dest, "1M").unwrap();
-
-        assert_eq!(
-            fs::read(&dest).unwrap(),
-            b"guest wrote things",
-            "existing overlay must not be touched"
-        );
-    }
-
-    #[test]
-    fn rejects_shrinking_below_base_image() {
-        let dir = TempDir::new().unwrap();
-        let source = dir.path().join("base.raw");
-        let dest = dir.path().join("disk.img");
-        fs::write(&source, vec![0u8; 4096]).unwrap();
-
-        let err = ensure_writable_disk(&source, &dest, "1K").unwrap_err();
-        assert!(err.to_string().contains("shrinking"), "{err}");
-    }
-
-    #[test]
-    fn missing_source_errors() {
-        let dir = TempDir::new().unwrap();
-        let source = dir.path().join("does-not-exist.raw");
-        let dest = dir.path().join("disk.img");
         assert!(ensure_writable_disk(&source, &dest, "1M").is_err());
+        assert!(!dest.exists());
+
+        qcow2_source(dir.path());
+        ensure_writable_disk(&source, &dest, "1M").unwrap();
+        assert_eq!(&fs::read(&dest).unwrap()[..10], b"bootsector");
     }
 
     #[test]
-    fn overlay_is_independent_of_source() {
+    fn rejects_shrinking_without_publishing_disk() {
         let dir = TempDir::new().unwrap();
-        let source = dir.path().join("base.raw");
+        let source = qcow2_source(dir.path());
         let dest = dir.path().join("disk.img");
-        fs::write(&source, b"original").unwrap();
 
-        ensure_writable_disk(&source, &dest, "1K").unwrap();
+        assert!(ensure_writable_disk(&source, &dest, "1K").is_err());
+        assert!(!dest.exists());
 
-        // Writing the overlay must not affect the base image.
-        fs::write(&dest, b"modified").unwrap();
-        assert_eq!(fs::read(&source).unwrap(), b"original");
+        ensure_writable_disk(&source, &dest, "1M").unwrap();
+        assert_eq!(fs::metadata(&dest).unwrap().len(), 1 << 20);
+        assert_eq!(&fs::read(&dest).unwrap()[..10], b"bootsector");
+    }
+
+    #[test]
+    fn resize_failure_leaves_no_disk_and_can_be_retried() {
+        let dir = TempDir::new().unwrap();
+        let source = qcow2_source(dir.path());
+        let dest = dir.path().join("disk.img");
+
+        // Valid u64 size, but not representable by the filesystem's signed offset.
+        assert!(ensure_writable_disk(&source, &dest, &u64::MAX.to_string()).is_err());
+        assert!(!dest.exists());
+
+        ensure_writable_disk(&source, &dest, "1M").unwrap();
+        assert_eq!(&fs::read(&dest).unwrap()[..10], b"bootsector");
     }
 }

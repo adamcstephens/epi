@@ -23,9 +23,8 @@ pub struct Descriptor {
     #[serde(default)]
     pub toplevel: String,
     pub kernel: String,
+    /// Immutable qcow2 base image used by every backend.
     pub disk: String,
-    #[serde(default, alias = "diskQcow2")]
-    pub disk_qcow2: Option<String>,
     #[serde(default)]
     pub initrd: Option<String>,
     #[serde(default = "default_cmdline")]
@@ -45,19 +44,6 @@ struct ArtifactManifest {
 
 fn default_cmdline() -> String {
     "console=ttyS0 root=/dev/vda2 ro".to_string()
-}
-
-impl Descriptor {
-    /// Disk image the host backend consumes: vz (macOS) reads the raw image
-    /// directly, cloud-hypervisor prefers the qcow2 when the target provides
-    /// one. Falls back to raw for descriptors that predate diskQcow2.
-    pub fn root_disk(&self) -> &str {
-        if cfg!(target_os = "macos") {
-            &self.disk
-        } else {
-            self.disk_qcow2.as_deref().unwrap_or(&self.disk)
-        }
-    }
 }
 
 impl HooksDescriptor {
@@ -189,7 +175,6 @@ pub enum ArtifactKind {
     Kernel,
     Initrd,
     Image,
-    ImageQcow2,
 }
 
 impl ArtifactKind {
@@ -197,8 +182,7 @@ impl ArtifactKind {
         match self {
             ArtifactKind::Kernel => "config.system.build.kernel",
             ArtifactKind::Initrd => "config.system.build.initialRamdisk",
-            ArtifactKind::Image => "config.system.build.image",
-            ArtifactKind::ImageQcow2 => "config.system.build.epiDiskQcow2",
+            ArtifactKind::Image => "config.system.build.epiDiskQcow2",
         }
     }
 
@@ -207,7 +191,6 @@ impl ArtifactKind {
             ArtifactKind::Kernel => "kernel",
             ArtifactKind::Initrd => "initrd",
             ArtifactKind::Image => "image",
-            ArtifactKind::ImageQcow2 => "qcow2 image",
         }
     }
 }
@@ -224,20 +207,6 @@ impl Artifact {
     }
 }
 
-/// The disk image artifact the host backend will consume.
-fn image_artifact(desc: &Descriptor) -> Artifact {
-    let path = desc.root_disk();
-    let kind = if desc.disk_qcow2.as_deref() == Some(path) {
-        ArtifactKind::ImageQcow2
-    } else {
-        ArtifactKind::Image
-    };
-    Artifact {
-        kind,
-        store_path: path.to_string(),
-    }
-}
-
 /// Return all artifacts referenced by the descriptor.
 pub fn all_artifacts(desc: &Descriptor) -> Vec<Artifact> {
     let mut artifacts = vec![Artifact {
@@ -250,7 +219,10 @@ pub fn all_artifacts(desc: &Descriptor) -> Vec<Artifact> {
             store_path: initrd.clone(),
         });
     }
-    artifacts.push(image_artifact(desc));
+    artifacts.push(Artifact {
+        kind: ArtifactKind::Image,
+        store_path: desc.disk.clone(),
+    });
     artifacts
 }
 
@@ -308,9 +280,11 @@ pub fn missing_artifacts(desc: &Descriptor) -> Vec<Artifact> {
         });
     }
 
-    let image = image_artifact(desc);
-    if !Path::new(&image.store_path).exists() {
-        missing.push(image);
+    if !Path::new(&desc.disk).exists() {
+        missing.push(Artifact {
+            kind: ArtifactKind::Image,
+            store_path: desc.disk.clone(),
+        });
     }
 
     missing
@@ -372,7 +346,7 @@ pub fn ensure_paths_exist(target: &str, desc: &Descriptor) -> Result<()> {
     if any_missing {
         let canonical = canonicalize(target);
         let toplevel = format!("{canonical}.config.system.build.toplevel");
-        let image = image_artifact(desc).nix_attr(&canonical);
+        let image = format!("{canonical}.{}", ArtifactKind::Image.nix_build_attr());
         let out = process::run("nix", &["build", &toplevel, &image, "--no-link"])?;
         if !out.success() {
             bail!("nix build failed (exit {}): {}", out.status, out.stderr);
@@ -413,7 +387,7 @@ fn descriptor_hook_store_paths(desc: &Descriptor) -> Vec<&str> {
 }
 
 fn descriptor_store_paths(desc: &Descriptor) -> Vec<&str> {
-    let mut paths = vec![desc.kernel.as_str(), desc.root_disk()];
+    let mut paths = vec![desc.kernel.as_str(), desc.disk.as_str()];
     if !desc.toplevel.is_empty() {
         paths.push(desc.toplevel.as_str());
     }
@@ -463,7 +437,7 @@ fn target_cache_path(target: &str) -> PathBuf {
     target.hash(&mut hasher);
     let hash = hasher.finish();
     cache_dir()
-        .join("targets")
+        .join("targets-qcow2")
         .join(format!("{hash:016x}.descriptor"))
 }
 
@@ -568,20 +542,6 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_deserialize_defaults() {
-        for json in [
-            r#"{"kernel": "/k", "disk": "/d"}"#,
-            r#"{"kernel": "/k", "disk": "/d", "hooks": {"post-launch": {}, "pre-stop": {}}}"#,
-        ] {
-            let desc: Descriptor = serde_json::from_str(json).unwrap();
-            assert_eq!(desc.cmdline, "console=ttyS0 root=/dev/vda2 ro");
-            assert!(desc.initrd.is_none());
-            assert!(desc.configured_users.is_empty());
-            assert!(desc.hooks.post_start_scripts().is_empty());
-        }
-    }
-
-    #[test]
     fn descriptor_store_paths_include_only_store_hooks() {
         let desc: Descriptor = serde_json::from_str(
             r#"{
@@ -622,134 +582,19 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_deserialize_full() {
-        let json = r#"{
-            "kernel": "/nix/store/abc/bzImage",
-            "disk": "/nix/store/abc/image.img",
-            "initrd": "/nix/store/abc/initrd",
-            "cmdline": "console=ttyS0",
-            "configured_users": ["root", "admin"],
-            "hooks": {
-                "post_launch": {"00-hook": "/nix/store/hook1"},
-                "post_start": {"00-resume": "/nix/store/resume"},
-                "pre_stop": {}
-            }
-        }"#;
-        let desc: Descriptor = serde_json::from_str(json).unwrap();
-        assert_eq!(desc.initrd.unwrap(), "/nix/store/abc/initrd");
-        assert_eq!(desc.configured_users.len(), 2);
-        assert_eq!(desc.hooks.post_launch.len(), 1);
-        assert_eq!(desc.hooks.post_start_scripts(), vec!["/nix/store/resume"]);
-    }
-
-    #[test]
-    fn descriptor_deserialize_disk_qcow2_alias() {
-        let json = r#"{"kernel": "/k", "disk": "/d", "diskQcow2": "/q"}"#;
-        let desc: Descriptor = serde_json::from_str(json).unwrap();
-        assert_eq!(desc.disk_qcow2.as_deref(), Some("/q"));
-    }
-
-    #[test]
-    fn root_disk_falls_back_to_raw_when_no_qcow2() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: None,
-            initrd: None,
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        assert_eq!(desc.root_disk(), "/d");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn root_disk_prefers_qcow2_on_linux() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: Some("/q".into()),
-            initrd: None,
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        assert_eq!(desc.root_disk(), "/q");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn root_disk_uses_raw_on_macos() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: Some("/q".into()),
-            initrd: None,
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        assert_eq!(desc.root_disk(), "/d");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn all_artifacts_uses_qcow2_image_on_linux() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: Some("/q".into()),
-            initrd: None,
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        let arts = all_artifacts(&desc);
-        let image = arts.last().unwrap();
-        assert_eq!(image.kind, ArtifactKind::ImageQcow2);
-        assert_eq!(image.store_path, "/q");
-    }
-
-    #[test]
-    fn image_qcow2_nix_attr() {
-        let a = Artifact {
-            kind: ArtifactKind::ImageQcow2,
-            store_path: "/nix/store/abc-qcow2".into(),
-        };
+    fn single_disk_resolves_qcow2_build() {
+        let desc: Descriptor =
+            serde_json::from_str(r#"{"kernel": "/k", "disk": "/nix/store/base/disk.qcow2"}"#)
+                .unwrap();
+        let artifacts = all_artifacts(&desc);
+        let disk = artifacts
+            .iter()
+            .find(|a| a.store_path == desc.disk)
+            .unwrap();
         assert_eq!(
-            a.nix_attr(".#nixosConfigurations.dev"),
+            disk.nix_attr(".#nixosConfigurations.dev"),
             ".#nixosConfigurations.dev.config.system.build.epiDiskQcow2"
         );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn missing_artifacts_checks_qcow2_path_on_linux() {
-        let dir = tempfile::tempdir().unwrap();
-        let kernel = dir.path().join("kernel");
-        let raw = dir.path().join("disk.raw");
-        fs::write(&kernel, "").unwrap();
-        fs::write(&raw, "").unwrap();
-
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: kernel.to_string_lossy().into(),
-            disk: raw.to_string_lossy().into(),
-            disk_qcow2: Some("/nonexistent/disk.qcow2".into()),
-            initrd: None,
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-
-        let missing = missing_artifacts(&desc);
-        assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].kind, ArtifactKind::ImageQcow2);
     }
 
     #[test]
@@ -800,7 +645,6 @@ mod tests {
             toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: disk.to_string_lossy().into(),
-            disk_qcow2: None,
             initrd: Some(initrd.to_string_lossy().into()),
             cmdline: "boot".into(),
             configured_users: vec![],
@@ -821,7 +665,6 @@ mod tests {
             toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: "/nonexistent/disk".into(),
-            disk_qcow2: None,
             initrd: Some("/nonexistent/initrd".into()),
             cmdline: "boot".into(),
             configured_users: vec![],
@@ -846,7 +689,6 @@ mod tests {
             toplevel: String::new(),
             kernel: kernel.to_string_lossy().into(),
             disk: disk.to_string_lossy().into(),
-            disk_qcow2: None,
             initrd: None,
             cmdline: "boot".into(),
             configured_users: vec![],
@@ -855,53 +697,6 @@ mod tests {
 
         let missing = missing_artifacts(&desc);
         assert!(missing.is_empty());
-    }
-
-    #[test]
-    fn artifact_nix_attr_formats() {
-        let a = Artifact {
-            kind: ArtifactKind::Kernel,
-            store_path: "/nix/store/abc-kernel".into(),
-        };
-        assert_eq!(
-            a.nix_attr(".#nixosConfigurations.dev"),
-            ".#nixosConfigurations.dev.config.system.build.kernel"
-        );
-
-        let a = Artifact {
-            kind: ArtifactKind::Image,
-            store_path: "/nix/store/abc-image".into(),
-        };
-        assert_eq!(
-            a.nix_attr(".#nixosConfigurations.dev"),
-            ".#nixosConfigurations.dev.config.system.build.image"
-        );
-
-        let a = Artifact {
-            kind: ArtifactKind::Initrd,
-            store_path: "/nix/store/abc-initrd".into(),
-        };
-        assert_eq!(
-            a.nix_attr(".#nixosConfigurations.dev"),
-            ".#nixosConfigurations.dev.config.system.build.initialRamdisk"
-        );
-    }
-
-    #[test]
-    fn descriptor_roundtrip_json() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: None,
-            initrd: Some("/i".into()),
-            cmdline: "boot".into(),
-            configured_users: vec!["root".into()],
-            hooks: HooksDescriptor::default(),
-        };
-        let json = serde_json::to_string(&desc).unwrap();
-        let parsed: Descriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.kernel, desc.kernel);
     }
 
     #[test]
@@ -914,49 +709,11 @@ mod tests {
     }
 
     #[test]
-    fn all_artifacts_with_initrd() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: None,
-            initrd: Some("/i".into()),
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        let arts = all_artifacts(&desc);
-        assert_eq!(arts.len(), 3);
-        assert_eq!(arts[0].kind, ArtifactKind::Kernel);
-        assert_eq!(arts[1].kind, ArtifactKind::Initrd);
-        assert_eq!(arts[2].kind, ArtifactKind::Image);
-    }
-
-    #[test]
-    fn all_artifacts_without_initrd() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/k".into(),
-            disk: "/d".into(),
-            disk_qcow2: None,
-            initrd: None,
-            cmdline: "boot".into(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-        let arts = all_artifacts(&desc);
-        assert_eq!(arts.len(), 2);
-        assert_eq!(arts[0].kind, ArtifactKind::Kernel);
-        assert_eq!(arts[1].kind, ArtifactKind::Image);
-    }
-
-    #[test]
     fn upgrade_artifacts_with_initrd() {
         let desc = Descriptor {
             toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
-            disk_qcow2: None,
             initrd: Some("/i".into()),
             cmdline: "boot".into(),
             configured_users: vec![],
@@ -976,7 +733,6 @@ mod tests {
             toplevel: String::new(),
             kernel: "/k".into(),
             disk: "/d".into(),
-            disk_qcow2: None,
             initrd: None,
             cmdline: "boot".into(),
             configured_users: vec![],

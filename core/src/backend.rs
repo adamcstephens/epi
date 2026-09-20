@@ -17,6 +17,7 @@ pub struct LaunchSpec {
     pub kernel: PathBuf,
     pub initrd: Option<PathBuf>,
     pub cmdline: String,
+    /// Immutable qcow2 base image; backends prepare an instance-local writable disk.
     pub root_disk: PathBuf,
     pub epidata: PathBuf,
     pub shares: Vec<SharedDir>,
@@ -154,7 +155,7 @@ mod tests {
             kernel: PathBuf::from("/nix/store/k/kernel"),
             initrd: Some(PathBuf::from("/nix/store/i/initrd")),
             cmdline: "console=hvc0".into(),
-            root_disk: PathBuf::from("/nix/store/d/disk.raw"),
+            root_disk: PathBuf::from("/nix/store/d/disk.qcow2"),
             epidata: PathBuf::from("/inst/epidata.iso"),
             shares: vec![SharedDir {
                 tag: "hostfs-0".into(),

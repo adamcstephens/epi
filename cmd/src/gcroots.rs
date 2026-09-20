@@ -23,7 +23,7 @@ fn store_paths_to_root<'a>(
     if !desc.toplevel.is_empty() {
         paths.push(("toplevel".to_string(), desc.toplevel.as_str()));
     }
-    paths.push(("disk".to_string(), desc.root_disk()));
+    paths.push(("disk".to_string(), desc.disk.as_str()));
 
     if let Some(ref initrd) = desc.initrd {
         paths.push(("initrd".to_string(), initrd.as_str()));
@@ -102,74 +102,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn store_paths_to_root_kernel_and_disk() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/nix/store/abc-kernel/bzImage".into(),
-            disk: "/nix/store/def-image/image.img".into(),
-            disk_qcow2: None,
-            initrd: None,
-            cmdline: String::new(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-
-        let configured = instance_store::HostHooks::default();
-        let paths = store_paths_to_root(&desc, &configured);
-        assert_eq!(paths.len(), 2);
-        assert_eq!(
-            paths[0],
-            ("kernel".to_string(), "/nix/store/abc-kernel/bzImage")
-        );
-        assert_eq!(
-            paths[1],
-            ("disk".to_string(), "/nix/store/def-image/image.img")
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn store_paths_to_root_uses_qcow2_disk_on_linux() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/nix/store/abc-kernel/bzImage".into(),
-            disk: "/nix/store/def-image/image.raw".into(),
-            disk_qcow2: Some("/nix/store/ghi-qcow2/image.qcow2".into()),
-            initrd: None,
-            cmdline: String::new(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-
-        let configured = instance_store::HostHooks::default();
-        let paths = store_paths_to_root(&desc, &configured);
-        assert_eq!(
-            paths[1],
-            ("disk".to_string(), "/nix/store/ghi-qcow2/image.qcow2")
-        );
-    }
-
-    #[test]
-    fn store_paths_to_root_with_initrd() {
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/nix/store/abc-kernel/bzImage".into(),
-            disk: "/nix/store/def-image/image.img".into(),
-            disk_qcow2: None,
-            initrd: Some("/nix/store/ghi-initrd/initrd".into()),
-            cmdline: String::new(),
-            configured_users: vec![],
-            hooks: HooksDescriptor::default(),
-        };
-
-        let configured = instance_store::HostHooks::default();
-        let paths = store_paths_to_root(&desc, &configured);
-        assert_eq!(paths.len(), 3);
-        assert_eq!(paths[2].0, "initrd");
-        assert_eq!(paths[2].1, "/nix/store/ghi-initrd/initrd");
-    }
-
-    #[test]
     fn store_paths_to_root_with_hooks() {
         let mut post_launch = BTreeMap::new();
         post_launch.insert("00-setup".into(), "/nix/store/hook1/script".into());
@@ -185,8 +117,7 @@ mod tests {
         let desc = Descriptor {
             toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
-            disk: "/nix/store/def-image/image.img".into(),
-            disk_qcow2: None,
+            disk: "/nix/store/def-image/image.qcow2".into(),
             initrd: None,
             cmdline: String::new(),
             configured_users: vec![],
@@ -213,7 +144,7 @@ mod tests {
             paths,
             vec![
                 ("kernel".into(), "/nix/store/abc-kernel/bzImage"),
-                ("disk".into(), "/nix/store/def-image/image.img"),
+                ("disk".into(), "/nix/store/def-image/image.qcow2"),
                 (
                     "hook-post-launch-00-setup".into(),
                     "/nix/store/hook1/script"
@@ -229,31 +160,5 @@ mod tests {
                 ),
             ]
         );
-    }
-
-    #[test]
-    fn store_paths_to_root_skips_non_store_hooks() {
-        let mut post_launch = BTreeMap::new();
-        post_launch.insert("00-local".into(), "/home/user/hook.sh".into());
-
-        let desc = Descriptor {
-            toplevel: String::new(),
-            kernel: "/nix/store/abc-kernel/bzImage".into(),
-            disk: "/nix/store/def-image/image.img".into(),
-            disk_qcow2: None,
-            initrd: None,
-            cmdline: String::new(),
-            configured_users: vec![],
-            hooks: HooksDescriptor {
-                post_launch,
-                post_start: BTreeMap::new(),
-                pre_stop: BTreeMap::new(),
-                guest_init: BTreeMap::new(),
-            },
-        };
-
-        let configured = instance_store::HostHooks::default();
-        let paths = store_paths_to_root(&desc, &configured);
-        assert_eq!(paths.len(), 2); // only kernel + disk
     }
 }

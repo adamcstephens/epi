@@ -1027,8 +1027,7 @@ mod tests {
         let desc = Descriptor {
             toplevel: String::new(),
             kernel: "/nix/store/abc-kernel/bzImage".into(),
-            disk: "/nix/store/def-image/image.img".into(),
-            disk_qcow2: None,
+            disk: "/nix/store/def-image/image.qcow2".into(),
             initrd: Some("/nix/store/ghi-initrd/initrd".into()),
             cmdline: "console=ttyS0 root=/dev/vda2 ro".into(),
             configured_users: vec!["root".into()],
@@ -1056,15 +1055,7 @@ mod tests {
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: InstanceState = serde_json::from_str(&json).unwrap();
-        let d = parsed.descriptor.unwrap();
-        assert_eq!(d.kernel, "/nix/store/abc-kernel/bzImage");
-        assert_eq!(d.disk, "/nix/store/def-image/image.img");
-        assert_eq!(d.initrd.unwrap(), "/nix/store/ghi-initrd/initrd");
-        assert_eq!(d.hooks.post_launch.len(), 1);
-        assert_eq!(
-            d.hooks.post_start_scripts(),
-            vec!["/nix/store/resume/script"]
-        );
+        assert_eq!(parsed.descriptor, state.descriptor);
     }
 
     #[test]

@@ -1005,7 +1005,10 @@ fn e2e_stop_start_ssh() {
 
     // First boot: provision and verify SSH
     let runtime = provision_and_wait_with(&name, resolved.clone());
-    let out = ssh_exec(&runtime, "echo first-boot");
+    let out = ssh_exec(
+        &runtime,
+        "printf first-boot | sudo tee /var/lib/epi-disk-marker",
+    );
     assert!(
         out.success(),
         "first-boot SSH failed (exit {}): {}",
@@ -1019,14 +1022,14 @@ fn e2e_stop_start_ssh() {
 
     // Second boot: re-provision (reuses persistent disk) and verify SSH
     let runtime2 = provision_and_wait_with(&name, resolved);
-    let out2 = ssh_exec(&runtime2, "echo second-boot");
+    let out2 = ssh_exec(&runtime2, "cat /var/lib/epi-disk-marker");
     assert!(
         out2.success(),
         "second-boot SSH failed (exit {}): {}",
         out2.status,
         out2.stderr
     );
-    assert_eq!(out2.stdout, "second-boot");
+    assert_eq!(out2.stdout, "first-boot");
 }
 
 #[cfg(target_os = "linux")] // inspects systemd unit Environment (ch-only)
