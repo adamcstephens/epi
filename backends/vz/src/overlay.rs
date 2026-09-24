@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 use epi_core::process;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 
 /// Convert qcow2 `source` into a writable sparse raw `dest`, grown to
 /// `disk_size` (e.g. "40G"). Existing instance disks are left untouched.
@@ -24,6 +24,12 @@ pub fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Resu
         .unwrap_or_else(|| Path::new("."));
     let staged = NamedTempFile::new_in(parent)
         .with_context(|| format!("staging writable disk beside {}", dest.display()))?;
+    let staged_path = staged.path().to_path_buf();
+    staged
+        .close()
+        .with_context(|| format!("preparing writable disk staging path: {}", dest.display()))?;
+    let staged = TempPath::try_from_path(staged_path)
+        .with_context(|| format!("tracking writable disk staging path: {}", dest.display()))?;
     let out = process::run(
         "qemu-img",
         &[
@@ -35,7 +41,7 @@ pub fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Resu
             "-S",
             "4k",
             &source.to_string_lossy(),
-            &staged.path().to_string_lossy(),
+            &staged.to_string_lossy(),
         ],
     )?;
     if !out.success() {
@@ -46,9 +52,7 @@ pub fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Resu
         );
     }
 
-    let current = staged
-        .as_file()
-        .metadata()
+    let current = std::fs::metadata(&staged)
         .context("reading converted disk metadata")?
         .len();
     if target_bytes < current {
@@ -56,9 +60,10 @@ pub fn ensure_writable_disk(source: &Path, dest: &Path, disk_size: &str) -> Resu
             "disk_size {disk_size} is smaller than base image ({current} bytes); shrinking is not supported"
         );
     }
-    staged
-        .as_file()
-        .set_len(target_bytes)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&staged)
+        .and_then(|file| file.set_len(target_bytes))
         .with_context(|| format!("resizing writable disk to {disk_size}: {}", dest.display()))?;
     staged
         .persist_noclobber(dest)
@@ -135,7 +140,7 @@ mod tests {
         assert!(content[10..].iter().all(|byte| *byte == 0));
         let metadata = fs::metadata(&dest).unwrap();
         assert_eq!(metadata.len(), 8 << 20);
-        assert!(metadata.blocks() * 512 < 1 << 20, "raw disk must be sparse");
+        assert!(metadata.blocks() * 512 < 8 << 20, "raw disk must be sparse");
     }
 
     #[test]

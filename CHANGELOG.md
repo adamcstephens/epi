@@ -21,6 +21,7 @@
 - NixOS module: Explicitly enable repart image generation, fixing missing `system.build.image` errors with newer nixpkgs. Update the nixpkgs lock to support the new enable option.
 - `rm`: Reap stale helper units before removing state. Previously, if the VM died on its own (e.g. OOM-killed), `epi rm` saw the VM unit as stopped, skipped teardown, and deleted the instance state — orphaning the `passt`/`virtiofsd` units (which kept holding their forwarded ports) with no state left to reap them. `rm` now runs the same stale-runtime reaping as `list`/`stop` before removing state
 - macOS (VZ) backend: Attach the writable root disk with `Cached` caching instead of the framework default `Automatic`, which corrupts the guest ext4 filesystem under heavy I/O (e.g. nix builds). Matches the configuration UTM adopted for Linux guests
+- macOS (VZ) backend: Create the converted raw disk at a fresh staging path, allowing `qemu-img` to preserve sparse extents before atomically publishing it.
 
 ### Changed
 - Disk artifacts: Publish only compressed qcow2 through the single `disk` descriptor field and `image` symlink, removing the 20GB raw image from the distributed runtime closure. VZ converts qcow2 into a sparse local raw disk on first launch and reuses it thereafter; failed conversion or resizing cannot leave a partial instance disk. Remove `diskQcow2` and raw fallback support, and invalidate old descriptor caches.
