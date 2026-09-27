@@ -370,6 +370,17 @@ in
       autoResize = true;
     };
 
+    services.fstrim = {
+      enable = true;
+      interval = "hourly";
+    };
+
+    systemd.timers.fstrim.timerConfig = {
+      Persistent = true;
+      AccuracySec = "5m";
+      RandomizedDelaySec = "0";
+    };
+
     boot.kernelPackages = import ./kernel.nix { inherit lib pkgs; };
 
     boot.loader.grub.enable = false;
