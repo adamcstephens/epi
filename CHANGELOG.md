@@ -25,6 +25,7 @@
 - Guest disks: Trim unused filesystem blocks hourly with a persistent timer, allowing Cloud Hypervisor's qcow2 backend to reclaim clusters before repeated write/delete churn exhausts its allocator.
 
 ### Changed
+- `rebuild`: Resolve current merged user and project configuration when either source exists, falling back to persisted instance settings only when both are absent. `start` continues to use persisted settings without re-reading configuration.
 - Disk artifacts: Publish only compressed qcow2 through the single `disk` descriptor field and `image` symlink, removing the 20GB raw image from the distributed runtime closure. VZ converts qcow2 into a sparse local raw disk on first launch and reuses it thereafter; failed conversion or resizing cannot leave a partial instance disk. Remove `diskQcow2` and raw fallback support, and invalidate old descriptor caches.
 - Linux mounts: Enable virtiofsd's namespace sandbox for writable and read-only exports while retaining the invoking host user's default one-to-one UID/GID mapping.
 - Linux (cloud-hypervisor) backend: Open the writable root qcow2 disk with direct I/O to avoid duplicating guest-cached filesystem data in the host page cache. The read-only seed disk remains cached.

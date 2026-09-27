@@ -58,7 +58,7 @@ ports = [":8080", "3000:3000"]
 project_mount = true
 ```
 
-`project_dir` identifies the host project independently of the configuration file. The project value overrides the user value. Relative values are resolved against the directory containing the file that declares them, `~` expands from `HOME`, and the resulting path must exist and be a directory. EPI persists the canonical resolved directory in instance state; subsequent `start` and `rebuild` commands use that state rather than re-reading configuration.
+`project_dir` identifies the host project independently of the configuration file. The project value overrides the user value. Relative values are resolved against the directory containing the file that declares them, `~` expands from `HOME`, and the resulting path must exist and be a directory. EPI persists the canonical resolved directory in instance state. `start` uses persisted settings without re-reading configuration; `rebuild` instead resolves the current merged user and project configuration when either source exists, falling back to persisted settings only when both are absent.
 
 ### Hjem
 
@@ -124,7 +124,7 @@ Interactively creates a `.epi/config.toml` with target selection and default set
 | `start` | Start an existing stopped instance |
 | `stop` | Stop an instance |
 | `rm` | Remove an instance |
-| `rebuild` | Rebuild an instance (re-evaluates target, fresh disk) |
+| `rebuild` | Rebuild with current user/project configuration when available; otherwise use persisted settings (fresh disk) |
 | `info` | Show detailed instance information |
 | `list` | List known instances |
 | `ssh` | Open SSH session |

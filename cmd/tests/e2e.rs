@@ -656,6 +656,61 @@ fn e2e_mount_home_dst_persists_after_restart() {
 
 #[test]
 #[ignore]
+fn e2e_rebuild_replaces_configured_mount() {
+    let name = unique_name("rebuild-mount");
+    let _guard = InstanceGuard::new(&name);
+    let old = TempDir::new().unwrap();
+    let new = TempDir::new().unwrap();
+    fs::write(old.path().join("marker"), "old").unwrap();
+    fs::write(new.path().join("marker"), "new").unwrap();
+    let config_dir = TempDir::new().unwrap();
+    let config_path = config_dir.path().join("config.toml");
+    let xdg_dir = TempDir::new().unwrap();
+    let env = [
+        ("XDG_CONFIG_HOME", xdg_dir.path().to_str().unwrap()),
+        ("EPI_PROJECT_CONFIG_FILE", config_path.to_str().unwrap()),
+    ];
+    fs::write(
+        &config_path,
+        format!(
+            "target = {:?}\nproject_mount = false\nmounts = [{:?}]\n",
+            e2e_target(),
+            format!("{}:/old", old.path().display())
+        ),
+    )
+    .unwrap();
+    let launch =
+        process::run_with_env(env!("CARGO_BIN_EXE_epi"), &["launch", &name], &env).unwrap();
+    assert!(launch.success(), "launch failed: {}", launch.stderr);
+    fs::write(
+        &config_path,
+        format!(
+            "target = {:?}\nproject_mount = false\nmounts = [{:?}]\n",
+            e2e_target(),
+            format!("{}:/replacement:ro", new.path().display())
+        ),
+    )
+    .unwrap();
+    let rebuilt =
+        process::run_with_env(env!("CARGO_BIN_EXE_epi"), &["rebuild", &name], &env).unwrap();
+    assert!(rebuilt.success(), "rebuild failed: {}", rebuilt.stderr);
+    let state = instance_store::load_state(&name).unwrap().unwrap();
+    assert_eq!(
+        state.mounts,
+        vec![format!("{}:/replacement:ro", new.path().display())]
+    );
+    let runtime = instance_store::find_runtime(&name).unwrap().unwrap();
+    let result = ssh_exec(&runtime, "cat /replacement/marker && test ! -e /old/marker");
+    assert!(
+        result.success(),
+        "replacement mount unavailable: {}",
+        result.stderr
+    );
+    assert_eq!(result.stdout, "new");
+}
+
+#[test]
+#[ignore]
 fn e2e_configured_project_dir_is_mounted() {
     let name = unique_name("configured-project");
     let _guard = InstanceGuard::new(&name);

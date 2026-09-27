@@ -751,8 +751,21 @@ pub fn cmd_upgrade(instance: &str, mode: UpgradeMode, wait_timeout: u64) -> Resu
 }
 
 pub fn cmd_rebuild(instance: &str) -> Result<()> {
-    let state = instance_store::load_state(instance)?
+    let mut state = instance_store::load_state(instance)?
         .ok_or_else(|| anyhow::anyhow!("instance {instance} not found"))?;
+    if let Some(mut desired) = config::resolve_for_rebuild()? {
+        desired.target = target::expand_tilde(&desired.target);
+        target::validate(&desired.target)?;
+        state.target = desired.target;
+        state.mounts = instance_store::canonicalize_mounts(&desired.mounts);
+        state.disk_size = desired.disk_size;
+        state.cpus = desired.cpus;
+        state.memory_mib = desired.memory;
+        state.port_specs = desired.ports;
+        state.project_dir = desired.project_dir;
+        state.ssh_extra_config = desired.ssh_extra_config;
+        state.hooks = desired.hooks;
+    }
 
     let was_running = backend::instance_is_running(instance)?;
     if was_running {
@@ -779,6 +792,7 @@ pub fn cmd_rebuild(instance: &str) -> Result<()> {
         port_specs: &state.port_specs,
     };
     let (runtime, descriptor) = prepare_and_provision(&params, &state.hooks)?;
+    instance_store::save_state(instance, &state)?;
 
     let ssh_key_path = runtime.ssh_key_path.clone();
     let ssh_sock = runtime.ssh;

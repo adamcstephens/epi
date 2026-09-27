@@ -242,6 +242,16 @@ fn merge_port_lists(
     }
 }
 
+pub fn resolve_for_rebuild() -> Result<Option<Resolved>> {
+    let user = load_user_with_path()?;
+    let (path, base) = project_config_path();
+    let project = load_from(&path, base.as_deref())?;
+    if user.is_none() && project.is_none() {
+        return Ok(None);
+    }
+    resolve_loaded((user, project), None, &[], (None, None, None), &[], false).map(Some)
+}
+
 /// Merge CLI args with config files. CLI args take precedence.
 pub fn resolve(
     cli_target: Option<&str>,
@@ -255,6 +265,25 @@ pub fn resolve(
     let user = load_user_with_path()?;
     let (config_path, project_base) = project_config_path();
     let project = load_from(&config_path, project_base.as_deref())?;
+    resolve_loaded(
+        (user, project),
+        cli_target,
+        cli_mounts,
+        (cli_disk_size, cli_cpus, cli_memory),
+        cli_ports,
+        cli_no_project_mount,
+    )
+}
+
+fn resolve_loaded(
+    (user, project): (Option<LoadedConfig>, Option<LoadedConfig>),
+    cli_target: Option<&str>,
+    cli_mounts: &[String],
+    (cli_disk_size, cli_cpus, cli_memory): (Option<&str>, Option<u32>, Option<u32>),
+    cli_ports: &[String],
+    cli_no_project_mount: bool,
+) -> Result<Resolved> {
+    let (config_path, project_base) = project_config_path();
     let project_config = project
         .as_ref()
         .and_then(|_| config_path.canonicalize().ok());
@@ -264,7 +293,6 @@ pub fn resolve(
         user.map(|loaded| loaded.config),
         project.map(|loaded| loaded.config),
     );
-
     let target = cli_target
         .map(|s| s.to_string())
         .or(config.target)
@@ -1068,6 +1096,34 @@ ports = ["8080:80", ":443"]
         let path = dir.path().join("config.toml");
         fs::write(&path, content).unwrap();
         (dir, path)
+    }
+
+    #[test]
+    fn rebuild_resolution_replaces_removed_mounts_and_ports() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+        let (_user_dir, user_path) = write_temp_config(
+            "target = \".#new\"\nmounts = [\"/new:/guest:ro\"]\nports = [\"9090:90\"]\n",
+        );
+        unsafe { std::env::set_var("EPI_CONFIG_FILE", &user_path) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+        let resolved = resolve_for_rebuild().unwrap().unwrap();
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+        assert_eq!(resolved.target, ".#new");
+        assert_eq!(resolved.mounts, vec!["/new:/guest:ro"]);
+        assert_eq!(resolved.ports, vec!["9090:90"]);
+    }
+    #[test]
+    fn rebuild_without_config_uses_persisted_state() {
+        let _lock = RESOLVE_LOCK.lock().unwrap();
+        let xdg = tempfile::TempDir::new().unwrap();
+        unsafe { std::env::remove_var("EPI_CONFIG_FILE") };
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", xdg.path()) };
+        unsafe { std::env::set_var("EPI_PROJECT_CONFIG_FILE", "/nonexistent/config.toml") };
+        let resolved = resolve_for_rebuild().unwrap();
+        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+        unsafe { std::env::remove_var("EPI_PROJECT_CONFIG_FILE") };
+        assert!(resolved.is_none());
     }
 
     #[test]
