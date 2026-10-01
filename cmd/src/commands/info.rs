@@ -74,22 +74,15 @@ pub fn cmd_info(instance: &str) -> Result<()> {
         }
     }
 
-    // Mounts
-    if !state.mounts.is_empty() {
-        let mounts_str = state
-            .mounts
-            .iter()
-            .map(|m| strip_home(m))
-            .collect::<Vec<_>>()
-            .join(", ");
-        sections.push(InfoSection {
-            heading: "mounts".into(),
-            rows: vec![("paths".into(), mounts_str)],
-        });
-    }
-
     let view = InfoView { sections };
     println!("{}", render_info(&view));
+
+    if !state.mounts.is_empty() {
+        println!("\n mounts:");
+        for mount in &state.mounts {
+            println!("   - {}", strip_home(mount));
+        }
+    }
 
     // Runtime tree (rendered separately, outside the key-value table)
     if running {
@@ -362,7 +355,7 @@ pub fn render_info(view: &InfoView) -> String {
         }
     }
 
-    table.to_string()
+    table.trim_fmt()
 }
 
 #[cfg(target_os = "linux")]
@@ -513,6 +506,39 @@ mod tests {
         assert!(output.contains("cpus:"), "should have key");
         assert!(output.contains("4"), "should have value");
         assert!(output.contains("2048 MiB"), "should have memory value");
+    }
+
+    #[test]
+    fn render_info_long_values_do_not_pad_other_rows() {
+        let target = format!(
+            "git+https://example.org/{}#vm",
+            "long-project-name".repeat(12)
+        );
+        let view = InfoView {
+            sections: vec![
+                InfoSection {
+                    heading: "instance".into(),
+                    rows: vec![("name".into(), "dev".into())],
+                },
+                InfoSection {
+                    heading: "configuration".into(),
+                    rows: vec![("target".into(), target.clone())],
+                },
+            ],
+        };
+        let output = render_info(&view);
+        assert!(output.contains(&target));
+        assert!(
+            output.lines().all(|line| line == line.trim_end()),
+            "trailing padding wraps into blank terminal lines: {output:?}"
+        );
+        let name = output.lines().find(|line| line.contains("name:")).unwrap();
+        let target_line = output
+            .lines()
+            .find(|line| line.contains("target:"))
+            .unwrap();
+        assert_eq!(name.find("dev"), target_line.find(&target));
+        assert_eq!(output.lines().filter(|line| line.is_empty()).count(), 1);
     }
 
     #[test]

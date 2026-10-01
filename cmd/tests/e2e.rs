@@ -19,6 +19,41 @@ use tempfile::TempDir;
 #[cfg(target_os = "linux")]
 use epi::backend::ch;
 
+#[test]
+fn info_lists_mounts_beneath_heading() {
+    let state_dir = TempDir::new().unwrap();
+    let instance_dir = state_dir.path().join("info-mounts");
+    fs::create_dir(&instance_dir).unwrap();
+    let mounts = [
+        "/projects/with spaces",
+        "/projects/source:/guest/destination:ro",
+    ];
+    fs::write(
+        instance_dir.join("state.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "target": ".#manual-test",
+            "mounts": mounts,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_epi"))
+        .args(["info", "info-mounts"])
+        .env("EPI_STATE_DIR", state_dir.path())
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut lines = stdout.lines().skip_while(|line| line.trim() != "mounts:");
+    assert_eq!(lines.next().map(str::trim), Some("mounts:"));
+    for mount in mounts {
+        assert_eq!(lines.next(), Some(format!("   - {mount}").as_str()));
+    }
+    assert_eq!(lines.next(), Some(""));
+    assert!(!stdout.contains("paths:"));
+}
+
 fn e2e_target() -> String {
     std::env::var("EPI_E2E_TARGET").unwrap_or_else(|_| default_target().to_string())
 }

@@ -17,6 +17,7 @@
 - Artifact targets: NixOS now exposes `config.system.build.epi`, a versioned manifest and linked closure containing the guest toplevel, boot artifacts, and hooks. Hjem services reconcile this target on activation; unchanged instances restart normally, changed target or machine settings recreate the instance, and declarative services refuse to take over imperative instances.
 
 ### Fixed
+- `info`: Remove trailing table padding so long values no longer create blank lines in narrow terminal panes.
 - Linux mounts: Report virtiofsd startup failures immediately with the exported path and helper journal, instead of waiting only for a socket timeout.
 - NixOS module: Explicitly enable repart image generation, fixing missing `system.build.image` errors with newer nixpkgs. Update the nixpkgs lock to support the new enable option.
 - `rm`: Reap stale helper units before removing state. Previously, if the VM died on its own (e.g. OOM-killed), `epi rm` saw the VM unit as stopped, skipped teardown, and deleted the instance state — orphaning the `passt`/`virtiofsd` units (which kept holding their forwarded ports) with no state left to reap them. `rm` now runs the same stale-runtime reaping as `list`/`stop` before removing state
@@ -25,6 +26,7 @@
 - Guest disks: Trim unused filesystem blocks hourly with a persistent timer, allowing Cloud Hypervisor's qcow2 backend to reclaim clusters before repeated write/delete churn exhausts its allocator.
 
 ### Changed
+- `info`: Display mounts as one list item per line directly beneath the mounts heading, instead of a comma-separated `paths` row.
 - `rebuild`: Resolve current merged user and project configuration when either source exists, falling back to persisted instance settings only when both are absent. `start` continues to use persisted settings without re-reading configuration.
 - Disk artifacts: Publish only compressed qcow2 through the single `disk` descriptor field and `image` symlink, removing the 20GB raw image from the distributed runtime closure. VZ converts qcow2 into a sparse local raw disk on first launch and reuses it thereafter; failed conversion or resizing cannot leave a partial instance disk. Remove `diskQcow2` and raw fallback support, and invalidate old descriptor caches.
 - Linux mounts: Enable virtiofsd's namespace sandbox for writable and read-only exports while retaining the invoking host user's default one-to-one UID/GID mapping.
