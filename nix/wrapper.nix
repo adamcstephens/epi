@@ -29,7 +29,7 @@ runCommand "epi"
           rsync
           xorriso
         ]
-        ++ lib.optionals stdenv.isLinux [
+        ++ lib.optionals stdenv.hostPlatform.isLinux [
           cloud-hypervisor
           passt
           virtiofsd

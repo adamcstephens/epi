@@ -87,7 +87,7 @@
                 pkgs.rust-analyzer
                 pkgs.rustfmt
               ]
-              ++ lib.optionals pkgs.stdenv.isLinux [
+              ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
                 pkgs.passt
                 pkgs.virtiofsd
                 pkgs.cloud-hypervisor
@@ -104,7 +104,7 @@
               epi-unwrapped = pkgs.callPackage ./nix/package.nix { };
             };
 
-            checks = lib.optionalAttrs pkgs.stdenv.isLinux {
+            checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
               hjem-module = pkgs.callPackage ./nix/hjem/test.nix { };
             };
           };

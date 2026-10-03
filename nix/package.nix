@@ -37,7 +37,7 @@ rustPlatform.buildRustPackage {
     qemu-utils
     writableTmpDirAsHomeHook
   ]
-  ++ lib.optionals stdenv.isLinux [
+  ++ lib.optionals stdenv.hostPlatform.isLinux [
     systemdMinimal
   ];
 
