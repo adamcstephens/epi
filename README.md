@@ -22,10 +22,15 @@ epi exec myvm -- ls /
 # Copy files
 epi cp ./local-file myvm:/tmp/
 
+# Stop and then start again
+epi restart myvm
+
 # Stop and remove
 epi stop myvm
 epi rm myvm
 ```
+
+`epi restart [INSTANCE]` performs a graceful stop followed by a normal start, including lifecycle hooks and SSH readiness. If stopping fails, startup is not attempted. A stopped instance is started; omitting `INSTANCE` uses the project-configured instance name.
 
 ### Disk artifacts
 

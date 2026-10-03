@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- `restart`: Stop and then start an existing instance, preserving its disk and settings and running normal pre-stop and post-start hooks. Omit the instance name to use project configuration.
 - Hjem module: Add `instances.<name>.defaultState = "stopped"` to generate declarative instances without starting them by default. Configuration switches preserve manually started instances, while configuration changes still restart active instances for reconciliation.
 - `--mount`/`mounts`: Append `:ro` to an explicit mount to enforce read-only access on Linux with `virtiofsd --readonly` and guest `ro` mount flags. Read-only mount specifications are rejected on macOS, where VZ cannot provide equivalent host enforcement.
 - `--mount`/`mounts`: Accept `~` and `~/path` destinations relative to the configured guest user's home, independently of the host home. Destination expansion also applies on subsequent starts.

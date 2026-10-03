@@ -1107,11 +1107,21 @@ fn e2e_stop_start_ssh() {
     );
     assert_eq!(out.stdout, "first-boot");
 
-    // Stop the VM
-    epi::backend::stop_instance(&name, false).expect("stop failed");
-
-    // Second boot: re-provision (reuses persistent disk) and verify SSH
-    let runtime2 = provision_and_wait_with(&name, resolved);
+    let boot_id = ssh_exec(&runtime, "cat /proc/sys/kernel/random/boot_id");
+    assert!(boot_id.success(), "{}", boot_id.stderr);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_epi"))
+        .args(["restart", &name])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "restart failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let runtime2 = instance_store::find_runtime(&name).unwrap().unwrap();
+    let new_boot_id = ssh_exec(&runtime2, "cat /proc/sys/kernel/random/boot_id");
+    assert!(new_boot_id.success(), "{}", new_boot_id.stderr);
+    assert_ne!(boot_id.stdout, new_boot_id.stdout);
     let out2 = ssh_exec(&runtime2, "cat /var/lib/epi-disk-marker");
     assert!(
         out2.success(),

@@ -131,6 +131,13 @@ enum Command {
         force: bool,
     },
 
+    /// Stop and then start an instance.
+    Restart {
+        /// Instance name
+        #[arg(add = ArgValueCompleter::new(complete_instance))]
+        instance: Option<String>,
+    },
+
     /// Show detailed instance information.
     Info {
         /// Instance name
@@ -350,6 +357,11 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Stop { instance, force } => {
             commands::cmd_stop(&resolve_instance_name(instance)?, force)
+        }
+        Command::Restart { instance } => {
+            let instance = resolve_instance_name(instance)?;
+            commands::cmd_stop(&instance, false)?;
+            commands::cmd_start(&instance, false, false, 120)
         }
         Command::Info { instance } => commands::cmd_info(&resolve_instance_name(instance)?),
         Command::Rm { instance, force } => {
