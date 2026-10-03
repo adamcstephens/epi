@@ -488,6 +488,8 @@ in
     # DefaultTimeoutStopSec (90s), which makes `epi stop` painfully slow.
     systemd.user.settings.Manager.DefaultTimeoutStopSec = "5s";
 
+    systemd.services."user@".after = [ "epi-init.service" ];
+
     systemd.services.epi-init = {
       description = "epi guest initialization";
       serviceConfig = {

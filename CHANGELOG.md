@@ -17,6 +17,7 @@
 - Artifact targets: NixOS now exposes `config.system.build.epi`, a versioned manifest and linked closure containing the guest toplevel, boot artifacts, and hooks. Hjem services reconcile this target on activation; unchanged instances restart normally, changed target or machine settings recreate the instance, and declarative services refuse to take over imperative instances.
 
 ### Fixed
+- Guest startup: Order systemd user managers after `epi-init.service` so user services do not race share mounting.
 - `info`: Remove trailing table padding so long values no longer create blank lines in narrow terminal panes.
 - Linux mounts: Report virtiofsd startup failures immediately with the exported path and helper journal, instead of waiting only for a socket timeout.
 - NixOS module: Explicitly enable repart image generation, fixing missing `system.build.image` errors with newer nixpkgs. Update the nixpkgs lock to support the new enable option.
