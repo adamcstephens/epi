@@ -391,7 +391,6 @@ in
     boot.initrd.includeDefaultModules = false;
     boot.initrd.kernelModules = [ ];
     boot.initrd.availableKernelModules = lib.mkForce [ ];
-    boot.initrd.systemd.enable = true;
 
     # console=ttyS0 is deliberately absent: printk on a synchronous
     # 115200-baud serial port blocks on every message. hvc0 carries the
