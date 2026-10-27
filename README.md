@@ -95,11 +95,44 @@ EPI provides a Hjem module for declaring user-systemd services. Import it throug
 }
 ```
 
-This creates `epi-dev.service` in Alice's user systemd configuration. `settings` is the complete EPI TOML configuration, including `target`. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; on first activation the service invokes `epi launch`, then uses `epi start` on later activations. If that rendered configuration changes, Hjem restarts the service; EPI force-removes the old instance and launches a replacement. Neither command has VM-setting flags. Hjem passes `settings.project_dir` directly to EPI; use an absolute path when the project is not relative to the generated configuration directory. The generated config defaults `default_name` to the instance name and disables automatic project mounting when `project_dir` is absent; override either through `settings`.
+This creates `epi-dev.service` in Alice's user systemd configuration. `settings` is the complete EPI TOML configuration, including `target`. Its configuration is rendered at `~/.config/epi/instances/dev.toml`; activation invokes `epi reconcile`, which launches missing instances, starts unchanged instances, and recreates instances whose target or machine settings changed. If the rendered configuration changes, Hjem restarts the active service to reconcile it. Hjem passes `settings.project_dir` directly to EPI; use an absolute path when the project is not relative to the generated configuration directory. The generated config defaults `default_name` to the instance name and disables automatic project mounting when `project_dir` is absent; override either through `settings`.
 
 Set `instances.<name>.defaultState = "stopped"` to generate the instance configuration and service without adding the service to `default.target`. The instance then starts only when requested manually. Configuration switches preserve whether the service is active; changes to an active instance's rendered configuration still restart the service and reconcile the instance. The default is `"running"`, which retains automatic startup through `default.target`.
 
 `hooks.post-launch`, `hooks.post-start`, and `hooks.pre-stop` are named maps of executable host script paths, also available through `settings.hooks`. Definitions merge using normal Nix module semantics. EPI saves the canonical paths at launch and GC-roots Nix store scripts for the lifetime of the instance, so later `start`, `stop`, and `upgrade` operations do not need the original Hjem configuration. `guest-init` is not supported in these settings.
+
+### Home Manager
+
+On Linux, import the Home Manager module into your home configuration:
+
+```nix
+{ pkgs, inputs, ... }:
+{
+  imports = [ inputs.epi.homeManagerModules.default ];
+
+  services.epi = {
+    package = inputs.epi.packages.${pkgs.system}.default;
+    instances.dev = {
+      settings = {
+        target = "/home/alice/src/my-project#dev";
+        project_dir = "/home/alice/src/my-project";
+        cpus = 4;
+        memory = 4096;
+        ports = [ ":8080" ];
+      };
+      hooks.post-start."10-ready" = pkgs.writeShellScript "epi-ready" ''
+        "$EPI_BIN" exec "$EPI_INSTANCE" -- touch /tmp/host-hook-ready
+      '';
+    };
+  };
+}
+```
+
+`homeManagerModules.epi` exports the same module. The instance options match Hjem: `enable = false` omits an instance, `defaultState = "stopped"` leaves it available for manual start, and `hooks` merges with `settings.hooks`.
+
+Home Manager writes `$XDG_CONFIG_HOME/epi/instances/<name>.toml` and creates `epi-<name>.service` under `systemd.user.services`. Starting the service runs `epi reconcile`; stopping it runs `epi stop`. Configuration and hook changes alter the unit's restart triggers. With Home Manager's `systemd.user.startServices` enabled, activation restarts changed active services and starts new services wanted by `default.target`. Set `systemd.user.startServices = true` on Home Manager versions that do not enable it by default.
+
+Use `systemctl --user start epi-dev.service` to start a stopped instance manually. The service PATH includes the Home Manager profile and the host system profile, so EPI can find host tools such as Nix. Like the Hjem module, this integration requires systemd user services and does not manage macOS VMs.
 
 ### Projects
 

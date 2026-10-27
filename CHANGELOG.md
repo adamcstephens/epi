@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- Home Manager module: Add `homeManagerModules.epi` and `.default` with the same declarative instance settings, lifecycle hooks, and default-state control as Hjem. Render XDG configuration and reconcile instances through systemd user services, restarting active services when configuration changes.
 - `restart`: Stop and then start an existing instance, preserving its disk and settings and running normal pre-stop and post-start hooks. Omit the instance name to use project configuration.
 - Hjem module: Add `instances.<name>.defaultState = "stopped"` to generate declarative instances without starting them by default. Configuration switches preserve manually started instances, while configuration changes still restart active instances for reconciliation.
 - `--mount`/`mounts`: Append `:ro` to an explicit mount to enforce read-only access on Linux with `virtiofsd --readonly` and guest `ro` mount flags. Read-only mount specifications are rejected on macOS, where VZ cannot provide equivalent host enforcement.

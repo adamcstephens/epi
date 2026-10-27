@@ -65,6 +65,8 @@
         flake.nixosModules.epi = ./nix/nixos/epi.nix;
         flake.hjemModules.epi = ./nix/hjem/epi.nix;
         flake.hjemModules.default = ./nix/hjem/epi.nix;
+        flake.homeManagerModules.epi = ./nix/home-manager/epi.nix;
+        flake.homeManagerModules.default = ./nix/home-manager/epi.nix;
 
         perSystem =
           { pkgs, ... }:
@@ -106,6 +108,7 @@
 
             checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
               hjem-module = pkgs.callPackage ./nix/hjem/test.nix { };
+              home-manager-module = pkgs.callPackage ./nix/home-manager/test.nix { };
             };
           };
       }
